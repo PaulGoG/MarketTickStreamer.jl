@@ -1,0 +1,54 @@
+# TickStreamer configuration — single source of truth for all tunables.
+# Credentials never live here; they come from `.env` (see `.env.example`).
+
+[provider]
+name = "alpaca"          # provider adapter: "alpaca" (others pluggable via AbstractProvider)
+feed = "iex"             # "iex" (free, single-exchange) | "sip" (paid, consolidated tape)
+
+[stream]
+symbols = ["AAPL", "MSFT", "GOOG"]
+channels = ["trades"]            # subset of: "trades", "quotes", "bars"
+require_market_open = true       # query market clock before connecting; exit if closed
+reconnect_max_retries = 10       # per-disconnect reconnection attempts before giving up
+reconnect_base_delay_s = 1.0     # exponential backoff: base * 2^attempt, jittered
+reconnect_max_delay_s = 60.0
+stale_timeout_s = 120.0          # watchdog: force-reconnect if no frame arrives for this long
+
+[storage]
+data_dir = "data"                # relative to project root (absolute paths also accepted)
+raw_subdir = "raw"               # append-only NDJSON session files (immutable source of truth)
+processed_subdir = "processed"   # compacted per-day, per-symbol analysis files
+flush_interval_s = 30.0          # sink flushes whichever of interval / max_ticks hits first
+flush_max_ticks = 5000
+processed_format = "csv"         # "csv" | "arrow"
+
+[limits]
+# Safety rails — the streamer refuses to exceed these rather than degrade silently.
+max_session_hours = 8.0          # hard stop for a live session
+max_raw_file_mb = 1024           # roll to a new raw file beyond this size
+channel_capacity = 100000        # in-flight tick buffer; producer blocks when full
+max_symbols = 30                 # subscription sanity cap (free-tier limit protection)
+
+[replay]
+# Recorded-session replay for offline development of real-time methods.
+pace = "recorded"                # "recorded" (honor inter-arrival times) | "max" (as fast as possible)
+speed = 1.0                      # time-compression factor when pace = "recorded" (2.0 = 2x faster)
+
+[backfill]
+# Historical trade download (REST) for cross-validation and offline studies.
+start_date = "2026-07-27"        # inclusive, exchange dates (America/New_York)
+end_date = "2026-07-28"          # inclusive
+feed = "sip"                     # historical SIP is free on Alpaca (minus trailing 15 min)
+page_limit = 10000               # rows per REST page (Alpaca max 10000)
+rate_limit_sleep_s = 0.35        # pause between pages; free tier = 200 req/min
+
+[logging]
+level = "info"                   # "debug" | "info" | "warn" | "error"
+log_to_file = true
+log_dir = "logs"
+
+[alpaca]
+# Endpoint roots — overridable for testing against a mock server.
+trading_base = "https://api.alpaca.markets"        # /v2/clock (market status)
+data_base = "https://data.alpaca.markets"          # /v2/stocks/trades (historical)
+ws_base = "wss://stream.data.alpaca.markets/v2"    # + "/iex" or "/sip"
