@@ -1,6 +1,8 @@
 using Test
 using Dates
 using TimeZones
+using CSV
+using DataFrames
 using TickStreamer
 
 include("mock_alpaca.jl")
@@ -134,6 +136,56 @@ end
         @test length(got2) == 50
         @test_throws ArgumentError replay_source(sink.path; pace = "warp")
     end
+end
+
+@testset "quality: dedup + session report" begin
+    base = rfc3339_to_ns("2026-07-30T14:30:00Z")
+    mk(i; sym = "AAPL", dt = 1_000_000_000, recv_off = 2_000_000) =
+        Trade(sym, base + i * dt, base + i * dt + recv_off, 100.0 + i, 10.0, "V", ["@"], "C", i)
+    trades = [mk(i) for i in 1:20]
+    dup_set = vcat(trades, trades[5:8])                  # reconnection double-delivery
+    @test length(dedup_trades(dup_set)) == 20
+    @test dedup_trades(dup_set) == trades                # order preserved, first kept
+    mktempdir() do dir
+        sink = open_raw_sink(dir, "q")
+        # AAPL: 4 dupes, one 120 s gap, one out-of-order pair, one negative latency
+        aapl = vcat(trades, trades[1:4])
+        push!(aapl, mk(21; dt = 1_000_000_000))
+        aapl[end] = Trade("AAPL", base + 200 * 1_000_000_000, base + 200 * 1_000_000_000 - 5_000_000,
+                          99.0, 1.0, "V", String[], "C", 999)   # +120s gap, latency -5 ms
+        push!(aapl, mk(3))                               # out-of-order arrival (t < previous)
+        # MSFT: pure backfill (recv_ns = 0)
+        msft = [Trade("MSFT", base + i * 1_000_000_000, 0, 300.0, 5.0, "V", ["@"], "C", i)
+                for i in 1:5]
+        write_batch!(sink, vcat(aapl, msft))
+        close_sink!(sink)
+        rep = session_report(sink.path; gap_threshold_s = 60.0)
+        @test nrow(rep) == 2
+        a = rep[rep.symbol .== "AAPL", :][1, :]
+        @test a.n_duplicates == 5                        # 4 re-sent + mk(3) re-sent
+        @test a.n_gaps == 1 && a.max_gap_s > 100
+        @test a.n_out_of_order >= 1
+        @test a.n_negative_latency == 1
+        @test a.median_latency_ms ≈ 2.0 atol = 0.5
+        m = rep[rep.symbol .== "MSFT", :][1, :]
+        @test isnan(m.median_latency_ms)                 # backfill: no latency defined
+        # compaction dedups by default
+        files = compact_raw([sink.path], joinpath(dir, "p"); format = "csv")
+        df = CSV.read(files[findfirst(contains("AAPL"), files)], DataFrame)
+        @test nrow(df) == 21                             # 26 raw AAPL rows − 5 dupes
+        # memory guard refuses absurd budgets
+        @test_throws ErrorException compact_raw([sink.path], joinpath(dir, "p2");
+                                                mem_fraction = 1e-12)
+    end
+end
+
+@testset "close guard + disk guard" begin
+    s = LiveSession(Channel{Trade}(1), Ref(false), Ref{Any}(nothing),
+                    Ref((; ticks = 0, frames = 0, reconnects = 0)))
+    t = schedule_close_stop!(s, now_ns() + 300_000_000; grace_s = 0.0)   # closes in 0.3 s
+    wait(t)
+    @test s.stop[]
+    @test free_disk_gb(pwd()) > 0.0
 end
 
 @testset "tee fan-out" begin

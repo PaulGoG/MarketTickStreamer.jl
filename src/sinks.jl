@@ -176,18 +176,36 @@ end
 read_raw(path::AbstractString) = read_raw([path])
 
 """
-    compact_raw(raw_paths, out_dir; format = "csv",
-                tz = tz"America/New_York") -> Vector{String}
+    compact_raw(raw_paths, out_dir; format = "csv", dedup = true,
+                mem_fraction = 0.5, tz = tz"America/New_York") -> Vector{String}
 
 Compact raw NDJSON files into per-symbol, per-trading-day analysis files
 (`out_dir/SYMBOL/YYYY-MM-DD.csv|.arrow`), sorted by `time_ns`. Existing
 outputs are never overwritten — a ` #N` suffixed sibling is written instead
 (safesave semantics). Returns the list of files written.
+
+`dedup = true` drops exact duplicate prints (reconnection double-delivery,
+overlapping backfill/live captures) via [`dedup_trades`](@ref), logging the
+count. Compaction materializes everything in memory; it refuses to start if
+the estimated footprint exceeds `mem_fraction` of currently free RAM —
+compact in smaller batches of part files instead.
 """
 function compact_raw(raw_paths::AbstractVector{<:AbstractString}, out_dir::AbstractString;
-                     format::AbstractString = "csv", tz::TimeZone = tz"America/New_York")
+                     format::AbstractString = "csv", dedup::Bool = true,
+                     mem_fraction::Real = 0.5, tz::TimeZone = tz"America/New_York")
     format in ("csv", "arrow") || throw(ArgumentError("format must be \"csv\" or \"arrow\""))
+    bytes = sum(filesize, raw_paths; init = 0)
+    est = 4 * bytes          # parsed structs + DataFrame + sort scratch
+    est > mem_fraction * Sys.free_memory() && error(
+        "compaction of $(round(bytes / 2^20; digits = 1)) MiB raw would need ≈" *
+        "$(round(est / 2^30; digits = 2)) GiB, over $(mem_fraction) of free RAM — " *
+        "compact fewer part files per call")
     trades = read_raw(raw_paths)
+    if dedup
+        n0 = length(trades)
+        trades = dedup_trades(trades)
+        n0 > length(trades) && @info "dropped duplicate prints" count = n0 - length(trades)
+    end
     isempty(trades) && return String[]
     df = DataFrame(
         symbol = [t.symbol for t in trades],

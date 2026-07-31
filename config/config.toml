@@ -3,12 +3,16 @@
 
 [provider]
 name = "alpaca"          # provider adapter: "alpaca" (others pluggable via AbstractProvider)
-feed = "iex"             # "iex" (free, single-exchange) | "sip" (paid, consolidated tape)
+feed = "iex"             # "iex" (free, single-exchange, real-time)
+                         # "delayed_sip" (consolidated tape, 15-min delay — fine for research)
+                         # "sip" (paid, consolidated tape, real-time)
 
 [stream]
 symbols = ["AAPL", "MSFT", "GOOG"]
 channels = ["trades"]            # subset of: "trades", "quotes", "bars"
 require_market_open = true       # query market clock before connecting; exit if closed
+wait_for_open = false            # if closed: sleep until next_open instead of exiting
+stop_at_market_close = true      # schedule graceful stop at the session's next_close
 reconnect_max_retries = 10       # per-disconnect reconnection attempts before giving up
 reconnect_base_delay_s = 1.0     # exponential backoff: base * 2^attempt, jittered
 reconnect_max_delay_s = 60.0
@@ -28,6 +32,7 @@ max_session_hours = 8.0          # hard stop for a live session
 max_raw_file_mb = 1024           # roll to a new raw file beyond this size
 channel_capacity = 100000        # in-flight tick buffer; producer blocks when full
 max_symbols = 30                 # subscription sanity cap (free-tier limit protection)
+min_free_disk_gb = 2.0           # refuse to start / stop streaming below this free space
 
 [replay]
 # Recorded-session replay for offline development of real-time methods.

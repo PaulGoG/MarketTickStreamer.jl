@@ -1,6 +1,7 @@
 .env
 data/
 logs/
+plots/
 Manifest.toml.bak
 *.cov
 .CondaPkg/

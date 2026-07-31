@@ -54,6 +54,25 @@ function subscribe_payload(::AlpacaProvider, symbols::Vector{String}, channels::
     return JSON3.write(d)
 end
 
+# GET with exponential-backoff retry on transient statuses (rate limiting,
+# server hiccups). Client errors other than 429 fail immediately.
+const RETRYABLE_STATUS = (429, 500, 502, 503, 504)
+
+function _get_with_retry(url, headers; query = nothing, max_retries::Integer = 5)
+    for attempt in 0:max_retries
+        try
+            return HTTP.get(url, headers; query, retry = false)
+        catch e
+            (e isa HTTP.StatusError && e.status in RETRYABLE_STATUS && attempt < max_retries) ||
+                rethrow()
+            ra = tryparse(Float64, HTTP.header(e.response, "Retry-After", ""))
+            delay = ra !== nothing ? ra : 2.0^attempt * (0.5 + rand())
+            @warn "REST $(e.status) — backing off" attempt delay = round(delay; digits = 1)
+            sleep(min(delay, 60.0))
+        end
+    end
+end
+
 """
     market_clock(p) -> (; is_open, next_open, next_close)
 
@@ -62,7 +81,7 @@ RFC 3339 strings Alpaca sends (display only — nothing downstream computes
 with them).
 """
 function market_clock(p::AlpacaProvider)
-    resp = HTTP.get("$(p.trading_base)/v2/clock", rest_headers(p))
+    resp = _get_with_retry("$(p.trading_base)/v2/clock", rest_headers(p))
     o = JSON3.read(resp.body)
     return (; is_open = Bool(o.is_open),
               next_open = String(o.next_open), next_close = String(o.next_close))
@@ -106,7 +125,7 @@ function historical_trades(p::AlpacaProvider, symbol::AbstractString,
         "feed" => feed,
     )
     while true
-        resp = HTTP.get(url, rest_headers(p); query)
+        resp = _get_with_retry(url, rest_headers(p); query)
         o = JSON3.read(resp.body)
         page = get(o, :trades, nothing)   # null/absent when the range has no data
         if page !== nothing

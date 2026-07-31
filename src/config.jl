@@ -17,6 +17,8 @@ struct Config
     symbols::Vector{String}
     channels::Vector{String}
     require_market_open::Bool
+    wait_for_open::Bool
+    stop_at_market_close::Bool
     reconnect_max_retries::Int
     reconnect_base_delay_s::Float64
     reconnect_max_delay_s::Float64
@@ -33,6 +35,7 @@ struct Config
     max_raw_file_mb::Int
     channel_capacity::Int
     max_symbols::Int
+    min_free_disk_gb::Float64
     # [replay]
     replay_pace::String
     replay_speed::Float64
@@ -66,7 +69,8 @@ function load_config(path::AbstractString = joinpath(PROJECT_ROOT, "config", "co
     tbl(name) = get(() -> Dict{String, Any}(), raw, name)
     provider = get(tbl("provider"), "name", "alpaca")
     feed = get(tbl("provider"), "feed", "iex")
-    feed in ("iex", "sip") || throw(ArgumentError("provider.feed must be \"iex\" or \"sip\", got \"$feed\""))
+    feed in ("iex", "sip", "delayed_sip") ||
+        throw(ArgumentError("provider.feed must be \"iex\", \"sip\" or \"delayed_sip\", got \"$feed\""))
 
     st = tbl("stream")
     symbols = String.(get(st, "symbols", String[]))
@@ -107,6 +111,8 @@ function load_config(path::AbstractString = joinpath(PROJECT_ROOT, "config", "co
         provider, feed,
         symbols, channels,
         Bool(get(st, "require_market_open", true)),
+        Bool(get(st, "wait_for_open", false)),
+        Bool(get(st, "stop_at_market_close", true)),
         Int(get(st, "reconnect_max_retries", 10)),
         Float64(get(st, "reconnect_base_delay_s", 1.0)),
         Float64(get(st, "reconnect_max_delay_s", 60.0)),
@@ -121,6 +127,7 @@ function load_config(path::AbstractString = joinpath(PROJECT_ROOT, "config", "co
         Int(get(lim, "max_raw_file_mb", 1024)),
         Int(get(lim, "channel_capacity", 100_000)),
         max_symbols,
+        Float64(get(lim, "min_free_disk_gb", 2.0)),
         pace,
         Float64(get(rep, "speed", 1.0)),
         bf_start, bf_end, bf_feed,
@@ -143,7 +150,11 @@ Load API credentials from `.env` (if present) into the environment and return
 Throws an error listing what is missing if either is absent.
 """
 function load_credentials!(; env_path::AbstractString = joinpath(PROJECT_ROOT, ".env"))
-    isfile(env_path) && DotEnv.load!(env_path; override = false)
+    if isfile(env_path)
+        Sys.isunix() && (filemode(env_path) & 0o044) != 0 &&
+            @warn "credentials file is group/world-readable — consider `chmod 600`" env_path
+        DotEnv.load!(env_path; override = false)
+    end
     key = get(ENV, "ALPACA_API_KEY_ID", "")
     secret = get(ENV, "ALPACA_SECRET_KEY", "")
     missing_keys = String[]

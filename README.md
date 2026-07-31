@@ -20,9 +20,12 @@ real-time analysis methods.
 │   ├── schema.jl           # Trade struct; Int64-ns timestamps; RFC 3339 parsing
 │   ├── config.jl           # TOML loading/validation; .env credential loading
 │   ├── sinks.jl            # raw NDJSON sink (append-only, rolling); compaction
+│   ├── quality.jl          # dedup, session QA report, disk-space probe
 │   ├── replay.jl           # recorded-session replay source (paced or max-rate)
-│   ├── live.jl             # provider-agnostic live source: reconnect, watchdog
+│   ├── live.jl             # provider-agnostic live source: reconnect, watchdog,
+│   │                       #   market-close guard
 │   ├── pipeline.jl         # session orchestration: run_stream / run_backfill; tee
+│   ├── viz.jl              # CairoMakie session diagnostics (price, activity, CCDFs)
 │   └── providers/
 │       └── alpaca.jl       # Alpaca adapter: REST clock/trades + v2 WS protocol
 ├── scripts/
@@ -30,14 +33,17 @@ real-time analysis methods.
 │   ├── stream.jl           # live capture session
 │   ├── backfill.jl         # historical trade download
 │   ├── compact.jl          # raw NDJSON → per-symbol per-day CSV/Arrow
-│   └── replay.jl           # replay a recorded session to the terminal
+│   ├── replay.jl           # replay a recorded session to the terminal
+│   └── visualize.jl        # QA report + per-symbol per-day diagnostic figures
 ├── test/
-│   ├── runtests.jl         # unit + end-to-end tests (55 assertions)
+│   ├── runtests.jl         # unit + end-to-end tests
 │   └── mock_alpaca.jl      # in-process mock of Alpaca REST + WebSocket APIs
 ├── docs/
-│   ├── design.md           # architecture, data flow, decisions, roadmap
-│   └── providers.md        # 2026 tick-data provider comparison + recommendation
+│   ├── design.md           # architecture, data flow, decisions
+│   ├── providers.md        # 2026 tick-data provider comparison + recommendation
+│   └── roadmap.md          # action plan: hardening, features, analysis phases
 ├── data/                   # (gitignored, created on demand) raw/ + processed/
+├── plots/                  # (gitignored) rendered diagnostic figures
 └── logs/                   # (gitignored) per-session log files
 ```
 
@@ -70,6 +76,9 @@ julia scripts/compact.jl data/raw/<session>_part001.jsonl
 
 # replay a recorded session as a live-like paced stream
 julia scripts/replay.jl data/raw/<session>_part001.jsonl
+
+# QA report (dupes, gaps, ordering, latency) + diagnostic figures → plots/
+julia scripts/visualize.jl data/raw/<session>_part001.jsonl
 ```
 
 From the REPL, the same entry points are `run_stream(cfg)`,
@@ -106,10 +115,16 @@ REST + WebSocket APIs — no credentials or network needed.
 |---|---|
 | Live trade streaming (Alpaca IEX/SIP) | working, tested against mock |
 | Reconnection, stale-connection watchdog, graceful shutdown | working, tested |
+| Market-hours railings (wait-for-open, auto-stop at close) | working, tested |
+| Resource guards (disk space, compaction RAM, channel lag, REST backoff) | working, tested |
 | Batched raw NDJSON persistence + rolling | working, tested |
 | Historical backfill (paginated REST) | working, tested against mock |
-| Compaction to CSV/Arrow | working, tested |
+| Compaction to CSV/Arrow with duplicate removal | working, tested |
+| Session QA report (dupes/gaps/ordering/latency) | working, tested |
+| Diagnostic figures (price, activity, Δt & size CCDFs) | working, inspected |
 | Paced replay | working, tested |
 | Quotes (`q`) / bars (`b`) normalization | accepted on the wire, not yet normalized |
 | Real-time analysis consumers | not started — attach via `tee`/`replay_source` |
 | Live validation against real Alpaca feed | pending (needs API keys + market hours) |
+
+Priorities and phases: `docs/roadmap.md`.

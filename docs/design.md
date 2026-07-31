@@ -94,8 +94,23 @@ path — no data is lost on interrupt (tested).
 - **Stale connections**: HTTP.jl 1.x websockets have no read-idle timeout, so
   a watchdog task force-closes the socket after `stream.stale_timeout_s`
   without a frame, triggering the normal reconnect path.
-- **Market gate**: `/v2/clock` is checked before connecting
-  (`stream.require_market_open`).
+- **Market-hours railings**: `/v2/clock` gates connection
+  (`stream.require_market_open`); `stream.wait_for_open` sleeps until the
+  next open instead of exiting; `stream.stop_at_market_close` schedules a
+  graceful stop at `next_close` so an unattended session doesn't idle on a
+  dead overnight connection. Half-days and holidays are handled implicitly
+  because the clock endpoint, not a local calendar, is authoritative.
+- **Resource guards**: free-disk check before and during a session
+  (`limits.min_free_disk_gb`, mid-session breach stops the stream
+  gracefully); compaction refuses raw batches whose estimated footprint
+  exceeds half of free RAM; a channel-occupancy warning fires when the sink
+  lags the stream (>80% capacity); REST calls back off exponentially on
+  429/5xx honoring `Retry-After`.
+- **Data integrity**: compaction removes exact duplicate prints
+  (reconnection double-delivery, overlapping backfill/live captures);
+  `session_report` audits every capture for duplicates, exchange-time gaps,
+  out-of-order delivery, and clock skew (negative receive latency) before
+  the data is used for science.
 
 ## 6. Dependency decisions (verified 2026-07-30)
 
@@ -120,16 +135,18 @@ every fractional width, offset normalization, config validation, sink
 rolling/never-reopen, corrupt-line recovery, safesave compaction, `tee`
 fan-out, and replay pacing. 55 assertions, all passing.
 
-## 8. Roadmap → analysis pipeline
+## 8. Visualization
 
-1. **Quotes and bars**: extend `schema.jl` (`QuoteTick`, `Bar`), normalize
-   the already-accepted `q`/`b` messages, subscribe via `stream.channels`.
-2. **Analysis taps**: `tee` the live channel into consumers; first candidates
-   are OnlineStats.jl-based streaming estimators feeding the exotic-method
-   experiments; batch analysis reads `data/processed/` with DataFrames.jl.
-3. **Second provider adapter** (Massive/Databento) behind
-   `AbstractProvider` — cross-provider validation of the same tape.
-4. **Bulk historical**: Massive flat-files (S3 `csv.gz` per day, full
-   consolidated tape) if/when REST-paged backfill becomes the bottleneck.
-5. **Storage escalation**: Arrow raw layer + DuckDB queries at higher symbol
-   counts or SIP volume.
+`viz.jl` renders one 2×2 diagnostic figure per (symbol, trading day):
+price path and trades-per-minute over exchange-local time, plus survival
+functions (CCDFs) of inter-arrival times and trade sizes on log-log axes —
+the two distributions whose heavy tails matter first for exotic time series
+methods, and which linear histograms hide. Figures follow the project's
+publication defaults (Computer Modern, boxed axes, no titles); PDF + PNG
+(`px_per_unit = 4`) via `scripts/visualize.jl`, which also prints the
+`session_report` QA table for the same files.
+
+## 9. Roadmap
+
+Phased action plan (hardening → data foundation → analysis pipeline →
+scale) lives in `roadmap.md`.

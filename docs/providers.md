@@ -20,7 +20,47 @@ committing money. Flagged-unverified items are listed at the end.
 | **Twelve Data** | Second-resolution last-price ticker only — **not tick data** at any tier | None | — | — |
 | **IEX Cloud** | **Shut down 2024-08-31.** IEX Exchange still publishes free T+1 HIST pcaps of its own tape (needs a TOPS/pcap parser) | — | — | — |
 
-## Ranked recommendation (solo researcher, few symbols, live + bulk historical)
+## Free-first stack (verified 2026-07-31; latency/recency not required)
+
+For science rather than trading, delayed and T+1 data are as good as live —
+which unlocks a fully free tier most comparisons ignore:
+
+1. **Nasdaq TotalView-ITCH full-day files** — `emi.nasdaq.com/ITCH/`: whole
+   Nasdaq days of raw order-level ITCH 5.0 (every add/cancel/execute,
+   nanosecond stamps, 3.5–18 GB/day gzipped), free, no registration,
+   including recent 2026 dates. The same stream LOBSTER charges £7,499/yr
+   for, minus the reconstruction. Cost: a fixed-layout big-endian binary
+   parser (~20 message types; `TotalViewITCH.jl` exists as a starting point).
+2. **IEX HIST** — `iextrading.com/api/1.0/hist?date=YYYYMMDD`: the only
+   free *unbroken multi-year* US equity tick archive — T+1 pcap of IEX's own
+   tape (TOPS/DEEP, µs stamps, ~14 GB/day) back to late 2016, no auth.
+   Cost: pcap + IEX-TP + TOPS parser (fixed little-endian structs).
+3. **Crypto bulk + live** — Binance `data.binance.vision` (full trade
+   history CSV dumps + free live trade WS), Kraken full-history ZIP (every
+   trade since inception), Bybit `public.bybit.com`, Tardis.dev free
+   first-day-of-each-month across exchanges. Unlimited scale, plain CSV/JSON,
+   zero auth — the methodology sandbox.
+4. **Alpaca free tier** — the US-equities live loop: real-time IEX WS +
+   15-min-delayed SIP WS (`v2/delayed_sip`, 30 symbols; free-tier
+   availability is documented but worth a one-minute auth test) + free
+   historical SIP REST since 2016. Already implemented in this package.
+5. **NYSE Daily TAQ + LOBSTER samples** — free full-market consolidated-tape
+   sample days (`ftp.nyse.com`, ~2 GB pipe-CSV/day) and nanosecond LOB
+   sample CSVs — reference data for validating parsers and pipelines.
+6. **Dukascopy `.bi5`** — decades of free FX/CFD quote ticks over
+   unauthenticated HTTP (LZMA, 20-byte records; trivial to decode) — for
+   long-memory/scaling studies where quotes suffice.
+
+Paid escalation, in order of value: **Databento** usage-based (start on the
+$125 signup credit; ~$10/symbol-year Nasdaq trades) → **FirstRate Data**
+($19.95–49.95/ticker one-off, 15-year tick archives) → subscriptions
+(Alpaca $99/mo live SIP; Massive $79/mo flat files; Kibot $5,940 one-time
+full-universe tick archive since 2009 incl. delisted).
+
+Not viable: SEC MIDAS (aggregates only), WRDS/TAQ (institution-gated),
+IEX Cloud (dead since 2024-08).
+
+## Ranked recommendation (if real-time live streaming matters)
 
 1. **Alpaca free tier now, $99/mo SIP when live fidelity matters** — the only
    $0 complete loop: real-time IEX ticks + free historical SIP REST through

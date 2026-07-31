@@ -54,6 +54,28 @@ function stop!(s::LiveSession)
 end
 
 """
+    schedule_close_stop!(s::LiveSession, close_ns; grace_s = 5.0) -> Task
+
+Spawn a guard task that gracefully [`stop!`](@ref)s the session once the
+wall clock passes `close_ns` (ns since epoch, e.g. the market's
+`next_close`) plus `grace_s`. Without this, a streamer left unattended sits
+on a silent overnight connection until the session deadline.
+"""
+function schedule_close_stop!(s::LiveSession, close_ns::Int64; grace_s::Real = 5.0)
+    return Threads.@spawn begin
+        while !s.stop[]
+            remaining = (close_ns - now_ns()) / 1e9 + grace_s
+            remaining <= 0 && break
+            sleep(min(remaining, 5.0))
+        end
+        if !s.stop[]
+            @info "market close reached — stopping session"
+            stop!(s)
+        end
+    end
+end
+
+"""
     stream_protocol!(ch, p::AbstractProvider, cfg, s::LiveSession)
 
 Provider interface: run one connect→auth→subscribe→stream cycle, pushing

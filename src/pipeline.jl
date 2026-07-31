@@ -71,23 +71,53 @@ function run_stream(cfg::Config; provider::Union{AbstractProvider, Nothing} = no
         provider = AlpacaProvider(cfg, key, secret)
     end
 
-    if cfg.require_market_open
+    mkpath(cfg.raw_dir)
+    free = free_disk_gb(cfg.raw_dir)
+    free < cfg.min_free_disk_gb &&
+        error("only $(round(free; digits = 2)) GiB free on $(cfg.raw_dir), " *
+              "below limits.min_free_disk_gb = $(cfg.min_free_disk_gb) — not starting")
+
+    clock = nothing
+    if cfg.require_market_open || cfg.stop_at_market_close
         clock = market_clock(provider)
-        if !clock.is_open
-            @info "market closed — not streaming" next_open = clock.next_open
-            return (; ticks = 0, raw_files = String[])
+        if !clock.is_open && cfg.require_market_open
+            if cfg.wait_for_open
+                wait_s = (rfc3339_to_ns(clock.next_open) - now_ns()) / 1e9 + 10  # settle past the bell
+                @info "market closed — waiting for open" next_open = clock.next_open hours =
+                    round(wait_s / 3600; digits = 2)
+                sleep(max(wait_s, 0.0))
+                clock = market_clock(provider)          # refresh next_close for the new session
+            else
+                @info "market closed — not streaming (set stream.wait_for_open to wait)" next_open =
+                    clock.next_open
+                return (; ticks = 0, raw_files = String[])
+            end
         end
-        @info "market open" next_close = clock.next_close
+        clock.is_open && @info "market open" next_close = clock.next_close
     end
 
     session = live_source(provider, cfg)
+    cfg.stop_at_market_close && clock !== nothing &&
+        schedule_close_stop!(session, rfc3339_to_ns(String(clock.next_close)))
     sink = open_raw_sink(cfg.raw_dir, sid; max_mb = cfg.max_raw_file_mb)
     @info "session started" id = sid raw = sink.path symbols = cfg.symbols
 
+    on_flush = function (n, tot)
+        @info "flushed batch" batch = n total = tot
+        occ = Base.n_avail(session.channel)
+        occ > 0.8 * cfg.channel_capacity &&
+            @warn "tick channel nearly full — sink is lagging the stream" occupancy = occ capacity =
+                cfg.channel_capacity
+        f = free_disk_gb(cfg.raw_dir)
+        if f < cfg.min_free_disk_gb
+            @error "free disk below limit — stopping session" free_gb = round(f; digits = 2)
+            stop!(session)
+        end
+    end
     sink_task = Threads.@spawn run_sink!(session.channel, sink;
         flush_interval_s = cfg.flush_interval_s,
         flush_max_ticks = cfg.flush_max_ticks,
-        on_flush = (n, tot) -> @info("flushed batch", batch = n, total = tot))
+        on_flush)
 
     ticks = 0
     try
@@ -124,6 +154,11 @@ function run_backfill(cfg::Config; provider::Union{AbstractProvider, Nothing} = 
         key, secret = load_credentials!()
         provider = AlpacaProvider(cfg, key, secret)
     end
+    mkpath(cfg.raw_dir)
+    free = free_disk_gb(cfg.raw_dir)
+    free < cfg.min_free_disk_gb &&
+        error("only $(round(free; digits = 2)) GiB free on $(cfg.raw_dir), " *
+              "below limits.min_free_disk_gb = $(cfg.min_free_disk_gb) — not starting")
     sink = open_raw_sink(cfg.raw_dir, sid; max_mb = cfg.max_raw_file_mb)
     prog = Progress(length(cfg.symbols); desc = "Backfill: ", enabled = isinteractive())
     for sym in cfg.symbols

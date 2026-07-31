@@ -6,6 +6,7 @@
 #         subscription → trade batch → close. Per-connection behavior is
 #         scripted via `MockPlan` to test reconnection and fatal errors.
 
+using Dates
 using HTTP
 using JSON3
 
@@ -72,10 +73,16 @@ two pages linked by `next_page_token = "page2"`.
 """
 function start_mock_rest(; port::Integer, trades_per_page::Integer = 3)
     router = HTTP.Router()
+    # next_close must lie in the future or the client's close-guard would
+    # immediately stop every test session.
     HTTP.register!(router, "GET", "/v2/clock",
-        _ -> HTTP.Response(200, JSON3.write((; is_open = true,
-            next_open = "2026-07-31T09:30:00-04:00",
-            next_close = "2026-07-30T16:00:00-04:00"))))
+        _ -> begin
+            fmt = t -> Dates.format(t, dateformat"yyyy-mm-dd\THH:MM:SS") * "Z"
+            now = Dates.now(Dates.UTC)
+            HTTP.Response(200, JSON3.write((; is_open = true,
+                next_open = fmt(now + Dates.Hour(18)),
+                next_close = fmt(now + Dates.Hour(1)))))
+        end)
     HTTP.register!(router, "GET", "/v2/stocks/{symbol}/trades", function (req)
         sym = HTTP.getparams(req)["symbol"]
         q = HTTP.queryparams(HTTP.URI(req.target))
