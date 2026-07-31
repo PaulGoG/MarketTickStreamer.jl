@@ -2,7 +2,7 @@
 
 julia_version = "1.12.6"
 manifest_format = "2.0"
-project_hash = "070c5fa99e2a2628069cd039e401084083e86b36"
+project_hash = "21b5681323f6b90e2878eb024b56a7254286988b"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -1602,7 +1602,7 @@ uuid = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 version = "1.11.0"
 
 [[deps.TickStreamer]]
-deps = ["Arrow", "CSV", "DataFrames", "Dates", "DotEnv", "HTTP", "JSON3", "Logging", "LoggingExtras", "ProgressMeter", "TOML", "TimeZones"]
+deps = ["Arrow", "CSV", "CairoMakie", "DataFrames", "Dates", "DotEnv", "HTTP", "JSON3", "Logging", "LoggingExtras", "MathTeXEngine", "ProgressMeter", "Statistics", "TOML", "TimeZones"]
 path = "."
 uuid = "57360e3f-416d-4026-814a-7f453c6dc1fa"
 version = "0.1.0"

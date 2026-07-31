@@ -57,10 +57,11 @@ function session_figure(trades::Vector{Trade}; tz::TimeZone = tz"America/New_Yor
 
     fig = Figure(size = (1280, 960))
 
-    ax1 = Axis(fig[1, 1]; xlabel = "exchange time (h)", ylabel = "price (USD)")
+    ax1 = Axis(fig[1, 1]; xlabel = "exchange time [h]", ylabel = "price [USD]")
     lines!(ax1, hours, prices; linewidth = 1.2)
 
-    ax2 = Axis(fig[1, 2]; xlabel = "exchange time (h)", ylabel = "trades / min")
+    ax2 = Axis(fig[1, 2]; xlabel = "exchange time [h]",
+               ylabel = L"trade rate $[\mathrm{min}^{-1}]$")
     minute = floor.(Int, hours .* 60)
     lo, hi = extrema(minute)
     counts = zeros(Int, hi - lo + 1)
@@ -71,13 +72,13 @@ function session_figure(trades::Vector{Trade}; tz::TimeZone = tz"America/New_Yor
 
     dts = diff([t.time_ns for t in ts]) ./ NS_PER_SEC
     x3, y3 = _ccdf(dts)
-    ax3 = Axis(fig[2, 1]; xlabel = "inter-arrival Δt (s)", ylabel = "P(Δt > x)",
-               xscale = log10, yscale = log10)
+    ax3 = Axis(fig[2, 1]; xlabel = L"inter-arrival $\Delta t$ [s]",
+               ylabel = L"P(\Delta t > x)", xscale = log10, yscale = log10)
     isempty(x3) || scatterlines!(ax3, x3, y3; markersize = 4, linewidth = 1.0)
 
     x4, y4 = _ccdf([t.size for t in ts])
-    ax4 = Axis(fig[2, 2]; xlabel = "trade size (shares)", ylabel = "P(S > s)",
-               xscale = log10, yscale = log10)
+    ax4 = Axis(fig[2, 2]; xlabel = "trade size [shares]",
+               ylabel = L"P(S > s)", xscale = log10, yscale = log10)
     isempty(x4) || scatterlines!(ax4, x4, y4; markersize = 4, linewidth = 1.0)
 
     return fig

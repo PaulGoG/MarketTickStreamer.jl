@@ -14,6 +14,7 @@ module TickStreamer
 
 using Dates
 using Logging
+using Statistics
 using TOML
 
 using Arrow

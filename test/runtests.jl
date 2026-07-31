@@ -50,7 +50,7 @@ end
     cfg = load_config()   # the repo's own config must always be valid
     @test cfg.provider == "alpaca"
     @test !isempty(cfg.symbols)
-    @test cfg.feed in ("iex", "sip")
+    @test cfg.feed in ("iex", "delayed_sip", "sip")
     mktempdir() do dir
         bad = joinpath(dir, "bad.toml")
         write(bad, "[provider]\nfeed = \"nope\"\n[stream]\nsymbols = [\"A\"]\n")

@@ -113,7 +113,7 @@ the wire. `on_page(n_page, n_total)` is called per page for progress.
 """
 function historical_trades(p::AlpacaProvider, symbol::AbstractString,
                            start_date::Date, end_date::Date;
-                           feed::AbstractString = "sip",   # historical SIP is free-tier accessible
+                           feed::AbstractString = "sip",
                            page_limit::Integer = 10_000, rate_sleep_s::Real = 0.35,
                            on_page = nothing)
     trades = Trade[]

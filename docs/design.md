@@ -133,7 +133,7 @@ stop, batched persistence, compaction, replay — runs end-to-end in CI with
 no credentials and no network. Unit tests cover timestamp round-trips at
 every fractional width, offset normalization, config validation, sink
 rolling/never-reopen, corrupt-line recovery, safesave compaction, `tee`
-fan-out, and replay pacing. 55 assertions, all passing.
+fan-out, and replay pacing.
 
 ## 8. Visualization
 
@@ -148,5 +148,6 @@ publication defaults (Computer Modern, boxed axes, no titles); PDF + PNG
 
 ## 9. Roadmap
 
-Phased action plan (hardening → data foundation → analysis pipeline →
-scale) lives in `roadmap.md`.
+The phased action plan (remediation → data foundation → analysis pipeline →
+scale) and the provider-landscape research are maintained in the workspace
+notes, outside this repository.

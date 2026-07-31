@@ -39,9 +39,7 @@ real-time analysis methods.
 │   ├── runtests.jl         # unit + end-to-end tests
 │   └── mock_alpaca.jl      # in-process mock of Alpaca REST + WebSocket APIs
 ├── docs/
-│   ├── design.md           # architecture, data flow, decisions
-│   ├── providers.md        # 2026 tick-data provider comparison + recommendation
-│   └── roadmap.md          # action plan: hardening, features, analysis phases
+│   └── design.md           # architecture, data flow, decisions
 ├── data/                   # (gitignored, created on demand) raw/ + processed/
 ├── plots/                  # (gitignored) rendered diagnostic figures
 └── logs/                   # (gitignored) per-session log files
@@ -127,4 +125,5 @@ REST + WebSocket APIs — no credentials or network needed.
 | Real-time analysis consumers | not started — attach via `tee`/`replay_source` |
 | Live validation against real Alpaca feed | pending (needs API keys + market hours) |
 
-Priorities and phases: `docs/roadmap.md`.
+Provider research and the phased action plan are maintained in the
+workspace notes, outside this repository.

@@ -7,7 +7,8 @@
 
 # Identity of a tick for deduplication: provider id alone is not unique
 # across symbols/tapes, and id may be 0, so use the full print identity.
-_tick_key(t::Trade) = (t.symbol, t.time_ns, t.id, t.price, t.size, t.exchange)
+const TickKey = Tuple{String, Int64, Int64, Float64, Float64, String}
+_tick_key(t::Trade) = (t.symbol, t.time_ns, t.id, t.price, t.size, t.exchange)::TickKey
 
 """
     dedup_trades(trades) -> Vector{Trade}
@@ -17,7 +18,7 @@ size, exchange), keeping first occurrence and preserving order. Guards
 against reconnection double-delivery and overlapping backfill/live captures.
 """
 function dedup_trades(trades::AbstractVector{Trade})
-    seen = Set{NTuple{6, Any}}()
+    seen = Set{TickKey}()
     out = Trade[]
     sizehint!(out, length(trades))
     for t in trades
@@ -67,7 +68,7 @@ function session_report(paths::AbstractVector{<:AbstractString}; gap_threshold_s
             n_out_of_order = n_ooo,
             max_gap_s = isempty(gaps) ? 0.0 : round(maximum(gaps); digits = 3),
             n_gaps = length(big),
-            median_latency_ms = isempty(lats) ? NaN : round(median_(lats); digits = 3),
+            median_latency_ms = isempty(lats) ? NaN : round(median(lats); digits = 3),
             n_negative_latency = count(<(0.0), lats),
         ))
     end
@@ -75,13 +76,6 @@ function session_report(paths::AbstractVector{<:AbstractString}; gap_threshold_s
 end
 
 session_report(path::AbstractString; kwargs...) = session_report([path]; kwargs...)
-
-# Median without a Statistics dependency on the hot path's package.
-function median_(xs::Vector{Float64})
-    s = sort(xs)
-    n = length(s)
-    return isodd(n) ? s[(n + 1) ÷ 2] : (s[n ÷ 2] + s[n ÷ 2 + 1]) / 2
-end
 
 """
     free_disk_gb(path) -> Float64
