@@ -6,7 +6,7 @@
 # are used. Figures: price path, trades/min, inter-arrival CCDF, size CCDF.
 
 include(joinpath(@__DIR__, "startup.jl"))
-using TickStreamer
+using MarketTickStreamer
 
 function main()
     cfg_path = joinpath(@__DIR__, "..", "config", "config.toml")

@@ -1,4 +1,4 @@
-# TickStreamer.jl
+# MarketTickStreamer.jl
 
 Provider-agnostic tick-by-tick market data acquisition in pure Julia, built
 for scientific time series research: live WebSocket streaming, historical
@@ -16,7 +16,7 @@ real-time analysis methods.
 ├── config/
 │   └── config.toml         # ALL tunables: provider, symbols, storage, limits, replay
 ├── src/
-│   ├── TickStreamer.jl     # module root: imports, exports, includes
+│   ├── MarketTickStreamer.jl     # module root: imports, exports, includes
 │   ├── schema.jl           # Trade struct; Int64-ns timestamps; RFC 3339 parsing
 │   ├── config.jl           # TOML loading/validation; .env credential loading
 │   ├── sinks.jl            # raw NDJSON sink (append-only, rolling); compaction

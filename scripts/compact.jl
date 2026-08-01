@@ -3,7 +3,7 @@
 #   julia scripts/compact.jl <raw_file.jsonl>... [--config path/to/config.toml]
 
 include(joinpath(@__DIR__, "startup.jl"))
-using TickStreamer
+using MarketTickStreamer
 
 function main()
     cfg_path = joinpath(@__DIR__, "..", "config", "config.toml")

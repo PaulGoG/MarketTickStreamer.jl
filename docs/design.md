@@ -1,4 +1,4 @@
-# TickStreamer — Design
+# MarketTickStreamer — Design
 
 Goal: acquire tick-by-tick (trade-level) market data — live and historical —
 as the substrate for scientifically testing exotic time series analysis
@@ -9,7 +9,7 @@ the reasoning behind each decision; the README covers usage.
 
 ```
                        ┌──────────────────────────────────────────────────┐
- config/config.toml ──▶│                   TickStreamer                   │
+ config/config.toml ──▶│                   MarketTickStreamer                   │
  .env (credentials) ──▶│                                                  │
                        │   AbstractProvider  (Alpaca today; adapter per   │
                        │        │            provider, multiple dispatch) │

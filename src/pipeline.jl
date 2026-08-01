@@ -92,7 +92,7 @@ function write_session_meta(cfg::Config, sid::AbstractString;
             "git_commit" => _git_commit(),
             "git_dirty" => _git_dirty(),
             "julia_version" => string(VERSION),
-            "package_version" => string(something(pkgversion(TickStreamer), "unknown")),
+            "package_version" => string(something(pkgversion(MarketTickStreamer), "unknown")),
             "hostname" => gethostname(),
         ),
         "config" => Dict{String, Any}(String(f) => _toml_value(getfield(cfg, f))

@@ -7,7 +7,7 @@
 # loop for any function of `Channel{Trade}`.
 
 include(joinpath(@__DIR__, "startup.jl"))
-using TickStreamer
+using MarketTickStreamer
 using Printf
 
 function main()

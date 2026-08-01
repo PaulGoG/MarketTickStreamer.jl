@@ -1,4 +1,4 @@
-# TickStreamer configuration. Credentials come from `.env` (see `.env.example`).
+# MarketTickStreamer configuration. Credentials come from `.env` (see `.env.example`).
 
 [provider]
 name = "alpaca"          # provider adapter; one of: "alpaca"

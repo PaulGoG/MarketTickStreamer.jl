@@ -3,7 +3,7 @@
 #   julia --threads=auto scripts/stream.jl [path/to/config.toml]
 
 include(joinpath(@__DIR__, "startup.jl"))
-using TickStreamer
+using MarketTickStreamer
 
 function main()
     cfg = load_config(isempty(ARGS) ? joinpath(@__DIR__, "..", "config", "config.toml") : ARGS[1])

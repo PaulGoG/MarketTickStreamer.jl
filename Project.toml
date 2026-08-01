@@ -1,4 +1,4 @@
-name = "TickStreamer"
+name = "MarketTickStreamer"
 uuid = "57360e3f-416d-4026-814a-7f453c6dc1fa"
 version = "0.1.0"
 authors = ["paulgog"]

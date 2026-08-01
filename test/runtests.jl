@@ -4,7 +4,7 @@ using TimeZones
 using CSV
 using DataFrames
 using TOML
-using TickStreamer
+using MarketTickStreamer
 
 include("mock_alpaca.jl")
 
@@ -22,11 +22,11 @@ function freeport(start)
     end
 end
 
-@testset "TickStreamer" begin
+@testset "MarketTickStreamer" begin
 
 @testset "schema / timestamps" begin
     ns = rfc3339_to_ns("2026-07-30T14:30:00.123456789Z")
-    @test ns % TickStreamer.NS_PER_SEC == 123_456_789
+    @test ns % MarketTickStreamer.NS_PER_SEC == 123_456_789
     @test ns_to_rfc3339(ns) == "2026-07-30T14:30:00.123456789Z"
     # lossless round-trip at all fractional widths
     for frac in ("1", "123", "123456", "999999999")
@@ -37,7 +37,7 @@ end
     @test rfc3339_to_ns("2026-07-30T10:30:00-04:00") == rfc3339_to_ns("2026-07-30T14:30:00Z")
     @test rfc3339_to_ns("2026-07-30T16:30:00+02:00") == rfc3339_to_ns("2026-07-30T14:30:00Z")
     # no fractional part
-    @test rfc3339_to_ns("2026-07-30T14:30:00Z") % TickStreamer.NS_PER_SEC == 0
+    @test rfc3339_to_ns("2026-07-30T14:30:00Z") % MarketTickStreamer.NS_PER_SEC == 0
     @test_throws ArgumentError rfc3339_to_ns("garbage")
     @test_throws ArgumentError rfc3339_to_ns("2026-07-30 14:30")
     # 2026-07-30 20:30 UTC is 16:30 in New York (same trading day),
@@ -189,9 +189,9 @@ end
     @test free_disk_gb(pwd()) > 0.0
     # feed delay drives the delayed-tape railing shifts
     mk_provider(feed) = AlpacaProvider(MOCK_KEY, MOCK_SECRET, feed, "", "", "")
-    @test TickStreamer.feed_delay_ns(mk_provider("iex")) == 0
-    @test TickStreamer.feed_delay_ns(mk_provider("delayed_sip")) ==
-          900 * TickStreamer.NS_PER_SEC
+    @test MarketTickStreamer.feed_delay_ns(mk_provider("iex")) == 0
+    @test MarketTickStreamer.feed_delay_ns(mk_provider("delayed_sip")) ==
+          900 * MarketTickStreamer.NS_PER_SEC
 end
 
 @testset "tee fan-out" begin

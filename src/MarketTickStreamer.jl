@@ -1,5 +1,5 @@
 """
-    TickStreamer
+    MarketTickStreamer
 
 Provider-agnostic tick-by-tick market data acquisition for scientific time
 series research: live WebSocket streaming, historical REST backfill,
@@ -10,7 +10,7 @@ Everything is driven by `config/config.toml`; credentials come from `.env`.
 Entry points: [`run_stream`](@ref), [`run_backfill`](@ref),
 [`replay_source`](@ref), [`compact_raw`](@ref).
 """
-module TickStreamer
+module MarketTickStreamer
 
 using Dates
 using Logging
