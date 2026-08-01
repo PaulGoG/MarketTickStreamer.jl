@@ -123,7 +123,8 @@ REST + WebSocket APIs — no credentials or network needed.
 | Paced replay | working, tested |
 | Quotes (`q`) / bars (`b`) normalization | accepted on the wire, not yet normalized |
 | Real-time analysis consumers | not started — attach via `tee`/`replay_source` |
-| Live validation against real Alpaca feed | pending (needs API keys + market hours) |
+| Credential validation (paper account): clock REST, historical SIP REST, WS auth on `iex` and `delayed_sip` | verified 2026-08-01 |
+| Live capture validation against real Alpaca feed | pending (market hours) |
 
 Provider research and the phased action plan are maintained in the
 workspace notes, outside this repository.
