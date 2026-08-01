@@ -90,6 +90,9 @@ consumers are developed offline (see `docs/design.md`).
 - `data/raw/` — append-only NDJSON, one normalized `Trade` per line,
   session-stamped filenames, size-rolled parts, never overwritten. Source of
   truth; line-by-line recoverable after a crash.
+- `data/raw/<session_id>.meta.toml` — provenance sidecar per session:
+  session summary, git commit, Julia/package versions, full effective
+  configuration snapshot.
 - `data/processed/SYMBOL/YYYY-MM-DD.csv|.arrow` — compacted, time-sorted
   per-day files for the analysis pipeline. Existing files are never
   overwritten (` #N` suffix siblings instead).
@@ -113,7 +116,9 @@ REST + WebSocket APIs — no credentials or network needed.
 |---|---|
 | Live trade streaming (Alpaca IEX/SIP) | working, tested against mock |
 | Reconnection, stale-connection watchdog, graceful shutdown | working, tested |
-| Market-hours railings (wait-for-open, auto-stop at close) | working, tested |
+| Market-hours railings (wait-for-open, auto-stop at close, incl. half-day early close) | working, tested |
+| Delayed-feed handling (railings shifted by feed delay; tape tail captured) | working, tested |
+| Per-session provenance sidecars (`.meta.toml`) | working, tested |
 | Resource guards (disk space, compaction RAM, channel lag, REST backoff) | working, tested |
 | Batched raw NDJSON persistence + rolling | working, tested |
 | Historical backfill (paginated REST) | working, tested against mock |

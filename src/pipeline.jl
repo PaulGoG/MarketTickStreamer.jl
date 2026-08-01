@@ -51,6 +51,58 @@ end
 session_id(cfg::Config) =
     "$(cfg.provider)_$(cfg.feed)_$(Dates.format(Dates.now(UTC), dateformat"yyyymmdd-HHMMSS"))"
 
+_git_commit() = try
+    strip(read(pipeline(`git -C $(PROJECT_ROOT) rev-parse HEAD`; stderr = devnull), String))
+catch
+    "unknown"
+end
+
+_git_dirty() = try
+    !isempty(strip(read(pipeline(`git -C $(PROJECT_ROOT) status --porcelain`; stderr = devnull), String)))
+catch
+    false
+end
+
+_toml_value(v) = v
+_toml_value(v::Date) = string(v)
+_toml_value(v::AbstractVector) = [_toml_value(x) for x in v]
+_toml_value(v::Dict) = Dict{String, Any}(string(k) => _toml_value(x) for (k, x) in v)
+
+"""
+    write_session_meta(cfg, sid; ticks, raw_files, started_utc, finished_utc) -> String
+
+Persist a provenance sidecar `<raw_dir>/<sid>.meta.toml` next to the session's
+raw files: session summary (id, span, tick count, file list), provenance
+(git commit + dirty flag, Julia and package versions, hostname), and the full
+effective configuration snapshot. Never overwrites (safesave). Returns the
+path written.
+"""
+function write_session_meta(cfg::Config, sid::AbstractString;
+                            ticks::Integer, raw_files::Vector{String},
+                            started_utc::DateTime, finished_utc::DateTime)
+    meta = Dict{String, Any}(
+        "session" => Dict{String, Any}(
+            "id" => String(sid),
+            "started_utc" => string(started_utc),
+            "finished_utc" => string(finished_utc),
+            "ticks" => Int(ticks),
+            "raw_files" => [basename(f) for f in raw_files],
+        ),
+        "provenance" => Dict{String, Any}(
+            "git_commit" => _git_commit(),
+            "git_dirty" => _git_dirty(),
+            "julia_version" => string(VERSION),
+            "package_version" => string(something(pkgversion(TickStreamer), "unknown")),
+            "hostname" => gethostname(),
+        ),
+        "config" => Dict{String, Any}(String(f) => _toml_value(getfield(cfg, f))
+                                      for f in fieldnames(Config)),
+    )
+    path = _safepath(joinpath(cfg.raw_dir, "$(sid).meta.toml"))
+    open(io -> TOML.print(io, meta), path, "w")
+    return path
+end
+
 """
     run_stream(cfg::Config; provider = nothing) -> NamedTuple
 
@@ -65,11 +117,14 @@ Returns `(; ticks, raw_files)`. Blocks until the session ends.
 """
 function run_stream(cfg::Config; provider::Union{AbstractProvider, Nothing} = nothing)
     sid = session_id(cfg)
+    started_utc = Dates.now(UTC)
     global_logger(setup_logging(cfg; session_id = sid))
     if provider === nothing
         key, secret = load_credentials!()
         provider = AlpacaProvider(cfg, key, secret)
     end
+    delay = feed_delay_ns(provider)
+    delay > 0 && @info "delayed feed — railings shifted" delay_s = delay ÷ NS_PER_SEC
 
     mkpath(cfg.raw_dir)
     free = free_disk_gb(cfg.raw_dir)
@@ -82,7 +137,9 @@ function run_stream(cfg::Config; provider::Union{AbstractProvider, Nothing} = no
         clock = market_clock(provider)
         if !clock.is_open && cfg.require_market_open
             if cfg.wait_for_open
-                wait_s = (rfc3339_to_ns(clock.next_open) - now_ns()) / 1e9 + 10  # settle past the bell
+                # settle past the bell, plus the feed's intrinsic delay: on a
+                # delayed feed the first post-open data cannot arrive earlier.
+                wait_s = (rfc3339_to_ns(clock.next_open) + delay - now_ns()) / 1e9 + 10
                 @info "market closed — waiting for open" next_open = clock.next_open hours =
                     round(wait_s / 3600; digits = 2)
                 sleep(max(wait_s, 0.0))
@@ -97,8 +154,11 @@ function run_stream(cfg::Config; provider::Union{AbstractProvider, Nothing} = no
     end
 
     session = live_source(provider, cfg)
+    # Delayed feeds keep transmitting the tape tail past the bell; allow an
+    # extra minute for late-reported closing prints on top of the delay.
     cfg.stop_at_market_close && clock !== nothing &&
-        schedule_close_stop!(session, rfc3339_to_ns(String(clock.next_close)))
+        schedule_close_stop!(session, rfc3339_to_ns(String(clock.next_close)) + delay +
+                                      (delay > 0 ? 60 * NS_PER_SEC : Int64(0)))
     sink = open_raw_sink(cfg.raw_dir, sid; max_mb = cfg.max_raw_file_mb)
     @info "session started" id = sid raw = sink.path symbols = cfg.symbols
 
@@ -133,9 +193,11 @@ function run_stream(cfg::Config; provider::Union{AbstractProvider, Nothing} = no
         try ticks = fetch(sink_task) catch end   # final drain + flush
         close_sink!(sink)
     end
-    files = filter(f -> startswith(basename(f), sid),
+    files = filter(f -> startswith(basename(f), sid) && endswith(f, ".jsonl"),
                    readdir(cfg.raw_dir; join = true, sort = true))
-    @info "session finished" ticks files = length(files)
+    meta = write_session_meta(cfg, sid; ticks, raw_files = files,
+                              started_utc, finished_utc = Dates.now(UTC))
+    @info "session finished" ticks files = length(files) meta
     return (; ticks, raw_files = files)
 end
 
@@ -149,6 +211,7 @@ return the processed file paths.
 """
 function run_backfill(cfg::Config; provider::Union{AbstractProvider, Nothing} = nothing)
     sid = "backfill_" * session_id(cfg)
+    started_utc = Dates.now(UTC)
     global_logger(setup_logging(cfg; session_id = sid))
     if provider === nothing
         key, secret = load_credentials!()
@@ -161,6 +224,7 @@ function run_backfill(cfg::Config; provider::Union{AbstractProvider, Nothing} = 
               "below limits.min_free_disk_gb = $(cfg.min_free_disk_gb) — not starting")
     sink = open_raw_sink(cfg.raw_dir, sid; max_mb = cfg.max_raw_file_mb)
     prog = Progress(length(cfg.symbols); desc = "Backfill: ", enabled = isinteractive())
+    total = 0
     for sym in cfg.symbols
         trades = historical_trades(provider, sym, cfg.backfill_start, cfg.backfill_end;
             feed = cfg.backfill_feed,
@@ -168,12 +232,15 @@ function run_backfill(cfg::Config; provider::Union{AbstractProvider, Nothing} = 
             rate_sleep_s = cfg.backfill_rate_sleep_s,
             on_page = (n, tot) -> @debug("page", symbol = sym, rows = n, total = tot))
         write_batch!(sink, trades)
+        total += length(trades)
         @info "backfilled" symbol = sym trades = length(trades)
         next!(prog)
     end
     close_sink!(sink)
-    files = filter(f -> startswith(basename(f), sid),
+    files = filter(f -> startswith(basename(f), sid) && endswith(f, ".jsonl"),
                    readdir(cfg.raw_dir; join = true, sort = true))
+    write_session_meta(cfg, sid; ticks = total, raw_files = files,
+                       started_utc, finished_utc = Dates.now(UTC))
     processed = compact_raw(files, cfg.processed_dir; format = cfg.processed_format)
     @info "backfill compacted" files = processed
     return processed

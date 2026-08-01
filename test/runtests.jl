@@ -3,6 +3,7 @@ using Dates
 using TimeZones
 using CSV
 using DataFrames
+using TOML
 using TickStreamer
 
 include("mock_alpaca.jl")
@@ -186,6 +187,11 @@ end
     wait(t)
     @test s.stop[]
     @test free_disk_gb(pwd()) > 0.0
+    # feed delay drives the delayed-tape railing shifts
+    mk_provider(feed) = AlpacaProvider(MOCK_KEY, MOCK_SECRET, feed, "", "", "")
+    @test TickStreamer.feed_delay_ns(mk_provider("iex")) == 0
+    @test TickStreamer.feed_delay_ns(mk_provider("delayed_sip")) ==
+          900 * TickStreamer.NS_PER_SEC
 end
 
 @testset "tee fan-out" begin
@@ -244,6 +250,36 @@ end
             files = compact_raw(result.raw_files, joinpath(dir, "proc"); format = "csv")
             @test !isempty(files)
             @test length(collect(replay_source(result.raw_files; pace = "max"))) == 14
+            # provenance sidecar written next to the raw files
+            metas = filter(endswith(".meta.toml"), readdir(cfg.raw_dir; join = true))
+            @test length(metas) == 1
+            meta = TOML.parsefile(metas[1])
+            @test meta["session"]["ticks"] == 14
+            @test meta["session"]["raw_files"] == basename.(result.raw_files)
+            @test meta["config"]["feed"] == "iex"
+            @test occursin(r"^([0-9a-f]{40}|unknown)$", meta["provenance"]["git_commit"])
+        finally
+            close(ws); close(rest)
+        end
+    end
+end
+
+@testset "live E2E: early market close stops the session gracefully" begin
+    mktempdir() do dir
+        ws_port, rest_port = freeport(9151), freeport(9171)
+        # one batch, then the connection idles: only the close guard can end
+        # this session before the 30 s linger or the session deadline.
+        plan = MockPlan([[mock_trade("AAPL", i) for i in 1:3]]; linger_s = 30.0)
+        ws, nconn = start_mock_ws(plan; port = ws_port)
+        rest = start_mock_rest(; port = rest_port, close_in_s = 2.0)
+        try
+            cfg = load_config(mock_config_toml(dir; ws_port, rest_port))
+            p = AlpacaProvider(cfg, MOCK_KEY, MOCK_SECRET)
+            t0 = time()
+            result = run_stream(cfg; provider = p)
+            @test result.ticks == 3
+            @test nconn[] == 1                 # close guard, not reconnect exhaustion
+            @test time() - t0 < 20.0           # well before linger end and deadline
         finally
             close(ws); close(rest)
         end

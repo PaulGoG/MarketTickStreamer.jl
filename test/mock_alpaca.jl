@@ -14,18 +14,21 @@ const MOCK_KEY = "testkey"
 const MOCK_SECRET = "testsecret"
 
 """
-    MockPlan(batches; fatal_after = length(batches), fatal_code = 406)
+    MockPlan(batches; fatal_after = length(batches), fatal_code = 406, linger_s = 0.0)
 
-Scripted WS behavior: connection `k` streams `batches[k]` then closes;
-connections past `fatal_after` receive a fatal error message instead.
+Scripted WS behavior: connection `k` streams `batches[k]`, then idles for
+`linger_s` before closing (to exercise client-side stops on a live
+connection); connections past `fatal_after` receive a fatal error message
+instead.
 """
 struct MockPlan
     batches::Vector{Vector{Any}}
     fatal_after::Int
     fatal_code::Int
+    linger_s::Float64
 end
-MockPlan(batches; fatal_after = length(batches), fatal_code = 406) =
-    MockPlan(batches, fatal_after, fatal_code)
+MockPlan(batches; fatal_after = length(batches), fatal_code = 406, linger_s = 0.0) =
+    MockPlan(batches, fatal_after, fatal_code, linger_s)
 
 mock_trade(sym, i; price = 100.0 + i, size = 10 * i,
            t = "2026-07-30T14:30:$(lpad(i % 60, 2, '0')).00000000$(i % 10)Z") =
@@ -61,17 +64,29 @@ function start_mock_ws(plan::MockPlan; port::Integer)
             _send(ws, msg)
             sleep(0.005)
         end
+        # Linger reading (not sleeping): a well-behaved server must keep
+        # servicing the socket so a client CLOSE handshake completes promptly.
+        t0 = time()
+        while time() - t0 < plan.linger_s
+            try
+                HTTP.WebSockets.receive(ws)
+            catch
+                break                     # client closed the connection
+            end
+        end
     end
     return server, nconn
 end
 
 """
-    start_mock_rest(; port, trades_per_page = 3) -> server
+    start_mock_rest(; port, trades_per_page = 3, close_in_s = 3600.0) -> server
 
-REST mock: `/v2/clock` (always open) and `/v2/stocks/{symbol}/trades` with
-two pages linked by `next_page_token = "page2"`.
+REST mock: `/v2/clock` (open, closing `close_in_s` from each query — shrink
+it to simulate a half-day's early close) and `/v2/stocks/{symbol}/trades`
+with two pages linked by `next_page_token = "page2"`.
 """
-function start_mock_rest(; port::Integer, trades_per_page::Integer = 3)
+function start_mock_rest(; port::Integer, trades_per_page::Integer = 3,
+                         close_in_s::Real = 3600.0)
     router = HTTP.Router()
     # next_close must lie in the future or the client's close-guard would
     # immediately stop every test session.
@@ -81,7 +96,7 @@ function start_mock_rest(; port::Integer, trades_per_page::Integer = 3)
             now = Dates.now(Dates.UTC)
             HTTP.Response(200, JSON3.write((; is_open = true,
                 next_open = fmt(now + Dates.Hour(18)),
-                next_close = fmt(now + Dates.Hour(1)))))
+                next_close = fmt(now + Dates.Second(round(Int, close_in_s))))))
         end)
     HTTP.register!(router, "GET", "/v2/stocks/{symbol}/trades", function (req)
         sym = HTTP.getparams(req)["symbol"]

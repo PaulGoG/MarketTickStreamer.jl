@@ -33,6 +33,9 @@ end
 
 ws_url(p::AlpacaProvider) = "$(p.ws_base)/$(p.feed)"
 
+# The delayed_sip feed replays the consolidated tape 15 minutes behind.
+feed_delay_ns(p::AlpacaProvider) = p.feed == "delayed_sip" ? 900 * NS_PER_SEC : Int64(0)
+
 rest_headers(p::AlpacaProvider) =
     ["APCA-API-KEY-ID" => p.key, "APCA-API-SECRET-KEY" => p.secret]
 

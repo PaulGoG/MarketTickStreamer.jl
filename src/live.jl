@@ -14,6 +14,17 @@ Supertype for market-data provider adapters. A concrete provider implements
 abstract type AbstractProvider end
 
 """
+    feed_delay_ns(p::AbstractProvider) -> Int64
+
+Intrinsic delay of the provider's configured feed (ns): the wall-clock lag
+between an exchange event and its earliest possible arrival on the wire.
+Zero for real-time feeds. Market-hours railings shift by this amount so a
+delayed session waits out the silent post-open window and captures the
+delayed tape tail after the close.
+"""
+feed_delay_ns(::AbstractProvider) = Int64(0)
+
+"""
     FatalStreamError(msg)
 
 A stream error that must NOT trigger reconnection (bad credentials,
@@ -49,7 +60,16 @@ letting sinks drain and finish.
 function stop!(s::LiveSession)
     s.stop[] = true
     ws = s.ws[]
-    ws === nothing || try close(ws) catch end
+    if ws !== nothing
+        try close(ws) catch end
+        # close() is a handshake; an unresponsive peer that never acks the
+        # CLOSE frame would hang the read loop, so sever the transport after
+        # a short grace if it is still open.
+        Threads.@spawn begin
+            sleep(5.0)
+            try close(ws.io) catch end
+        end
+    end
     return nothing
 end
 

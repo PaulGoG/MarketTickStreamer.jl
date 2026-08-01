@@ -99,7 +99,15 @@ path — no data is lost on interrupt (tested).
   next open instead of exiting; `stream.stop_at_market_close` schedules a
   graceful stop at `next_close` so an unattended session doesn't idle on a
   dead overnight connection. Half-days and holidays are handled implicitly
-  because the clock endpoint, not a local calendar, is authoritative.
+  because the clock endpoint, not a local calendar, is authoritative
+  (early-close behavior is tested end-to-end against a mock clock).
+  Delayed feeds (`delayed_sip`, 15 min) shift both railings by the feed
+  delay via `feed_delay_ns`: the open-wait extends past the silent
+  post-open window and the close guard runs to `next_close + delay + 60 s`
+  so the delayed tape tail is captured, not truncated.
+- **Shutdown robustness**: `close(ws)` is a handshake; a peer that never
+  acks the CLOSE frame would hang the read loop, so `stop!` severs the raw
+  transport after a 5 s grace if the graceful close has not completed.
 - **Resource guards**: free-disk check before and during a session
   (`limits.min_free_disk_gb`, mid-session breach stops the stream
   gracefully); compaction refuses raw batches whose estimated footprint
@@ -111,6 +119,10 @@ path — no data is lost on interrupt (tested).
   `session_report` audits every capture for duplicates, exchange-time gaps,
   out-of-order delivery, and clock skew (negative receive latency) before
   the data is used for science.
+- **Provenance**: every stream/backfill session writes a
+  `<session_id>.meta.toml` sidecar next to its raw files — session summary,
+  git commit + dirty flag, Julia and package versions, hostname, and the
+  full effective configuration snapshot (safesave, never overwritten).
 
 ## 6. Dependency decisions (verified 2026-07-30)
 

@@ -38,7 +38,7 @@ export replay_source
 export AbstractProvider, LiveSession, FatalStreamError, live_source, stop!,
        schedule_close_stop!, tee
 export AlpacaProvider, market_clock, historical_trades
-export run_stream, run_backfill, session_id, setup_logging
+export run_stream, run_backfill, session_id, setup_logging, write_session_meta
 export tick_theme, session_figure, save_session_figures
 
 include("schema.jl")
