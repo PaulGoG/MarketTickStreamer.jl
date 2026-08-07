@@ -37,6 +37,11 @@ end
 # Alpaca error codes that retrying cannot fix.
 const FATAL_WS_CODES = (401, 402, 403, 404, 405, 406, 409, 410, 411)
 
+# Set while a session shuts down deliberately; the logging layer uses it to
+# suppress transport-teardown noise from HTTP.jl internals (an EOFError from
+# a socket we closed ourselves is expected, not an incident).
+const SHUTTING_DOWN = Ref(false)
+
 """
     LiveSession
 
@@ -59,6 +64,7 @@ letting sinks drain and finish.
 """
 function stop!(s::LiveSession)
     s.stop[] = true
+    SHUTTING_DOWN[] = true
     ws = s.ws[]
     if ws !== nothing
         try close(ws) catch end
@@ -146,6 +152,7 @@ Reconnects with jittered exponential backoff
 connection that actually delivered data.
 """
 function live_source(p::AbstractProvider, cfg::Config)
+    SHUTTING_DOWN[] = false
     ch = Channel{Trade}(cfg.channel_capacity)
     session = LiveSession(ch, Ref(false), Ref{Any}(nothing),
                           Ref((; ticks = 0, frames = 0, reconnects = 0)))

@@ -86,7 +86,7 @@ it to simulate a half-day's early close) and `/v2/stocks/{symbol}/trades`
 with two pages linked by `next_page_token = "page2"`.
 """
 function start_mock_rest(; port::Integer, trades_per_page::Integer = 3,
-                         close_in_s::Real = 3600.0)
+                         close_in_s::Real = 3600.0, hits::Ref{Int} = Ref(0))
     router = HTTP.Router()
     # next_close must lie in the future or the client's close-guard would
     # immediately stop every test session.
@@ -99,6 +99,7 @@ function start_mock_rest(; port::Integer, trades_per_page::Integer = 3,
                 next_close = fmt(now + Dates.Second(round(Int, close_in_s))))))
         end)
     HTTP.register!(router, "GET", "/v2/stocks/{symbol}/trades", function (req)
+        hits[] += 1
         sym = HTTP.getparams(req)["symbol"]
         q = HTTP.queryparams(HTTP.URI(req.target))
         page2 = get(q, "page_token", "") == "page2"

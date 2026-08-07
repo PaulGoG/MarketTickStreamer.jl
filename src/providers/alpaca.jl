@@ -103,47 +103,84 @@ function parse_alpaca_trade(msg, recv_ns::Int64; symbol::AbstractString = "")
                  haskey(msg, :i) ? Int64(msg.i) : 0)
 end
 
-"""
-    historical_trades(p, symbol, start_date, end_date;
-                      page_limit = 10_000, rate_sleep_s = 0.35,
-                      on_page = nothing) -> Vector{Trade}
-
-Download all trades for `symbol` in `[start_date, end_date]` (inclusive,
-exchange dates) from `/v2/stocks/{symbol}/trades`, following pagination
-tokens until exhausted. `rate_sleep_s` throttles between pages (free tier:
-200 requests/min). Backfilled records get `recv_ns = 0` — they never crossed
-the wire. `on_page(n_page, n_total)` is called per page for progress.
-"""
-function historical_trades(p::AlpacaProvider, symbol::AbstractString,
-                           start_date::Date, end_date::Date;
-                           feed::AbstractString = "sip",
-                           page_limit::Integer = 10_000, rate_sleep_s::Real = 0.35,
-                           on_page = nothing)
-    trades = Trade[]
+# Core pagination loop: hands each page's parsed trades to `f` and returns
+# the total row count. `start_str`/`end_str` are inclusive RFC 3339 bounds.
+function _each_trades_page(f, p::AlpacaProvider, symbol::AbstractString;
+                           start_str::AbstractString, end_str::AbstractString,
+                           feed::AbstractString, page_limit::Integer,
+                           rate_sleep_s::Real)
     url = "$(p.data_base)/v2/stocks/$(symbol)/trades"
     query = Dict{String, String}(
-        "start" => "$(start_date)T00:00:00Z",
-        "end" => "$(end_date)T23:59:59Z",
-        "limit" => string(page_limit),
-        "feed" => feed,
+        "start" => String(start_str), "end" => String(end_str),
+        "limit" => string(page_limit), "feed" => String(feed),
     )
+    total = 0
     while true
         resp = _get_with_retry(url, rest_headers(p); query)
         o = JSON3.read(resp.body)
         page = get(o, :trades, nothing)   # null/absent when the range has no data
-        if page !== nothing
-            for msg in page
-                push!(trades, parse_alpaca_trade(msg, 0; symbol))
-            end
-            on_page === nothing || on_page(length(page), length(trades))
+        if page !== nothing && !isempty(page)
+            trades = Trade[parse_alpaca_trade(msg, 0; symbol) for msg in page]
+            total += length(trades)
+            f(trades)
         end
         token = get(o, :next_page_token, nothing)
         (token === nothing || token == "") && break
         query["page_token"] = String(token)
         sleep(rate_sleep_s)
     end
-    return trades
+    return total
 end
+
+"""
+    historical_trades(p, symbol, start_date, end_date;
+                      feed = "sip", page_limit = 10_000, rate_sleep_s = 0.35,
+                      on_page = nothing, each_page = nothing)
+
+Download all trades for `symbol` in `[start_date, end_date]` (inclusive,
+exchange dates) from `/v2/stocks/{symbol}/trades`, following pagination
+tokens until exhausted. `rate_sleep_s` throttles between pages (free tier:
+200 requests/min). Backfilled records get `recv_ns = 0` — they never crossed
+the wire. `on_page(n_page, n_total)` is called per page for progress.
+
+By default all trades are accumulated and returned as a `Vector{Trade}`.
+With `each_page` set, each page's trades are handed to
+`each_page(::Vector{Trade})` instead and only the total row count is
+returned — memory stays bounded by one page regardless of the range.
+"""
+function historical_trades(p::AlpacaProvider, symbol::AbstractString,
+                           start_date::Date, end_date::Date;
+                           feed::AbstractString = "sip",
+                           page_limit::Integer = 10_000, rate_sleep_s::Real = 0.35,
+                           on_page = nothing, each_page = nothing)
+    acc = each_page === nothing ? Trade[] : nothing
+    seen = 0
+    total = _each_trades_page(p, symbol;
+        start_str = "$(start_date)T00:00:00Z", end_str = "$(end_date)T23:59:59Z",
+        feed, page_limit, rate_sleep_s) do page
+        seen += length(page)
+        acc === nothing || append!(acc, page)
+        each_page === nothing || each_page(page)
+        on_page === nothing || on_page(length(page), seen)
+    end
+    return acc === nothing ? total : acc
+end
+
+"""
+    historical_trade_count(p, symbol, start_str, end_str;
+                           feed = "sip", page_limit = 10_000,
+                           rate_sleep_s = 0.35) -> Int
+
+Count trades on the historical tape for `symbol` over the inclusive
+RFC 3339 window `[start_str, end_str]` without retaining them — the
+reference side of live-capture coverage checks.
+"""
+historical_trade_count(p::AlpacaProvider, symbol::AbstractString,
+                       start_str::AbstractString, end_str::AbstractString;
+                       feed::AbstractString = "sip", page_limit::Integer = 10_000,
+                       rate_sleep_s::Real = 0.35) =
+    _each_trades_page(_ -> nothing, p, symbol;
+                      start_str, end_str, feed, page_limit, rate_sleep_s)
 
 # Alpaca v2 streaming protocol. Frames are JSON arrays of messages; the
 # server opens with {"T":"success","msg":"connected"}, we reply with auth,

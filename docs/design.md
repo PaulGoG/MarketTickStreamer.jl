@@ -119,10 +119,24 @@ path — no data is lost on interrupt (tested).
   `session_report` audits every capture for duplicates, exchange-time gaps,
   out-of-order delivery, and clock skew (negative receive latency) before
   the data is used for science.
-- **Provenance**: every stream/backfill session writes a
-  `<session_id>.meta.toml` sidecar next to its raw files — session summary,
-  git commit + dirty flag, Julia and package versions, hostname, and the
-  full effective configuration snapshot (safesave, never overwritten).
+- **Provenance, crash-only**: every stream/backfill session writes its
+  `<session_id>.meta.toml` sidecar at START (`status = "running"`; git
+  commit + dirty flag, versions, hostname, pid, full config snapshot) and
+  finalizes it at exit (`completed` / `interrupted`, counts). Startup
+  reconciliation relabels sidecars of dead processes `aborted` and reports
+  zero-byte raw stubs — provenance survives SIGKILL and power loss, which
+  graceful-path handling alone cannot (threaded Ctrl-C delivery is
+  best-effort in Julia).
+- **Backfill robustness**: per-(symbol, trading-day) download loop with
+  page-streamed sink writes — memory is bounded by one REST page plus the
+  configured heap ceiling (`limits.max_resident_mb`, auto-GC then loud
+  stop); `backfill.resume` skips pairs already processed, so a rerun after
+  any abort resumes. Compaction spills to per-group files when the input
+  exceeds the in-memory budget, bounding memory by the largest single
+  (symbol, day) group.
+- **Single-instance lock**: a PID-file lock per data tree prevents two
+  sessions from interleaving on one raw directory; stale locks from dead
+  processes break automatically.
 
 ## 6. Dependency decisions (verified 2026-07-30)
 

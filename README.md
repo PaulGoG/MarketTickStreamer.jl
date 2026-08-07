@@ -125,7 +125,13 @@ REST + WebSocket APIs — no credentials or network needed.
 | Market-hours railings (wait-for-open, auto-stop at close, incl. half-day early close) | working, tested |
 | Delayed-feed handling (railings shifted by feed delay; tape tail captured) | working, tested |
 | Per-session provenance sidecars (`.meta.toml`) | working, tested |
-| Resource guards (disk space, compaction RAM, channel lag, REST backoff) | working, tested |
+| Resource guards (disk space, RAM ceiling with auto-GC, channel lag, REST backoff) | working, tested |
+| Crash-only session lifecycle (running/completed/interrupted sidecars + startup reconciliation) | working, tested |
+| Page-streaming, per-day resumable backfill | working, tested |
+| Spill compaction (bounded memory for arbitrarily large raw inputs) | working, tested |
+| Single-instance lock per data tree | working, tested |
+| Capture-coverage cross-check against the historical tape (`coverage_report`) | working |
+| Lossy-tap option in `tee` fan-out (persistence always wins) | working, tested |
 | Batched raw NDJSON persistence + rolling | working, tested |
 | Historical backfill (paginated REST) | working, tested against mock |
 | Compaction to CSV/Arrow with duplicate removal | working, tested |

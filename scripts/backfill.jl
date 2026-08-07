@@ -14,4 +14,12 @@ function main()
     end
 end
 
-main()
+# Ctrl-C arrives as InterruptException (best-effort under threads; the
+# crash-only session lifecycle is the real guarantee) and exits cleanly.
+Base.exit_on_sigint(false)
+try
+    main()
+catch e
+    e isa InterruptException || rethrow()
+    println("\nInterrupted — exiting cleanly.")
+end

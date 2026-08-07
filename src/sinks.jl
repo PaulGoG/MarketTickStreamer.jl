@@ -178,9 +178,33 @@ end
 
 read_raw(path::AbstractString) = read_raw([path])
 
+# Sort one (symbol, day) group by exchange time and write it to the
+# processed tree with safesave semantics. Returns the path written.
+function _write_group(trades::Vector{Trade}, out_dir::AbstractString,
+                      sym::AbstractString, date::Date, format::AbstractString)
+    ts = sort(trades; by = t -> t.time_ns)
+    out = DataFrame(
+        symbol = [t.symbol for t in ts],
+        time_ns = [t.time_ns for t in ts],
+        recv_ns = [t.recv_ns for t in ts],
+        price = [t.price for t in ts],
+        size = [t.size for t in ts],
+        exchange = [t.exchange for t in ts],
+        conditions = [join(t.conditions, "|") for t in ts],
+        tape = [t.tape for t in ts],
+        id = [t.id for t in ts],
+    )
+    dir = joinpath(out_dir, sym)
+    mkpath(dir)
+    path = _safepath(joinpath(dir, "$(date).$(format == "csv" ? "csv" : "arrow")"))
+    format == "csv" ? CSV.write(path, out) : Arrow.write(path, out)
+    return path
+end
+
 """
     compact_raw(raw_paths, out_dir; format = "csv", dedup = true,
-                mem_fraction = 0.5, tz = tz"America/New_York") -> Vector{String}
+                mem_fraction = 0.5, tz = tz"America/New_York",
+                max_resident_mb = nothing) -> Vector{String}
 
 Compact raw NDJSON files into per-symbol, per-trading-day analysis files
 (`out_dir/SYMBOL/YYYY-MM-DD.csv|.arrow`), sorted by `time_ns`. Existing
@@ -189,20 +213,22 @@ outputs are never overwritten — a ` #N` suffixed sibling is written instead
 
 `dedup = true` drops exact duplicate prints (reconnection double-delivery,
 overlapping backfill/live captures) via [`dedup_trades`](@ref), logging the
-count. Compaction materializes everything in memory; it refuses to start if
-the estimated footprint exceeds `mem_fraction` of currently free RAM —
-compact in smaller batches of part files instead.
+count. Small inputs are compacted in memory; when the estimated footprint
+exceeds `mem_fraction` of currently free RAM the input is instead streamed
+line-by-line into per-(symbol, day) spill files and each group is compacted
+independently — memory stays bounded by the largest single group.
+`max_resident_mb` additionally enforces the configured heap ceiling per
+group ([`check_resident_memory`](@ref)).
 """
 function compact_raw(raw_paths::AbstractVector{<:AbstractString}, out_dir::AbstractString;
                      format::AbstractString = "csv", dedup::Bool = true,
-                     mem_fraction::Real = 0.5, tz::TimeZone = tz"America/New_York")
+                     mem_fraction::Real = 0.5, tz::TimeZone = tz"America/New_York",
+                     max_resident_mb::Union{Nothing, Real} = nothing)
     format in ("csv", "arrow") || throw(ArgumentError("format must be \"csv\" or \"arrow\""))
     bytes = sum(filesize, raw_paths; init = 0)
     est = 4 * bytes          # parsed structs + DataFrame + sort scratch
-    est > mem_fraction * Sys.free_memory() && error(
-        "compaction of $(round(bytes / 2^20; digits = 1)) MiB raw would need ≈" *
-        "$(round(est / 2^30; digits = 2)) GiB, over $(mem_fraction) of free RAM — " *
-        "compact fewer part files per call")
+    est > mem_fraction * Sys.free_memory() &&
+        return _compact_spill(raw_paths, out_dir; format, dedup, tz, max_resident_mb)
     trades = read_raw(raw_paths)
     if dedup
         n0 = length(trades)
@@ -210,27 +236,55 @@ function compact_raw(raw_paths::AbstractVector{<:AbstractString}, out_dir::Abstr
         n0 > length(trades) && @info "dropped duplicate prints" count = n0 - length(trades)
     end
     isempty(trades) && return String[]
-    df = DataFrame(
-        symbol = [t.symbol for t in trades],
-        time_ns = [t.time_ns for t in trades],
-        recv_ns = [t.recv_ns for t in trades],
-        price = [t.price for t in trades],
-        size = [t.size for t in trades],
-        exchange = [t.exchange for t in trades],
-        conditions = [join(t.conditions, "|") for t in trades],
-        tape = [t.tape for t in trades],
-        id = [t.id for t in trades],
-    )
-    df.date = [trading_date(ns; tz) for ns in df.time_ns]
+    groups = Dict{Tuple{String, Date}, Vector{Trade}}()
+    for t in trades
+        push!(get!(() -> Trade[], groups, (t.symbol, trading_date(t.time_ns; tz))), t)
+    end
+    return [_write_group(groups[k], out_dir, k[1], k[2], format)
+            for k in sort!(collect(keys(groups)))]
+end
+
+# Bounded-memory compaction: route each raw line to a per-(symbol, day)
+# spill file in one streaming pass, then compact every group independently.
+function _compact_spill(raw_paths::AbstractVector{<:AbstractString}, out_dir::AbstractString;
+                        format::AbstractString, dedup::Bool, tz::TimeZone,
+                        max_resident_mb::Union{Nothing, Real})
+    @info "large input — using spill compaction" mib =
+        round(sum(filesize, raw_paths; init = 0) / 2^20; digits = 1)
     written = String[]
-    for g in groupby(df, [:symbol, :date])
-        sym, date = g.symbol[1], g.date[1]
-        dir = joinpath(out_dir, sym)
-        mkpath(dir)
-        out = select(sort(DataFrame(g), :time_ns), Not(:date))
-        path = _safepath(joinpath(dir, "$(date).$(format == "csv" ? "csv" : "arrow")"))
-        format == "csv" ? CSV.write(path, out) : Arrow.write(path, out)
-        push!(written, path)
+    mktempdir() do spill
+        handles = Dict{Tuple{String, Date}, IOStream}()
+        nbad = 0
+        for p in raw_paths, line in eachline(p)
+            isempty(strip(line)) && continue
+            t = try
+                json_to_trade(line)
+            catch
+                nbad += 1
+                continue
+            end
+            key = (t.symbol, trading_date(t.time_ns; tz))
+            io = get!(handles, key) do
+                open(joinpath(spill, "$(key[1])_$(key[2]).jsonl"), "w")
+            end
+            println(io, line)
+        end
+        nbad > 0 && @warn "skipped corrupt lines" count = nbad
+        foreach(close, values(handles))
+        ndup = 0
+        for key in sort!(collect(keys(handles)))
+            sym, date = key
+            trades = read_raw(joinpath(spill, "$(sym)_$(date).jsonl"))
+            if dedup
+                n0 = length(trades)
+                trades = dedup_trades(trades)
+                ndup += n0 - length(trades)
+            end
+            push!(written, _write_group(trades, out_dir, sym, date, format))
+            max_resident_mb === nothing ||
+                check_resident_memory(max_resident_mb; context = "compaction $sym $date")
+        end
+        ndup > 0 && @info "dropped duplicate prints" count = ndup
     end
     return written
 end

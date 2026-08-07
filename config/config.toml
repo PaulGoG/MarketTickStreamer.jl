@@ -40,6 +40,7 @@ max_raw_file_mb = 1024           # roll to a new raw file beyond this size [MB]
 channel_capacity = 100000        # in-flight tick buffer; producer blocks when full
 max_symbols = 30                 # subscription cap
 min_free_disk_gb = 2.0           # refuse to start / stop streaming below this free space [GiB]
+max_resident_mb = 4096           # live-heap ceiling for backfill/compaction [MiB]; > 0
 
 [replay]
 pace = "recorded"                # one of: "recorded" (honor inter-arrival times) | "max"
@@ -51,6 +52,7 @@ end_date = "2026-08-03"          # inclusive; >= start_date
 feed = "sip"                     # historical feed; one of: "iex" | "sip"
 page_limit = 10000               # rows per REST page; provider maximum 10000
 rate_limit_sleep_s = 0.35        # pause between REST pages [s]
+resume = true                    # skip (symbol, day) pairs already present in processed/
 
 [monitor]
 # Attach-mode terminal dashboard (scripts/monitor.jl); read-only, opt-in.

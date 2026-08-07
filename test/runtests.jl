@@ -174,9 +174,9 @@ end
         files = compact_raw([sink.path], joinpath(dir, "p"); format = "csv")
         df = CSV.read(files[findfirst(contains("AAPL"), files)], DataFrame)
         @test nrow(df) == 21                             # 26 raw AAPL rows − 5 dupes
-        # memory guard refuses absurd budgets
-        @test_throws ErrorException compact_raw([sink.path], joinpath(dir, "p2");
-                                                mem_fraction = 1e-12)
+        # over-budget inputs reroute through spill compaction transparently
+        spill_files = compact_raw([sink.path], joinpath(dir, "p2"); mem_fraction = 1e-12)
+        @test length(spill_files) == length(files)
     end
 end
 
@@ -204,6 +204,91 @@ end
     for c in consumers
         got = fetch(c)
         @test got == expected          # every consumer sees every tick, in order
+    end
+end
+
+@testset "robustness: reconcile, lock, RAM guard, spill compaction, lossy tee" begin
+    mktempdir() do dir
+        # crash-only reconciliation: a "running" sidecar from a dead process
+        write(joinpath(dir, "dead.meta.toml"), """
+            [session]
+            id = "dead"
+            status = "running"
+            pid = 99999999
+            [provenance]
+            hostname = "$(gethostname())"
+            """)
+        write(joinpath(dir, "dead_part001.jsonl"), "")
+        @test reconcile_sessions!(dir) == 1
+        meta = TOML.parsefile(joinpath(dir, "dead.meta.toml"))
+        @test meta["session"]["status"] == "aborted"
+        @test haskey(meta["session"], "reconciled_utc")
+        @test reconcile_sessions!(dir) == 0              # idempotent
+        # single-instance lock
+        l1 = acquire_session_lock(dir)
+        @test_throws ErrorException acquire_session_lock(dir)
+        close(l1)
+        l2 = acquire_session_lock(dir)                   # released → reacquirable
+        close(l2)
+        # RAM ceiling fails loudly
+        @test_throws ErrorException check_resident_memory(0; context = "test")
+        @test check_resident_memory(1e9) === nothing
+    end
+    # spill compaction produces the same result as in-memory compaction
+    mktempdir() do dir
+        sink = open_raw_sink(dir, "sp")
+        write_batch!(sink, [sample_trade(i; sym = iseven(i) ? "MSFT" : "AAPL")
+                            for i in 1:40])
+        write_batch!(sink, [sample_trade(i) for i in 1:5])   # duplicates
+        close_sink!(sink)
+        mem = compact_raw([sink.path], joinpath(dir, "mem"); format = "csv")
+        spill = compact_raw([sink.path], joinpath(dir, "spill"); format = "csv",
+                            mem_fraction = 1e-12)            # force the spill path
+        @test length(mem) == length(spill) == 2
+        for (m, s) in zip(mem, spill)
+            @test CSV.read(m, DataFrame) == CSV.read(s, DataFrame)
+        end
+    end
+    # lossy tee: persistence output receives everything, saturated lossy
+    # output drops instead of stalling the fan-out
+    src = Channel{Trade}(100)
+    outs = tee(src, 2; capacity = 5, lossy = [false, true])
+    keeper = Threads.@spawn collect(outs[1])
+    foreach(i -> put!(src, sample_trade(i)), 1:50)
+    close(src)
+    @test length(fetch(keeper)) == 50
+    @test length(collect(outs[2])) <= 5                  # never consumed → capped
+end
+
+@testset "backfill: per-day loop, page streaming, resume, feed naming" begin
+    mktempdir() do dir
+        ws_port, rest_port = freeport(9251), freeport(9271)
+        hits = Ref(0)
+        ws, _ = start_mock_ws(MockPlan([[]]); port = ws_port)
+        rest = start_mock_rest(; port = rest_port, hits)
+        try
+            cfg = load_config(mock_config_toml(dir; ws_port, rest_port))
+            p = AlpacaProvider(cfg, MOCK_KEY, MOCK_SECRET)
+            processed = run_backfill(cfg; provider = p)
+            @test length(processed) == 2                 # AAPL + MSFT, one day
+            @test hits[] > 0
+            # session id carries the backfill feed (sip), not the live feed
+            raws = filter(f -> startswith(f, "backfill_alpaca_sip_"),
+                          readdir(cfg.raw_dir))
+            @test !isempty(raws)
+            # resume: a second run skips fully-processed (symbol, day) pairs
+            h1 = hits[]
+            processed2 = run_backfill(cfg; provider = p)
+            @test isempty(processed2)
+            @test hits[] == h1                           # no REST traffic at all
+            # sidecars: completed status, backfill session id
+            metas = filter(endswith(".meta.toml"), readdir(cfg.raw_dir))
+            @test length(metas) == 2                     # one per run (2nd wrote no raw)
+            m = TOML.parsefile(joinpath(cfg.raw_dir, sort(metas)[1]))
+            @test m["session"]["status"] == "completed"
+        finally
+            close(ws); close(rest)
+        end
     end
 end
 

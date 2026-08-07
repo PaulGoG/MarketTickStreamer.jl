@@ -83,3 +83,54 @@ session_report(path::AbstractString; kwargs...) = session_report([path]; kwargs.
 Free disk space (GiB) on the filesystem containing `path`.
 """
 free_disk_gb(path::AbstractString) = Base.diskstat(path).available / 2^30
+
+"""
+    check_resident_memory(limit_mb; context = "") -> Nothing
+
+Config-gated RAM ceiling: if the live heap exceeds `limit_mb`, force a
+garbage collection; if it still exceeds the ceiling, fail loudly with a
+message naming `context` — a graceful stop beats an OOM kill. Call from
+long accumulation loops (backfill pages, compaction groups).
+"""
+function check_resident_memory(limit_mb::Real; context::AbstractString = "")
+    live_mb = Base.gc_live_bytes() / 2^20
+    live_mb > limit_mb || return nothing
+    GC.gc()
+    live_mb = Base.gc_live_bytes() / 2^20
+    live_mb > limit_mb && error(
+        "live heap $(round(live_mb; digits = 0)) MiB exceeds limits.max_resident_mb = " *
+        "$(limit_mb)" * (isempty(context) ? "" : " during $context") *
+        " — stopping before the OS kills the process")
+    return nothing
+end
+
+"""
+    coverage_report(paths, provider; feed = "sip", page_limit = 10_000,
+                    rate_sleep_s = 0.35) -> DataFrame
+
+Compare a live capture against the historical tape: for every symbol in the
+raw NDJSON `paths`, count captured trades (after exact-duplicate removal)
+and query the provider's historical trade count over the same inclusive
+exchange-time window. `coverage = captured / reference`; values below 1
+quantify feed coverage and stream drops, values above 1 indicate duplicate
+or spurious prints that dedup did not catch.
+"""
+function coverage_report(paths::AbstractVector{<:AbstractString}, provider;
+                         feed::AbstractString = "sip", page_limit::Integer = 10_000,
+                         rate_sleep_s::Real = 0.35)
+    trades = dedup_trades(read_raw(paths))
+    rows = NamedTuple[]
+    for sym in sort(unique(t.symbol for t in trades))
+        ts = [t.time_ns for t in trades if t.symbol == sym]
+        lo, hi = extrema(ts)
+        reference = historical_trade_count(provider, sym,
+            ns_to_rfc3339(lo), ns_to_rfc3339(hi); feed, page_limit, rate_sleep_s)
+        push!(rows, (; symbol = sym, captured = length(ts), reference,
+                       coverage = reference == 0 ? NaN :
+                                  round(length(ts) / reference; digits = 4)))
+    end
+    return DataFrame(rows)
+end
+
+coverage_report(path::AbstractString, provider; kwargs...) =
+    coverage_report([path], provider; kwargs...)

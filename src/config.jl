@@ -36,6 +36,7 @@ struct Config
     channel_capacity::Int
     max_symbols::Int
     min_free_disk_gb::Float64
+    max_resident_mb::Int
     # [replay]
     replay_pace::String
     replay_speed::Float64
@@ -45,6 +46,7 @@ struct Config
     backfill_feed::String
     backfill_page_limit::Int
     backfill_rate_sleep_s::Float64
+    backfill_resume::Bool
     # [monitor]
     monitor_refresh_s::Float64
     monitor_top_symbols::Int
@@ -120,6 +122,9 @@ function load_config(path::AbstractString = joinpath(PROJECT_ROOT, "config", "co
 
     endpoints = Dict{String, String}(k => String(v) for (k, v) in tbl(provider))
 
+    max_resident = Int(get(lim, "max_resident_mb", 4096))
+    max_resident > 0 || throw(ArgumentError("limits.max_resident_mb must be positive"))
+
     return Config(
         provider, feed,
         symbols, channels,
@@ -141,11 +146,13 @@ function load_config(path::AbstractString = joinpath(PROJECT_ROOT, "config", "co
         Int(get(lim, "channel_capacity", 100_000)),
         max_symbols,
         Float64(get(lim, "min_free_disk_gb", 2.0)),
+        max_resident,
         pace,
         Float64(get(rep, "speed", 1.0)),
         bf_start, bf_end, bf_feed,
         Int(get(bf, "page_limit", 10_000)),
         Float64(get(bf, "rate_limit_sleep_s", 0.35)),
+        Bool(get(bf, "resume", true)),
         mon_refresh, mon_top, mon_window,
         level,
         Bool(get(lg, "log_to_file", true)),
