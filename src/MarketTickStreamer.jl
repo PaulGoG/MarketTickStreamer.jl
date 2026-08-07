@@ -13,10 +13,12 @@ Entry points: [`run_stream`](@ref), [`run_backfill`](@ref),
 module MarketTickStreamer
 
 using Dates
+using LinearAlgebra
 using Logging
 using Statistics
 using TOML
 using FileWatching: Pidfile
+using Printf: @sprintf
 
 using Arrow
 using CairoMakie
@@ -45,7 +47,8 @@ export AlpacaProvider, market_clock, historical_trades, historical_trade_count
 export run_stream, run_backfill, session_id, setup_logging, write_session_meta,
        start_session_meta, finalize_session_meta, reconcile_sessions!,
        acquire_session_lock
-export tick_theme, session_figure, save_session_figures
+export tick_theme, session_figure, save_session_figures, overview_figure,
+       save_overview_figures
 
 include("schema.jl")
 include("config.jl")

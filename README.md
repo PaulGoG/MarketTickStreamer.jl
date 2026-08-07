@@ -136,7 +136,8 @@ REST + WebSocket APIs — no credentials or network needed.
 | Historical backfill (paginated REST) | working, tested against mock |
 | Compaction to CSV/Arrow with duplicate removal | working, tested |
 | Session QA report (dupes/gaps/ordering/latency) | working, tested |
-| Diagnostic figures (price, activity, Δt & size CCDFs) | working, inspected |
+| Diagnostic figures (price, activity, Δt & size CCDFs; HH:MM axes, decade log ticks, tail-exponent annotations) | working, inspected |
+| Multi-day overview figures (trading-time price, activity heatmap, intra-session waiting-time CCDF) | working, inspected |
 | Live monitoring dashboard (attach-mode, UnicodePlots) | working, tested |
 | Paced replay | working, tested |
 | Quotes (`q`) / bars (`b`) normalization | accepted on the wire, not yet normalized |

@@ -163,14 +163,28 @@ fan-out, and replay pacing.
 
 ## 8. Visualization
 
-`viz.jl` renders one 2×2 diagnostic figure per (symbol, trading day):
-price path and trades-per-minute over exchange-local time, plus survival
-functions (CCDFs) of inter-arrival times and trade sizes on log-log axes —
-the two distributions whose heavy tails matter first for exotic time series
-methods, and which linear histograms hide. Figures follow the project's
-publication defaults (Computer Modern, boxed axes, no titles); PDF + PNG
-(`px_per_unit = 4`) via `scripts/visualize.jl`, which also prints the
-`session_report` QA table for the same files.
+Two figure families with identical styling (Computer Modern, boxed axes,
+no titles, `HH:MM` exchange-time axes, decade log ticks with 2×/5×
+intermediates and `10⁰ → 1`, `10¹ → 10` collapse, in-axis count and fitted
+tail-exponent annotations):
+
+- **Session figures** — one 2×2 panel per (symbol, trading day) from raw
+  captures: price path (min–max decimated), trades per minute, and
+  survival functions (CCDFs) of inter-arrival times and trade sizes on
+  log-log axes — the distributions whose heavy tails matter first for
+  exotic time series methods, and which linear histograms hide.
+- **Overview figures** — one panel per symbol across many days from the
+  processed tree: price on a concatenated *trading-time* axis (overnight
+  gaps removed, session boundaries marked), a day × session-minute
+  activity heatmap, and pooled **intra-session** waiting-time and size
+  CCDFs — overnight gaps are excluded by construction because they would
+  contaminate the waiting-time tail.
+
+CCDF point clouds are deterministically thinned (tail-preserving) and
+price paths min–max decimated, so million-tick figures stay vector-light.
+PDF + PNG (`px_per_unit = 4`) via `scripts/visualize.jl` (raw-file mode
+prints the `session_report` QA table; `--overview` sweeps the processed
+tree with symbol/date filters).
 
 ## 9. Live monitoring
 

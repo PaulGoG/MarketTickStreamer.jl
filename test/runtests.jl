@@ -326,6 +326,43 @@ end
     end
 end
 
+@testset "viz: axis utilities, decimation, tail fit, figure smoke" begin
+    M = MarketTickStreamer
+    # HH:MM domain ticks
+    vals, labels = M._hhmm_ticks(9.5, 16.0)
+    @test labels[1] == "10:00" && labels[end] == "16:00"
+    # log ticks: plain decimals on short spans, exponent + collapse on long
+    v, l = M._log_ticks(0.5, 80.0)
+    @test "1" in l && "2" in l && "50" in l && !any(occursin("10^", string(x)) for x in l)
+    v, l = M._log_ticks(1e-7, 10.0)
+    @test "1" in l && "10" in l                          # 10^0 and 10^1 collapse
+    @test any(x -> occursin("10^{-6}", string(x)), l)
+    # thinning preserves ends; decimation preserves extrema
+    xs = collect(1.0:10_000.0)
+    tx, ty = M._thin(xs, xs; cap = 500)
+    @test length(tx) <= 810 && tx[1] == 1.0 && tx[end] == 10_000.0
+    dx, dy = M._decimate_minmax(xs, sin.(xs); nbins = 50)
+    @test length(dx) <= 100
+    @test maximum(dy) ≈ maximum(sin.(xs)) atol = 1e-3
+    # tail fit recovers a known power law
+    n = 5000
+    p = collect(n:-1:1) ./ n
+    x = p .^ (-1 / 2.5)                                  # exact alpha = 2.5
+    fit = M._tail_fit(sort(x), sort(p; rev = true))
+    @test fit !== nothing && isapprox(fit.α, 2.5; atol = 0.1)
+    # figure smoke tests (layout only; no file I/O)
+    trades = [sample_trade(i) for i in 1:200]
+    @test session_figure(trades) isa M.CairoMakie.Figure
+    df = DataFrame(symbol = fill("AAPL", 100),
+                   time_ns = [1_753_886_600_000_000_000 + i * 10_000_000_000 for i in 1:100],
+                   recv_ns = zeros(Int64, 100), price = 100.0 .+ randn(100),
+                   size = rand(1.0:100.0, 100), exchange = fill("V", 100),
+                   conditions = fill("@", 100), tape = fill("C", 100),
+                   id = collect(1:100))
+    days = [(Date(2026, 7, 30), df), (Date(2026, 7, 31), df)]
+    @test overview_figure("AAPL", days) isa M.CairoMakie.Figure
+end
+
 @testset "alpaca REST: clock + paginated historical trades" begin
     rest_port = freeport(8931)
     rest = start_mock_rest(; port = rest_port, trades_per_page = 3)
