@@ -207,6 +207,40 @@ end
     end
 end
 
+@testset "monitor: attach-mode tailing" begin
+    mktempdir() do dir
+        sink = open_raw_sink(dir, "mon")
+        write_batch!(sink, [sample_trade(i) for i in 1:30])
+        write_batch!(sink, [sample_trade(i; sym = "MSFT") for i in 1:15])
+        close_sink!(sink)
+        sink2 = open_raw_sink(dir, "mon")        # second part of the same session
+        write_batch!(sink2, [sample_trade(i; sym = "MSFT") for i in 16:20])
+        close_sink!(sink2)
+        @test MarketTickStreamer.latest_session_prefix(dir) == "mon"
+        buf = IOBuffer()
+        st = monitor_raw(dir; refresh_s = 0.01, iterations = 1, from_start = true, io = buf)
+        @test st.total == 50
+        @test st.per_symbol["AAPL"] == 30 && st.per_symbol["MSFT"] == 20
+        out = String(take!(buf))
+        @test occursin("AAPL", out) && occursin("Ticks", out)
+        # incremental tailing: a full new line plus a torn line
+        open(sink2.path, "a") do io
+            println(io, trade_to_json(sample_trade(99)))
+            print(io, "{\"symbol\":\"AAPL\",\"time_")
+        end
+        MarketTickStreamer._ingest!(st)
+        @test st.total == 51                     # torn line carried, not counted
+        open(sink2.path, "a") do io
+            println(io, "ns\":1}")               # completes to malformed record → skipped
+        end
+        MarketTickStreamer._ingest!(st)
+        @test st.total == 51
+        # default attach starts at end of file
+        st2 = monitor_raw(dir; refresh_s = 0.01, iterations = 1, io = IOBuffer())
+        @test st2.total == 0
+    end
+end
+
 @testset "alpaca REST: clock + paginated historical trades" begin
     rest_port = freeport(8931)
     rest = start_mock_rest(; port = rest_port, trades_per_page = 3)

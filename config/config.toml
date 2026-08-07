@@ -32,7 +32,7 @@ raw_subdir = "raw"               # append-only NDJSON session files
 processed_subdir = "processed"   # compacted per-day, per-symbol files
 flush_interval_s = 30.0          # sink flush interval [s]; flushes at interval or max_ticks
 flush_max_ticks = 5000           # sink flush batch-size threshold
-processed_format = "csv"         # one of: "csv" | "arrow"
+processed_format = "arrow"       # one of: "csv" | "arrow"
 
 [limits]
 max_session_hours = 8.0          # hard stop for a live session [h]
@@ -46,11 +46,17 @@ pace = "recorded"                # one of: "recorded" (honor inter-arrival times
 speed = 1.0                      # time-compression factor when pace = "recorded"; > 0
 
 [backfill]
-start_date = "2026-07-27"        # inclusive, exchange date (America/New_York)
-end_date = "2026-07-28"          # inclusive; >= start_date
+start_date = "2025-08-04"        # inclusive, exchange date (America/New_York)
+end_date = "2026-08-03"          # inclusive; >= start_date
 feed = "sip"                     # historical feed; one of: "iex" | "sip"
 page_limit = 10000               # rows per REST page; provider maximum 10000
 rate_limit_sleep_s = 0.35        # pause between REST pages [s]
+
+[monitor]
+# Attach-mode terminal dashboard (scripts/monitor.jl); read-only, opt-in.
+refresh_s = 2.0                  # dashboard refresh interval [s]; > 0
+top_symbols = 10                 # bar-plot rows; >= 1
+rate_window_s = 300.0            # rate-history window [s]; >= refresh_s
 
 [logging]
 level = "info"                   # one of: "debug" | "info" | "warn" | "error"

@@ -25,7 +25,10 @@ trade_to_json(t::Trade) = JSON3.write((
 Parse one NDJSON line written by [`trade_to_json`](@ref) back into a `Trade`.
 """
 function json_to_trade(line::AbstractString)
-    o = JSON3.read(line)
+    # String() is identity for String input; for SubStrings of a large parent
+    # (e.g. a bulk-read file split into lines) it avoids a pathological JSON3
+    # slow path measured at ~2000x the per-line cost.
+    o = JSON3.read(String(line))
     return Trade(String(o.symbol), Int64(o.time_ns), Int64(o.recv_ns),
                  Float64(o.price), Float64(o.size), String(o.exchange),
                  String.(o.conditions), String(o.tape), Int64(o.id))

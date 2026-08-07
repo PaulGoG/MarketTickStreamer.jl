@@ -45,6 +45,10 @@ struct Config
     backfill_feed::String
     backfill_page_limit::Int
     backfill_rate_sleep_s::Float64
+    # [monitor]
+    monitor_refresh_s::Float64
+    monitor_top_symbols::Int
+    monitor_rate_window_s::Float64
     # [logging]
     log_level::String
     log_to_file::Bool
@@ -100,6 +104,15 @@ function load_config(path::AbstractString = joinpath(PROJECT_ROOT, "config", "co
     bf_feed = get(bf, "feed", "sip")
     bf_feed in ("iex", "sip") || throw(ArgumentError("backfill.feed must be \"iex\" or \"sip\""))
 
+    mon = tbl("monitor")
+    mon_refresh = Float64(get(mon, "refresh_s", 2.0))
+    mon_refresh > 0 || throw(ArgumentError("monitor.refresh_s must be positive"))
+    mon_top = Int(get(mon, "top_symbols", 10))
+    mon_top >= 1 || throw(ArgumentError("monitor.top_symbols must be >= 1"))
+    mon_window = Float64(get(mon, "rate_window_s", 300.0))
+    mon_window >= mon_refresh ||
+        throw(ArgumentError("monitor.rate_window_s must be >= monitor.refresh_s"))
+
     lg = tbl("logging")
     level = get(lg, "level", "info")
     level in ("debug", "info", "warn", "error") ||
@@ -133,6 +146,7 @@ function load_config(path::AbstractString = joinpath(PROJECT_ROOT, "config", "co
         bf_start, bf_end, bf_feed,
         Int(get(bf, "page_limit", 10_000)),
         Float64(get(bf, "rate_limit_sleep_s", 0.35)),
+        mon_refresh, mon_top, mon_window,
         level,
         Bool(get(lg, "log_to_file", true)),
         _resolve(get(lg, "log_dir", "logs")),

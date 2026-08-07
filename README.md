@@ -21,6 +21,7 @@ real-time analysis methods.
 │   ├── config.jl           # TOML loading/validation; .env credential loading
 │   ├── sinks.jl            # raw NDJSON sink (append-only, rolling); compaction
 │   ├── quality.jl          # dedup, session QA report, disk-space probe
+│   ├── monitor.jl          # attach-mode terminal dashboard (tails raw files)
 │   ├── replay.jl           # recorded-session replay source (paced or max-rate)
 │   ├── live.jl             # provider-agnostic live source: reconnect, watchdog,
 │   │                       #   market-close guard
@@ -34,6 +35,7 @@ real-time analysis methods.
 │   ├── backfill.jl         # historical trade download
 │   ├── compact.jl          # raw NDJSON → per-symbol per-day CSV/Arrow
 │   ├── replay.jl           # replay a recorded session to the terminal
+│   ├── monitor.jl          # live dashboard for a running session (read-only)
 │   └── visualize.jl        # QA report + per-symbol per-day diagnostic figures
 ├── test/
 │   ├── runtests.jl         # unit + end-to-end tests
@@ -77,6 +79,10 @@ julia scripts/replay.jl data/raw/<session>_part001.jsonl
 
 # QA report (dupes, gaps, ordering, latency) + diagnostic figures → plots/
 julia scripts/visualize.jl data/raw/<session>_part001.jsonl
+
+# live dashboard for a running capture/backfill (separate terminal, read-only;
+# tick rate, tape head/lag, per-symbol counts; --full for session totals)
+julia scripts/monitor.jl
 ```
 
 From the REPL, the same entry points are `run_stream(cfg)`,
@@ -125,6 +131,7 @@ REST + WebSocket APIs — no credentials or network needed.
 | Compaction to CSV/Arrow with duplicate removal | working, tested |
 | Session QA report (dupes/gaps/ordering/latency) | working, tested |
 | Diagnostic figures (price, activity, Δt & size CCDFs) | working, inspected |
+| Live monitoring dashboard (attach-mode, UnicodePlots) | working, tested |
 | Paced replay | working, tested |
 | Quotes (`q`) / bars (`b`) normalization | accepted on the wire, not yet normalized |
 | Real-time analysis consumers | not started — attach via `tee`/`replay_source` |

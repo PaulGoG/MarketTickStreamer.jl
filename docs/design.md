@@ -158,7 +158,21 @@ publication defaults (Computer Modern, boxed axes, no titles); PDF + PNG
 (`px_per_unit = 4`) via `scripts/visualize.jl`, which also prints the
 `session_report` QA table for the same files.
 
-## 9. Roadmap
+## 9. Live monitoring
+
+`monitor.jl` implements attach-mode monitoring: a separate read-only
+process tails the session's raw NDJSON part files (incremental offsets,
+torn-line carries, roll-aware) and renders an in-terminal dashboard
+(UnicodePlots — headless-safe): tick totals and rate history, tape-head
+timestamp and lag, per-symbol counts. Attaching from outside the producer
+was chosen over an in-process panel because it cannot interfere with the
+capture, its logging, or its progress output (a §9 requirement of the
+project standards), it works identically for live capture and backfill,
+and it can attach to or detach from a session at any point — including
+sessions started by another process. Refresh cadence and panel sizing come
+from the `[monitor]` config table; `scripts/monitor.jl` is the entry point.
+
+## 10. Roadmap
 
 The phased action plan (remediation → data foundation → analysis pipeline →
 scale) and the provider-landscape research are maintained in the workspace

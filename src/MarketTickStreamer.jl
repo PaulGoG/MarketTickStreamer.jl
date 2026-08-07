@@ -28,12 +28,14 @@ using LoggingExtras
 using MathTeXEngine
 using ProgressMeter
 using TimeZones
+using UnicodePlots: barplot, lineplot
 
 export Config, load_config, load_credentials!
 export Trade, rfc3339_to_ns, ns_to_rfc3339, ns_to_datetime, now_ns, trading_date
 export RawSink, open_raw_sink, write_batch!, close_sink!, run_sink!,
        trade_to_json, json_to_trade, read_raw, compact_raw
 export dedup_trades, session_report, free_disk_gb
+export monitor_raw
 export replay_source
 export AbstractProvider, LiveSession, FatalStreamError, live_source, stop!,
        schedule_close_stop!, tee
@@ -45,6 +47,7 @@ include("schema.jl")
 include("config.jl")
 include("sinks.jl")
 include("quality.jl")
+include("monitor.jl")
 include("replay.jl")
 include("live.jl")
 include("providers/alpaca.jl")
