@@ -1,5 +1,8 @@
 # MarketTickStreamer.jl
 
+[![CI](https://github.com/PaulGoG/MarketTickStreamer.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/PaulGoG/MarketTickStreamer.jl/actions/workflows/CI.yml)
+[![codecov](https://codecov.io/gh/PaulGoG/MarketTickStreamer.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/PaulGoG/MarketTickStreamer.jl)
+
 Provider-agnostic tick-by-tick market data acquisition in pure Julia, built
 for scientific time series research: live WebSocket streaming, historical
 REST backfill, append-only raw persistence, compaction to analysis-ready
@@ -42,6 +45,9 @@ real-time analysis methods.
 │   └── mock_alpaca.jl      # in-process mock of Alpaca REST + WebSocket APIs
 ├── docs/
 │   └── design.md           # architecture, data flow, decisions
+├── .github/workflows/
+│   └── CI.yml              # test + coverage on push/PR (single stable-Julia job)
+├── LICENSE                 # MIT
 ├── data/                   # (gitignored, created on demand) raw/ + processed/
 ├── plots/                  # (gitignored) rendered diagnostic figures
 └── logs/                   # (gitignored) per-session log files
@@ -49,15 +55,20 @@ real-time analysis methods.
 
 ## Setup
 
+Requires Julia ≥ 1.10 (developed and Manifest-pinned on 1.12). From a clone:
+
 ```julia
 using Pkg
 Pkg.activate("."); Pkg.instantiate()
 ```
 
 Credentials: `cp .env.example .env`, fill in `ALPACA_API_KEY_ID` /
-`ALPACA_SECRET_KEY` (free keys: https://alpaca.markets). The free tier
-streams the IEX single-exchange feed; set `provider.feed = "sip"` in
-`config/config.toml` only with a paid subscription.
+`ALPACA_SECRET_KEY` (free keys: https://alpaca.markets; paper-account keys
+work — point `[alpaca] trading_base` at the paper endpoint, as the shipped
+config does). Feeds on the free tier: `iex` (real-time, single venue) and
+`delayed_sip` (consolidated tape, 15 min delayed — the default here, and
+empirically print-complete against the historical tape); `sip` (real-time
+consolidated) requires a paid subscription.
 
 ## Usage
 
@@ -147,3 +158,7 @@ REST + WebSocket APIs — no credentials or network needed.
 
 Provider research and the phased action plan are maintained in the
 workspace notes, outside this repository.
+
+## License
+
+MIT — see `LICENSE`.
