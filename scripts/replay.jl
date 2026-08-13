@@ -16,7 +16,7 @@ function main()
     i = 1
     while i <= length(ARGS)
         if ARGS[i] == "--config"
-            cfg_path = ARGS[i + 1]
+            cfg_path = ARGS[i+1]
             i += 2
         else
             push!(files, ARGS[i])
@@ -26,23 +26,25 @@ function main()
     cfg = load_config(cfg_path)
     isempty(files) &&
         (println("Usage: julia scripts/replay.jl <raw_file.jsonl>..."); return)
-    ch = replay_source(files; pace = cfg.replay_pace, speed = cfg.replay_speed,
-                       capacity = cfg.channel_capacity)
+    ch = replay_source(
+        files;
+        pace = cfg.replay_pace,
+        speed = cfg.replay_speed,
+        capacity = cfg.channel_capacity,
+    )
     n = 0
     for t in ch
         n += 1
-        @printf("[%s] %-6s  %10.4f × %-7.0f (%s)\n",
-                ns_to_rfc3339(t.time_ns), t.symbol, t.price, t.size, t.exchange)
+        @printf(
+            "[%s] %-6s  %10.4f × %-7.0f (%s)\n",
+            ns_to_rfc3339(t.time_ns),
+            t.symbol,
+            t.price,
+            t.size,
+            t.exchange
+        )
     end
     println("Replayed $n ticks.")
 end
 
-# Ctrl-C arrives as InterruptException (best-effort under threads; the
-# crash-only session lifecycle is the real guarantee) and exits cleanly.
-Base.exit_on_sigint(false)
-try
-    main()
-catch e
-    e isa InterruptException || rethrow()
-    println("\nInterrupted — exiting cleanly.")
-end
+run_entrypoint(main)

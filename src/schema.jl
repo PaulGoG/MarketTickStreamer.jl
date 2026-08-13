@@ -38,13 +38,30 @@ end
 # Value semantics: the default struct `==` compares the `conditions` vector
 # by identity, which breaks round-trip comparisons of otherwise equal ticks.
 Base.:(==)(a::Trade, b::Trade) =
-    a.symbol == b.symbol && a.time_ns == b.time_ns && a.recv_ns == b.recv_ns &&
-    a.price == b.price && a.size == b.size && a.exchange == b.exchange &&
-    a.conditions == b.conditions && a.tape == b.tape && a.id == b.id
+    a.symbol == b.symbol &&
+    a.time_ns == b.time_ns &&
+    a.recv_ns == b.recv_ns &&
+    a.price == b.price &&
+    a.size == b.size &&
+    a.exchange == b.exchange &&
+    a.conditions == b.conditions &&
+    a.tape == b.tape &&
+    a.id == b.id
 
-Base.hash(t::Trade, h::UInt) =
-    hash((t.symbol, t.time_ns, t.recv_ns, t.price, t.size,
-          t.exchange, t.conditions, t.tape, t.id), h)
+Base.hash(t::Trade, h::UInt) = hash(
+    (
+        t.symbol,
+        t.time_ns,
+        t.recv_ns,
+        t.price,
+        t.size,
+        t.exchange,
+        t.conditions,
+        t.tape,
+        t.id,
+    ),
+    h,
+)
 
 const NS_PER_SEC = 1_000_000_000
 
@@ -83,8 +100,12 @@ with full nanosecond precision (lossless round-trip with [`rfc3339_to_ns`](@ref)
 function ns_to_rfc3339(ns::Int64)
     secs, frac = fldmod(ns, NS_PER_SEC)
     dt = unix2datetime(secs)
-    return string(Dates.format(dt, dateformat"yyyy-mm-dd\THH:MM:SS"), ".",
-                  lpad(frac, 9, '0'), "Z")
+    return string(
+        Dates.format(dt, dateformat"yyyy-mm-dd\THH:MM:SS"),
+        ".",
+        lpad(frac, 9, '0'),
+        "Z",
+    )
 end
 
 """

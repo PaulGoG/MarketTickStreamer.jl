@@ -36,7 +36,7 @@ struct Config
     channel_capacity::Int
     max_symbols::Int
     min_free_disk_gb::Float64
-    max_resident_mb::Int
+    max_live_heap_mb::Int
     # [replay]
     replay_pace::String
     replay_speed::Float64
@@ -56,13 +56,13 @@ struct Config
     log_to_file::Bool
     log_dir::String
     # [<provider>] endpoint roots
-    endpoints::Dict{String, String}
+    endpoints::Dict{String,String}
 end
 
 const PROJECT_ROOT = normpath(joinpath(@__DIR__, ".."))
 
 """
-    load_config(path = projectpath("config", "config.toml")) -> Config
+    load_config(path = joinpath(PROJECT_ROOT, "config", "config.toml")) -> Config
 
 Read and validate the TOML configuration. Relative storage/log paths are
 resolved against the project root. Throws `ArgumentError` with a specific
@@ -72,11 +72,14 @@ function load_config(path::AbstractString = joinpath(PROJECT_ROOT, "config", "co
     isfile(path) || throw(ArgumentError("config file not found: $path"))
     raw = TOML.parsefile(path)
 
-    tbl(name) = get(() -> Dict{String, Any}(), raw, name)
+    tbl(name) = get(() -> Dict{String,Any}(), raw, name)
     provider = get(tbl("provider"), "name", "alpaca")
     feed = get(tbl("provider"), "feed", "iex")
-    feed in ("iex", "sip", "delayed_sip") ||
-        throw(ArgumentError("provider.feed must be \"iex\", \"sip\" or \"delayed_sip\", got \"$feed\""))
+    feed in ("iex", "sip", "delayed_sip") || throw(
+        ArgumentError(
+            "provider.feed must be \"iex\", \"sip\" or \"delayed_sip\", got \"$feed\"",
+        ),
+    )
 
     st = tbl("stream")
     symbols = String.(get(st, "symbols", String[]))
@@ -88,23 +91,31 @@ function load_config(path::AbstractString = joinpath(PROJECT_ROOT, "config", "co
     sto = tbl("storage")
     data_dir = _resolve(get(sto, "data_dir", "data"))
     fmt = get(sto, "processed_format", "csv")
-    fmt in ("csv", "arrow") || throw(ArgumentError("storage.processed_format must be \"csv\" or \"arrow\""))
+    fmt in ("csv", "arrow") ||
+        throw(ArgumentError("storage.processed_format must be \"csv\" or \"arrow\""))
 
     lim = tbl("limits")
     max_symbols = Int(get(lim, "max_symbols", 30))
-    length(symbols) <= max_symbols ||
-        throw(ArgumentError("$(length(symbols)) symbols requested but limits.max_symbols = $max_symbols"))
+    length(symbols) <= max_symbols || throw(
+        ArgumentError(
+            "$(length(symbols)) symbols requested but limits.max_symbols = $max_symbols",
+        ),
+    )
 
     rep = tbl("replay")
     pace = get(rep, "pace", "recorded")
-    pace in ("recorded", "max") || throw(ArgumentError("replay.pace must be \"recorded\" or \"max\""))
+    pace in ("recorded", "max") ||
+        throw(ArgumentError("replay.pace must be \"recorded\" or \"max\""))
+    replay_speed = Float64(get(rep, "speed", 1.0))
+    replay_speed > 0 || throw(ArgumentError("replay.speed must be positive"))
 
     bf = tbl("backfill")
     bf_start = Date(get(bf, "start_date", string(today() - Day(1))))
     bf_end = Date(get(bf, "end_date", string(bf_start)))
     bf_start <= bf_end || throw(ArgumentError("backfill.start_date is after end_date"))
     bf_feed = get(bf, "feed", "sip")
-    bf_feed in ("iex", "sip") || throw(ArgumentError("backfill.feed must be \"iex\" or \"sip\""))
+    bf_feed in ("iex", "sip") ||
+        throw(ArgumentError("backfill.feed must be \"iex\" or \"sip\""))
 
     mon = tbl("monitor")
     mon_refresh = Float64(get(mon, "refresh_s", 2.0))
@@ -120,14 +131,16 @@ function load_config(path::AbstractString = joinpath(PROJECT_ROOT, "config", "co
     level in ("debug", "info", "warn", "error") ||
         throw(ArgumentError("logging.level must be one of debug/info/warn/error"))
 
-    endpoints = Dict{String, String}(k => String(v) for (k, v) in tbl(provider))
+    endpoints = Dict{String,String}(k => String(v) for (k, v) in tbl(provider))
 
-    max_resident = Int(get(lim, "max_resident_mb", 4096))
-    max_resident > 0 || throw(ArgumentError("limits.max_resident_mb must be positive"))
+    max_resident = Int(get(lim, "max_live_heap_mb", 4096))
+    max_resident > 0 || throw(ArgumentError("limits.max_live_heap_mb must be positive"))
 
     return Config(
-        provider, feed,
-        symbols, channels,
+        provider,
+        feed,
+        symbols,
+        channels,
         Bool(get(st, "require_market_open", true)),
         Bool(get(st, "wait_for_open", false)),
         Bool(get(st, "stop_at_market_close", true)),
@@ -148,12 +161,16 @@ function load_config(path::AbstractString = joinpath(PROJECT_ROOT, "config", "co
         Float64(get(lim, "min_free_disk_gb", 2.0)),
         max_resident,
         pace,
-        Float64(get(rep, "speed", 1.0)),
-        bf_start, bf_end, bf_feed,
+        replay_speed,
+        bf_start,
+        bf_end,
+        bf_feed,
         Int(get(bf, "page_limit", 10_000)),
         Float64(get(bf, "rate_limit_sleep_s", 0.35)),
         Bool(get(bf, "resume", true)),
-        mon_refresh, mon_top, mon_window,
+        mon_refresh,
+        mon_top,
+        mon_window,
         level,
         Bool(get(lg, "log_to_file", true)),
         _resolve(get(lg, "log_dir", "logs")),
@@ -172,7 +189,8 @@ Throws an error listing what is missing if either is absent.
 """
 function load_credentials!(; env_path::AbstractString = joinpath(PROJECT_ROOT, ".env"))
     if isfile(env_path)
-        Sys.isunix() && (filemode(env_path) & 0o044) != 0 &&
+        Sys.isunix() &&
+            (filemode(env_path) & 0o044) != 0 &&
             @warn "credentials file is group/world-readable — consider `chmod 600`" env_path
         DotEnv.load!(env_path; override = false)
     end
@@ -181,8 +199,9 @@ function load_credentials!(; env_path::AbstractString = joinpath(PROJECT_ROOT, "
     missing_keys = String[]
     isempty(key) && push!(missing_keys, "ALPACA_API_KEY_ID")
     isempty(secret) && push!(missing_keys, "ALPACA_SECRET_KEY")
-    isempty(missing_keys) ||
-        error("missing credentials: $(join(missing_keys, ", ")). " *
-              "Provide them in $env_path or the environment (see .env.example).")
+    isempty(missing_keys) || error(
+        "missing credentials: $(join(missing_keys, ", ")). " *
+        "Provide them in $env_path or the environment (see .env.example).",
+    )
     return key, secret
 end

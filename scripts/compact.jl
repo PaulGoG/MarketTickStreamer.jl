@@ -11,7 +11,7 @@ function main()
     i = 1
     while i <= length(ARGS)
         if ARGS[i] == "--config"
-            cfg_path = ARGS[i + 1]
+            cfg_path = ARGS[i+1]
             i += 2
         else
             push!(files, ARGS[i])
@@ -20,7 +20,10 @@ function main()
     end
     cfg = load_config(cfg_path)
     if isempty(files)   # default: every raw file of the configured provider
-        files = filter(f -> endswith(f, ".jsonl"), readdir(cfg.raw_dir; join = true, sort = true))
+        files = filter(
+            f -> endswith(f, ".jsonl"),
+            readdir(cfg.raw_dir; join = true, sort = true),
+        )
     end
     isempty(files) && (println("No raw files to compact."); return)
     written = compact_raw(files, cfg.processed_dir; format = cfg.processed_format)
@@ -30,12 +33,4 @@ function main()
     end
 end
 
-# Ctrl-C arrives as InterruptException (best-effort under threads; the
-# crash-only session lifecycle is the real guarantee) and exits cleanly.
-Base.exit_on_sigint(false)
-try
-    main()
-catch e
-    e isa InterruptException || rethrow()
-    println("\nInterrupted — exiting cleanly.")
-end
+run_entrypoint(main)

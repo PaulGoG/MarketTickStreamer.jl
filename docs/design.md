@@ -8,26 +8,26 @@ the reasoning behind each decision; the README covers usage.
 ## 1. Data flow
 
 ```
-                       ┌──────────────────────────────────────────────────┐
- config/config.toml ──▶│                   MarketTickStreamer                   │
- .env (credentials) ──▶│                                                  │
-                       │   AbstractProvider  (Alpaca today; adapter per   │
-                       │        │            provider, multiple dispatch) │
-                       │        ▼                                         │
-                       │   ┌─ live_source ──── WebSocket, reconnect,      │
-                       │   │                   watchdog, session deadline │
-                       │   ├─ replay_source ── recorded NDJSON, paced     │
-                       │   └─ historical_trades ── REST, paginated        │
-                       │        │                                        │
-                       │        ▼   Channel{Trade}  (bounded, typed)     │
-                       │   ┌────┴────── tee (fan-out, lossless) ───────┐  │
-                       │   ▼                                           ▼  │
-                       │  run_sink! ─▶ data/raw/*.jsonl      analysis taps│
-                       │  (batched, append-only)             (future)     │
-                       │        │                                        │
-                       │        ▼ compact_raw                            │
-                       │  data/processed/SYMBOL/DATE.csv|.arrow          │
-                       └──────────────────────────────────────────────────┘
+                       ┌────────────────────────────────────────────────────┐
+ config/config.toml ──▶│                 MarketTickStreamer                 │
+ .env (credentials) ──▶│                                                    │
+                       │   AbstractProvider  (Alpaca today; adapter per     │
+                       │        │            provider, multiple dispatch)   │
+                       │        ▼                                           │
+                       │   ┌─ live_source ──── WebSocket, reconnect,        │
+                       │   │                   watchdog, session deadline   │
+                       │   ├─ replay_source ── recorded NDJSON, paced       │
+                       │   └─ historical_trades ── REST, paginated          │
+                       │        │                                           │
+                       │        ▼   Channel{Trade}  (bounded, typed)        │
+                       │   ┌────┴────── tee (fan-out, lossless) ───────┐    │
+                       │   ▼                                           ▼    │
+                       │  run_sink! ─▶ data/raw/*.jsonl      analysis taps  │
+                       │  (batched, append-only)             (future)       │
+                       │        │                                           │
+                       │        ▼ compact_raw                               │
+                       │  data/processed/SYMBOL/DATE.csv|.arrow             │
+                       └────────────────────────────────────────────────────┘
 ```
 
 The load-bearing abstraction is `Channel{Trade}`: live, replay, and (via a
@@ -110,8 +110,8 @@ path — no data is lost on interrupt (tested).
   transport after a 5 s grace if the graceful close has not completed.
 - **Resource guards**: free-disk check before and during a session
   (`limits.min_free_disk_gb`, mid-session breach stops the stream
-  gracefully); compaction refuses raw batches whose estimated footprint
-  exceeds half of free RAM; a channel-occupancy warning fires when the sink
+  gracefully); compaction reroutes raw inputs whose estimated footprint
+  exceeds half of free RAM through bounded-memory spill compaction; a channel-occupancy warning fires when the sink
   lags the stream (>80% capacity); REST calls back off exponentially on
   429/5xx honoring `Retry-After`.
 - **Data integrity**: compaction removes exact duplicate prints
@@ -129,7 +129,7 @@ path — no data is lost on interrupt (tested).
   best-effort in Julia).
 - **Backfill robustness**: per-(symbol, trading-day) download loop with
   page-streamed sink writes — memory is bounded by one REST page plus the
-  configured heap ceiling (`limits.max_resident_mb`, auto-GC then loud
+  configured heap ceiling (`limits.max_live_heap_mb`, auto-GC then loud
   stop); `backfill.resume` skips pairs already processed, so a rerun after
   any abort resumes. Compaction spills to per-group files when the input
   exceeds the in-memory budget, bounding memory by the largest single
@@ -200,8 +200,3 @@ and it can attach to or detach from a session at any point — including
 sessions started by another process. Refresh cadence and panel sizing come
 from the `[monitor]` config table; `scripts/monitor.jl` is the entry point.
 
-## 10. Roadmap
-
-The phased action plan (remediation → data foundation → analysis pipeline →
-scale) and the provider-landscape research are maintained in the workspace
-notes, outside this repository.

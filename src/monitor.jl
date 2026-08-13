@@ -15,21 +15,31 @@ Counters cover data ingested since attach (see `from_start`).
 mutable struct MonitorState
     dir::String
     prefix::String
-    offsets::Dict{String, Int64}
-    carries::Dict{String, String}
+    offsets::Dict{String,Int64}
+    carries::Dict{String,String}
     total::Int64
-    per_symbol::Dict{String, Int64}
-    window::Vector{Tuple{Float64, Int64}}   # (wall clock, new ticks per refresh)
+    per_symbol::Dict{String,Int64}
+    window::Vector{Tuple{Float64,Int64}}   # (wall clock, new ticks per refresh)
     last_time_ns::Int64
     last_growth::Float64
 end
 
-MonitorState(dir, prefix) = MonitorState(String(dir), String(prefix),
-    Dict{String, Int64}(), Dict{String, String}(), 0, Dict{String, Int64}(),
-    Tuple{Float64, Int64}[], 0, time())
+MonitorState(dir, prefix) = MonitorState(
+    String(dir),
+    String(prefix),
+    Dict{String,Int64}(),
+    Dict{String,String}(),
+    0,
+    Dict{String,Int64}(),
+    Tuple{Float64,Int64}[],
+    0,
+    time(),
+)
 
-_session_parts(dir, prefix) = [joinpath(dir, f) for f in sort(readdir(dir))
-                               if startswith(f, prefix) && endswith(f, ".jsonl")]
+_session_parts(dir, prefix) = [
+    joinpath(dir, f) for
+    f in sort(readdir(dir)) if startswith(f, prefix) && endswith(f, ".jsonl")
+]
 
 """
     latest_session_prefix(dir) -> String
@@ -65,7 +75,7 @@ function _ingest!(st::MonitorState)
         st.offsets[path] = off + sizeof(chunk)
         lines = split(get(st.carries, path, "") * chunk, '\n')
         st.carries[path] = String(lines[end])
-        for ln in @view lines[1:(end - 1)]
+        for ln in @view lines[1:(end-1)]
             isempty(ln) && continue
             t = try
                 json_to_trade(ln)
@@ -83,28 +93,52 @@ function _ingest!(st::MonitorState)
     return new_ticks
 end
 
-function _render(st::MonitorState, refresh_s::Real, top_symbols::Integer,
-                 rate_window_s::Real, io::IO)
+function _render(
+    st::MonitorState,
+    refresh_s::Real,
+    top_symbols::Integer,
+    rate_window_s::Real,
+    io::IO,
+)
     cutoff = time() - rate_window_s
     filter!(w -> w[1] >= cutoff, st.window)
     rates = [w[2] / refresh_s for w in st.window]
     buf = IOBuffer()
     println(buf, "Session: ", st.prefix)
     bytes = sum(get(st.offsets, p, 0) for p in _session_parts(st.dir, st.prefix); init = 0)
-    println(buf, "Ticks (since attach): ", st.total,
-            "   rate: ", isempty(rates) ? "—" : "$(round(rates[end]; digits = 1))/s",
-            "   read: ", round(bytes / 2^20; digits = 1), " MiB")
+    println(
+        buf,
+        "Ticks (since attach): ",
+        st.total,
+        "   rate: ",
+        isempty(rates) ? "—" : "$(round(rates[end]; digits = 1))/s",
+        "   read: ",
+        round(bytes / 2^20; digits = 1),
+        " MiB",
+    )
     if st.last_time_ns > 0
         lag = (now_ns() - st.last_time_ns) / 1e9
-        println(buf, "Tape head: ", ns_to_rfc3339(st.last_time_ns),
-                "   lag: ", round(lag; digits = 1), " s")
+        println(
+            buf,
+            "Tape head: ",
+            ns_to_rfc3339(st.last_time_ns),
+            "   lag: ",
+            round(lag; digits = 1),
+            " s",
+        )
     end
     stall = time() - st.last_growth
-    stall > 3 * refresh_s &&
-        println(buf, "! no new data for ", round(Int, stall), " s")
+    stall > 3 * refresh_s && println(buf, "! no new data for ", round(Int, stall), " s")
     if length(rates) >= 2
-        println(buf, lineplot(rates; title = "Ticks/s (window $(round(Int, rate_window_s)) s)",
-                              height = 6, width = 54))
+        println(
+            buf,
+            lineplot(
+                rates;
+                title = "Ticks/s (window $(round(Int, rate_window_s)) s)",
+                height = 6,
+                width = 54,
+            ),
+        )
     end
     if !isempty(st.per_symbol)
         top = sort(collect(st.per_symbol); by = last, rev = true)
@@ -131,12 +165,16 @@ costs one full read of the raw data); the default starts at the current end
 of file (activity since attach). `iterations` bounds the number of refreshes
 (`nothing` = run until interrupted). Returns the final `MonitorState`.
 """
-function monitor_raw(dir::AbstractString;
-                     session::Union{Nothing, AbstractString} = nothing,
-                     refresh_s::Real = 2.0, top_symbols::Integer = 10,
-                     rate_window_s::Real = 300.0, from_start::Bool = false,
-                     iterations::Union{Nothing, Integer} = nothing,
-                     io::IO = stdout)
+function monitor_raw(
+    dir::AbstractString;
+    session::Union{Nothing,AbstractString} = nothing,
+    refresh_s::Real = 2.0,
+    top_symbols::Integer = 10,
+    rate_window_s::Real = 300.0,
+    from_start::Bool = false,
+    iterations::Union{Nothing,Integer} = nothing,
+    io::IO = stdout,
+)
     refresh_s > 0 || throw(ArgumentError("refresh_s must be positive"))
     prefix = session === nothing ? latest_session_prefix(dir) : String(session)
     st = MonitorState(dir, prefix)

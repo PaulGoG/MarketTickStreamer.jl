@@ -25,10 +25,14 @@ end
 
 function AlpacaProvider(cfg::Config, key::AbstractString, secret::AbstractString)
     ep = cfg.endpoints
-    return AlpacaProvider(key, secret, cfg.feed,
+    return AlpacaProvider(
+        key,
+        secret,
+        cfg.feed,
         get(ep, "trading_base", "https://api.alpaca.markets"),
         get(ep, "data_base", "https://data.alpaca.markets"),
-        get(ep, "ws_base", "wss://stream.data.alpaca.markets/v2"))
+        get(ep, "ws_base", "wss://stream.data.alpaca.markets/v2"),
+    )
 end
 
 ws_url(p::AlpacaProvider) = "$(p.ws_base)/$(p.feed)"
@@ -49,8 +53,12 @@ Build the JSON subscription message for the requested channels
 (`"trades"`/`"quotes"`/`"bars"`), e.g.
 `{"action":"subscribe","trades":["AAPL","MSFT"]}`.
 """
-function subscribe_payload(::AlpacaProvider, symbols::Vector{String}, channels::Vector{String})
-    d = Dict{String, Any}("action" => "subscribe")
+function subscribe_payload(
+    ::AlpacaProvider,
+    symbols::Vector{String},
+    channels::Vector{String},
+)
+    d = Dict{String,Any}("action" => "subscribe")
     for c in channels
         d[c] = symbols
     end
@@ -66,8 +74,11 @@ function _get_with_retry(url, headers; query = nothing, max_retries::Integer = 5
         try
             return HTTP.get(url, headers; query, retry = false)
         catch e
-            (e isa HTTP.StatusError && e.status in RETRYABLE_STATUS && attempt < max_retries) ||
-                rethrow()
+            (
+                e isa HTTP.StatusError &&
+                e.status in RETRYABLE_STATUS &&
+                attempt < max_retries
+            ) || rethrow()
             ra = tryparse(Float64, HTTP.header(e.response, "Retry-After", ""))
             delay = ra !== nothing ? ra : 2.0^attempt * (0.5 + rand())
             @warn "REST $(e.status) — backing off" attempt delay = round(delay; digits = 1)
@@ -86,8 +97,11 @@ with them).
 function market_clock(p::AlpacaProvider)
     resp = _get_with_retry("$(p.trading_base)/v2/clock", rest_headers(p))
     o = JSON3.read(resp.body)
-    return (; is_open = Bool(o.is_open),
-              next_open = String(o.next_open), next_close = String(o.next_close))
+    return (;
+        is_open = Bool(o.is_open),
+        next_open = String(o.next_open),
+        next_close = String(o.next_close),
+    )
 end
 
 # Shared by live-stream ("S" carries the symbol) and historical REST
@@ -95,24 +109,37 @@ end
 function parse_alpaca_trade(msg, recv_ns::Int64; symbol::AbstractString = "")
     sym = isempty(symbol) ? String(msg.S) : String(symbol)
     conds = haskey(msg, :c) && msg.c !== nothing ? String.(msg.c) : String[]
-    return Trade(sym, rfc3339_to_ns(String(msg.t)), recv_ns,
-                 Float64(msg.p), Float64(msg.s),
-                 haskey(msg, :x) ? String(msg.x) : "",
-                 conds,
-                 haskey(msg, :z) ? String(msg.z) : "",
-                 haskey(msg, :i) ? Int64(msg.i) : 0)
+    return Trade(
+        sym,
+        rfc3339_to_ns(String(msg.t)),
+        recv_ns,
+        Float64(msg.p),
+        Float64(msg.s),
+        haskey(msg, :x) ? String(msg.x) : "",
+        conds,
+        haskey(msg, :z) ? String(msg.z) : "",
+        haskey(msg, :i) ? Int64(msg.i) : 0,
+    )
 end
 
 # Core pagination loop: hands each page's parsed trades to `f` and returns
 # the total row count. `start_str`/`end_str` are inclusive RFC 3339 bounds.
-function _each_trades_page(f, p::AlpacaProvider, symbol::AbstractString;
-                           start_str::AbstractString, end_str::AbstractString,
-                           feed::AbstractString, page_limit::Integer,
-                           rate_sleep_s::Real)
+function _each_trades_page(
+    f,
+    p::AlpacaProvider,
+    symbol::AbstractString;
+    start_str::AbstractString,
+    end_str::AbstractString,
+    feed::AbstractString,
+    page_limit::Integer,
+    rate_sleep_s::Real,
+)
     url = "$(p.data_base)/v2/stocks/$(symbol)/trades"
-    query = Dict{String, String}(
-        "start" => String(start_str), "end" => String(end_str),
-        "limit" => string(page_limit), "feed" => String(feed),
+    query = Dict{String,String}(
+        "start" => String(start_str),
+        "end" => String(end_str),
+        "limit" => string(page_limit),
+        "feed" => String(feed),
     )
     total = 0
     while true
@@ -148,16 +175,28 @@ With `each_page` set, each page's trades are handed to
 `each_page(::Vector{Trade})` instead and only the total row count is
 returned — memory stays bounded by one page regardless of the range.
 """
-function historical_trades(p::AlpacaProvider, symbol::AbstractString,
-                           start_date::Date, end_date::Date;
-                           feed::AbstractString = "sip",
-                           page_limit::Integer = 10_000, rate_sleep_s::Real = 0.35,
-                           on_page = nothing, each_page = nothing)
+function historical_trades(
+    p::AlpacaProvider,
+    symbol::AbstractString,
+    start_date::Date,
+    end_date::Date;
+    feed::AbstractString = "sip",
+    page_limit::Integer = 10_000,
+    rate_sleep_s::Real = 0.35,
+    on_page = nothing,
+    each_page = nothing,
+)
     acc = each_page === nothing ? Trade[] : nothing
     seen = 0
-    total = _each_trades_page(p, symbol;
-        start_str = "$(start_date)T00:00:00Z", end_str = "$(end_date)T23:59:59Z",
-        feed, page_limit, rate_sleep_s) do page
+    total = _each_trades_page(
+        p,
+        symbol;
+        start_str = "$(start_date)T00:00:00Z",
+        end_str = "$(end_date)T23:59:59Z",
+        feed,
+        page_limit,
+        rate_sleep_s,
+    ) do page
         seen += length(page)
         acc === nothing || append!(acc, page)
         each_page === nothing || each_page(page)
@@ -175,12 +214,24 @@ Count trades on the historical tape for `symbol` over the inclusive
 RFC 3339 window `[start_str, end_str]` without retaining them — the
 reference side of live-capture coverage checks.
 """
-historical_trade_count(p::AlpacaProvider, symbol::AbstractString,
-                       start_str::AbstractString, end_str::AbstractString;
-                       feed::AbstractString = "sip", page_limit::Integer = 10_000,
-                       rate_sleep_s::Real = 0.35) =
-    _each_trades_page(_ -> nothing, p, symbol;
-                      start_str, end_str, feed, page_limit, rate_sleep_s)
+historical_trade_count(
+    p::AlpacaProvider,
+    symbol::AbstractString,
+    start_str::AbstractString,
+    end_str::AbstractString;
+    feed::AbstractString = "sip",
+    page_limit::Integer = 10_000,
+    rate_sleep_s::Real = 0.35,
+) = _each_trades_page(
+    _ -> nothing,
+    p,
+    symbol;
+    start_str,
+    end_str,
+    feed,
+    page_limit,
+    rate_sleep_s,
+)
 
 # Alpaca v2 streaming protocol. Frames are JSON arrays of messages; the
 # server opens with {"T":"success","msg":"connected"}, we reply with auth,
@@ -190,8 +241,13 @@ historical_trade_count(p::AlpacaProvider, symbol::AbstractString,
 # HTTP.WebSockets.open returns: exceptions thrown inside the handler cross
 # HTTP.jl's internal task boundary and may arrive wrapped (TaskFailedException
 # etc.), which would defeat the caller's `isa FatalStreamError` dispatch.
-function stream_protocol!(ch::Channel{Trade}, p::AlpacaProvider, cfg::Config, s::LiveSession)
-    fatal = Ref{Union{Nothing, FatalStreamError}}(nothing)
+function stream_protocol!(
+    ch::Channel{Trade},
+    p::AlpacaProvider,
+    cfg::Config,
+    s::LiveSession,
+)
+    fatal = Ref{Union{Nothing,FatalStreamError}}(nothing)
     HTTP.WebSockets.open(ws_url(p)) do ws
         s.ws[] = ws
         last_frame = Ref(time())
@@ -213,14 +269,18 @@ function stream_protocol!(ch::Channel{Trade}, p::AlpacaProvider, cfg::Config, s:
                             HTTP.WebSockets.send(ws, auth_payload(p))
                         elseif m == "authenticated"
                             @info "authenticated; subscribing" cfg.symbols cfg.channels
-                            HTTP.WebSockets.send(ws, subscribe_payload(p, cfg.symbols, cfg.channels))
+                            HTTP.WebSockets.send(
+                                ws,
+                                subscribe_payload(p, cfg.symbols, cfg.channels),
+                            )
                         end
                     elseif T == "subscription"
                         @info "subscription confirmed" trades = get(msg, :trades, [])
                     elseif T == "error"
                         code = Int(get(msg, :code, 0))
                         m = String(get(msg, :msg, "unknown"))
-                        code in FATAL_WS_CODES && (fatal[] = FatalStreamError("Alpaca error $code: $m"))
+                        code in FATAL_WS_CODES &&
+                            (fatal[] = FatalStreamError("Alpaca error $code: $m"))
                         fatal[] === nothing && error("Alpaca stream error $code: $m")   # retryable
                     elseif T == "q" || T == "b"
                         # quotes/bars: accepted but not yet normalized — future work

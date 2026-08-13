@@ -30,9 +30,13 @@ end
 MockPlan(batches; fatal_after = length(batches), fatal_code = 406, linger_s = 0.0) =
     MockPlan(batches, fatal_after, fatal_code, linger_s)
 
-mock_trade(sym, i; price = 100.0 + i, size = 10 * i,
-           t = "2026-07-30T14:30:$(lpad(i % 60, 2, '0')).00000000$(i % 10)Z") =
-    (; T = "t", S = sym, i = i, x = "V", p = price, s = size, t = t, c = ["@"], z = "C")
+mock_trade(
+    sym,
+    i;
+    price = 100.0 + i,
+    size = 10 * i,
+    t = "2026-07-30T14:30:$(lpad(i % 60, 2, '0')).00000000$(i % 10)Z",
+) = (; T = "t", S = sym, i = i, x = "V", p = price, s = size, t = t, c = ["@"], z = "C")
 
 _send(ws, msgs...) = HTTP.WebSockets.send(ws, JSON3.write(collect(msgs)))
 
@@ -85,32 +89,61 @@ REST mock: `/v2/clock` (open, closing `close_in_s` from each query — shrink
 it to simulate a half-day's early close) and `/v2/stocks/{symbol}/trades`
 with two pages linked by `next_page_token = "page2"`.
 """
-function start_mock_rest(; port::Integer, trades_per_page::Integer = 3,
-                         close_in_s::Real = 3600.0, hits::Ref{Int} = Ref(0))
+function start_mock_rest(;
+    port::Integer,
+    trades_per_page::Integer = 3,
+    close_in_s::Real = 3600.0,
+    hits::Ref{Int} = Ref(0),
+)
     router = HTTP.Router()
     # next_close must lie in the future or the client's close-guard would
     # immediately stop every test session.
-    HTTP.register!(router, "GET", "/v2/clock",
+    HTTP.register!(
+        router,
+        "GET",
+        "/v2/clock",
         _ -> begin
             fmt = t -> Dates.format(t, dateformat"yyyy-mm-dd\THH:MM:SS") * "Z"
             now = Dates.now(Dates.UTC)
-            HTTP.Response(200, JSON3.write((; is_open = true,
-                next_open = fmt(now + Dates.Hour(18)),
-                next_close = fmt(now + Dates.Second(round(Int, close_in_s))))))
-        end)
-    HTTP.register!(router, "GET", "/v2/stocks/{symbol}/trades", function (req)
-        hits[] += 1
-        sym = HTTP.getparams(req)["symbol"]
-        q = HTTP.queryparams(HTTP.URI(req.target))
-        page2 = get(q, "page_token", "") == "page2"
-        offset = page2 ? trades_per_page : 0
-        rows = [(; t = "2026-07-29T15:0$(i % 10):0$(i % 6).123456789Z",
-                   x = "V", p = 200.0 + offset + i, s = 5 * i,
-                   c = ["@"], i = offset + i, z = "C") for i in 1:trades_per_page]
-        body = (; trades = rows, symbol = sym,
-                  next_page_token = page2 ? nothing : "page2")
-        return HTTP.Response(200, JSON3.write(body))
-    end)
+            HTTP.Response(
+                200,
+                JSON3.write((;
+                    is_open = true,
+                    next_open = fmt(now + Dates.Hour(18)),
+                    next_close = fmt(now + Dates.Second(round(Int, close_in_s))),
+                )),
+            )
+        end,
+    )
+    HTTP.register!(
+        router,
+        "GET",
+        "/v2/stocks/{symbol}/trades",
+        function (req)
+            hits[] += 1
+            sym = HTTP.getparams(req)["symbol"]
+            q = HTTP.queryparams(HTTP.URI(req.target))
+            page2 = get(q, "page_token", "") == "page2"
+            offset = page2 ? trades_per_page : 0
+            rows = [
+                (;
+                    t = "2026-07-29T15:0$(i % 10):0$(i % 6).123456789Z",
+                    x = "V",
+                    p = 200.0 + offset + i,
+                    s = 5 * i,
+                    c = ["@"],
+                    i = offset + i,
+                    z = "C",
+                ) for i in 1:trades_per_page
+            ]
+            body = (;
+                trades = rows,
+                symbol = sym,
+                next_page_token = page2 ? nothing : "page2",
+            )
+            return HTTP.Response(200, JSON3.write(body))
+        end,
+    )
     return HTTP.serve!(router, "127.0.0.1", port)
 end
 
@@ -120,50 +153,59 @@ end
 Write a minimal config TOML pointing every endpoint at the mock servers and
 all storage under `dir`; returns the config path.
 """
-function mock_config_toml(dir::AbstractString; ws_port::Integer, rest_port::Integer,
-                          symbols = ["AAPL", "MSFT"], max_retries = 3,
-                          require_market_open = true, stale_timeout_s = 30.0)
+function mock_config_toml(
+    dir::AbstractString;
+    ws_port::Integer,
+    rest_port::Integer,
+    symbols = ["AAPL", "MSFT"],
+    max_retries = 3,
+    require_market_open = true,
+    stale_timeout_s = 30.0,
+)
     path = joinpath(dir, "config.toml")
-    write(path, """
-        [provider]
-        name = "alpaca"
-        feed = "iex"
+    write(
+        path,
+        """
+[provider]
+name = "alpaca"
+feed = "iex"
 
-        [stream]
-        symbols = $(JSON3.write(symbols))
-        channels = ["trades"]
-        require_market_open = $require_market_open
-        reconnect_max_retries = $max_retries
-        reconnect_base_delay_s = 0.05
-        reconnect_max_delay_s = 0.2
-        stale_timeout_s = $stale_timeout_s
+[stream]
+symbols = $(JSON3.write(symbols))
+channels = ["trades"]
+require_market_open = $require_market_open
+reconnect_max_retries = $max_retries
+reconnect_base_delay_s = 0.05
+reconnect_max_delay_s = 0.2
+stale_timeout_s = $stale_timeout_s
 
-        [storage]
-        data_dir = "$(joinpath(dir, "data"))"
-        flush_interval_s = 0.2
-        flush_max_ticks = 100
-        processed_format = "csv"
+[storage]
+data_dir = "$(joinpath(dir, "data"))"
+flush_interval_s = 0.2
+flush_max_ticks = 100
+processed_format = "csv"
 
-        [limits]
-        max_session_hours = 0.05
-        max_raw_file_mb = 64
-        channel_capacity = 10000
+[limits]
+max_session_hours = 0.05
+max_raw_file_mb = 64
+channel_capacity = 10000
 
-        [backfill]
-        start_date = "2026-07-29"
-        end_date = "2026-07-29"
-        page_limit = 3
-        rate_limit_sleep_s = 0.01
+[backfill]
+start_date = "2026-07-29"
+end_date = "2026-07-29"
+page_limit = 3
+rate_limit_sleep_s = 0.01
 
-        [logging]
-        level = "warn"
-        log_to_file = false
-        log_dir = "$(joinpath(dir, "logs"))"
+[logging]
+level = "warn"
+log_to_file = false
+log_dir = "$(joinpath(dir, "logs"))"
 
-        [alpaca]
-        trading_base = "http://127.0.0.1:$rest_port"
-        data_base = "http://127.0.0.1:$rest_port"
-        ws_base = "ws://127.0.0.1:$ws_port/v2"
-        """)
+[alpaca]
+trading_base = "http://127.0.0.1:$rest_port"
+data_base = "http://127.0.0.1:$rest_port"
+ws_base = "ws://127.0.0.1:$ws_port/v2"
+""",
+    )
     return path
 end

@@ -15,6 +15,7 @@ real-time analysis methods.
 .
 ├── Project.toml            # package manifest (HTTP 1.x pinned; see docs/design.md §6)
 ├── Manifest.toml           # exact resolved versions — the portability guarantee
+├── .JuliaFormatter.toml    # committed formatting configuration (JuliaFormatter.jl)
 ├── .env.example            # credential template → copy to .env (gitignored)
 ├── config/
 │   └── config.toml         # ALL tunables: provider, symbols, storage, limits, replay
@@ -29,7 +30,7 @@ real-time analysis methods.
 │   ├── live.jl             # provider-agnostic live source: reconnect, watchdog,
 │   │                       #   market-close guard
 │   ├── pipeline.jl         # session orchestration: run_stream / run_backfill; tee
-│   ├── viz.jl              # CairoMakie session diagnostics (price, activity, CCDFs)
+│   ├── visualization.jl    # CairoMakie session diagnostics (price, activity, CCDFs)
 │   └── providers/
 │       └── alpaca.jl       # Alpaca adapter: REST clock/trades + v2 WS protocol
 ├── scripts/
@@ -125,7 +126,8 @@ using Pkg; Pkg.test()
 
 The suite includes full end-to-end runs (stream → reconnect → fatal stop →
 raw files → compaction → replay) against an in-process mock of the Alpaca
-REST + WebSocket APIs — no credentials or network needed.
+REST + WebSocket APIs — no credentials or network needed — plus static
+package QA via Aqua.jl.
 
 ## Status
 
@@ -154,10 +156,7 @@ REST + WebSocket APIs — no credentials or network needed.
 | Quotes (`q`) / bars (`b`) normalization | accepted on the wire, not yet normalized |
 | Real-time analysis consumers | not started — attach via `tee`/`replay_source` |
 | Credential validation (paper account): clock REST, historical SIP REST, WS auth on `iex` and `delayed_sip` | verified 2026-08-01 |
-| Live capture validation against real Alpaca feed | pending (market hours) |
-
-Provider research and the phased action plan are maintained in the
-workspace notes, outside this repository.
+| Live capture validation against real Alpaca feed | verified 2026-08-06: 3 h `delayed_sip` session, 24 symbols, 3.17 M ticks; QA clean (0 duplicates/out-of-order/gaps), print-complete against the historical tape |
 
 ## License
 

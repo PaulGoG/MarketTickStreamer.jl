@@ -18,29 +18,29 @@ function main()
     i = 1
     while i <= length(ARGS)
         if ARGS[i] == "--config"
-            cfg_path = ARGS[i + 1]; i += 2
+            cfg_path = ARGS[i+1]
+            i += 2
         elseif ARGS[i] == "--full"
-            from_start = true; i += 1
+            from_start = true
+            i += 1
         elseif ARGS[i] == "--iterations"
-            iterations = parse(Int, ARGS[i + 1]); i += 2
+            iterations = parse(Int, ARGS[i+1])
+            i += 2
         else
-            session = ARGS[i]; i += 1
+            session = ARGS[i]
+            i += 1
         end
     end
     cfg = load_config(cfg_path)
-    monitor_raw(cfg.raw_dir; session,
-                refresh_s = cfg.monitor_refresh_s,
-                top_symbols = cfg.monitor_top_symbols,
-                rate_window_s = cfg.monitor_rate_window_s,
-                from_start, iterations)
+    monitor_raw(
+        cfg.raw_dir;
+        session,
+        refresh_s = cfg.monitor_refresh_s,
+        top_symbols = cfg.monitor_top_symbols,
+        rate_window_s = cfg.monitor_rate_window_s,
+        from_start,
+        iterations,
+    )
 end
 
-# Ctrl-C arrives as InterruptException (best-effort under threads; the
-# crash-only session lifecycle is the real guarantee) and exits cleanly.
-Base.exit_on_sigint(false)
-try
-    main()
-catch e
-    e isa InterruptException || rethrow()
-    println("\nInterrupted — exiting cleanly.")
-end
+run_entrypoint(main)

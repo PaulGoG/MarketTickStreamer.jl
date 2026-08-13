@@ -1,0 +1,4 @@
+# JuliaFormatter configuration — run `using JuliaFormatter; format(".")` from the
+# project root before committing.
+margin = 92
+always_for_in = true

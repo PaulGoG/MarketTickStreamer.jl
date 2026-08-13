@@ -52,7 +52,7 @@ struct LiveSession
     channel::Channel{Trade}
     stop::Ref{Bool}
     ws::Ref{Any}
-    stats::Ref{NamedTuple{(:ticks, :frames, :reconnects), NTuple{3, Int}}}
+    stats::Ref{NamedTuple{(:ticks, :frames, :reconnects),NTuple{3,Int}}}
 end
 
 """
@@ -67,13 +67,19 @@ function stop!(s::LiveSession)
     SHUTTING_DOWN[] = true
     ws = s.ws[]
     if ws !== nothing
-        try close(ws) catch end
+        try
+            close(ws)
+        catch
+        end
         # close() is a handshake; an unresponsive peer that never acks the
         # CLOSE frame would hang the read loop, so sever the transport after
         # a short grace if it is still open.
         Threads.@spawn begin
             sleep(5.0)
-            try close(ws.io) catch end
+            try
+                close(ws.io)
+            catch
+            end
         end
     end
     return nothing
@@ -116,13 +122,21 @@ function stream_protocol! end
 # websockets have no read idle timeout, and a silently dead TCP connection
 # would otherwise block the read loop forever. Providers call this inside
 # their protocol loop; set `alive[] = false` and `wait` it before returning.
-function spawn_watchdog(ws, s::LiveSession, last_frame::Ref{Float64},
-                        alive::Ref{Bool}, stale_timeout_s::Float64)
+function spawn_watchdog(
+    ws,
+    s::LiveSession,
+    last_frame::Ref{Float64},
+    alive::Ref{Bool},
+    stale_timeout_s::Float64,
+)
     return Threads.@spawn begin
         while alive[] && !s.stop[]
             if time() - last_frame[] > stale_timeout_s
                 @warn "no frames for $(stale_timeout_s)s — closing stale connection"
-                try close(ws) catch end
+                try
+                    close(ws)
+                catch
+                end
                 break
             end
             sleep(0.25)   # fine-grained so connection teardown isn't held up
@@ -133,8 +147,11 @@ end
 # Lock-free single-writer stats bump (only the producer task mutates).
 function bump!(s::LiveSession; ticks = 0, frames = 0, reconnects = 0)
     st = s.stats[]
-    s.stats[] = (; ticks = st.ticks + ticks, frames = st.frames + frames,
-                   reconnects = st.reconnects + reconnects)
+    s.stats[] = (;
+        ticks = st.ticks + ticks,
+        frames = st.frames + frames,
+        reconnects = st.reconnects + reconnects,
+    )
     return nothing
 end
 
@@ -154,8 +171,12 @@ connection that actually delivered data.
 function live_source(p::AbstractProvider, cfg::Config)
     SHUTTING_DOWN[] = false
     ch = Channel{Trade}(cfg.channel_capacity)
-    session = LiveSession(ch, Ref(false), Ref{Any}(nothing),
-                          Ref((; ticks = 0, frames = 0, reconnects = 0)))
+    session = LiveSession(
+        ch,
+        Ref(false),
+        Ref{Any}(nothing),
+        Ref((; ticks = 0, frames = 0, reconnects = 0)),
+    )
     deadline = time() + cfg.max_session_hours * 3600
     Threads.@spawn begin
         attempt = 0
@@ -178,13 +199,17 @@ function live_source(p::AbstractProvider, cfg::Config)
                     break
                 end
                 bump!(session; reconnects = 1)
-                delay = min(cfg.reconnect_base_delay_s * 2.0^(attempt - 1),
-                            cfg.reconnect_max_delay_s) * (0.5 + rand())
+                delay =
+                    min(
+                        cfg.reconnect_base_delay_s * 2.0^(attempt - 1),
+                        cfg.reconnect_max_delay_s,
+                    ) * (0.5 + rand())
                 @info "reconnecting" attempt delay = round(delay; digits = 1)
                 sleep(delay)
             end
         catch e
-            e isa FatalStreamError ? (@error "fatal stream error — aborting" e.msg) : rethrow()
+            e isa FatalStreamError ? (@error "fatal stream error — aborting" e.msg) :
+            rethrow()
         finally
             close(ch)
         end

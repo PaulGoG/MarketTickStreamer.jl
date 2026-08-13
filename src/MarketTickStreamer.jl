@@ -35,20 +35,32 @@ using UnicodePlots: barplot, lineplot
 
 export Config, load_config, load_credentials!
 export Trade, rfc3339_to_ns, ns_to_rfc3339, ns_to_datetime, now_ns, trading_date
-export RawSink, open_raw_sink, write_batch!, close_sink!, run_sink!,
-       trade_to_json, json_to_trade, read_raw, compact_raw
-export dedup_trades, session_report, free_disk_gb, check_resident_memory,
-       coverage_report
+export RawSink,
+    open_raw_sink,
+    write_batch!,
+    close_sink!,
+    run_sink!,
+    trade_to_json,
+    json_to_trade,
+    read_raw,
+    compact_raw
+export deduplicate_trades, session_report, free_disk_gb, check_live_heap, coverage_report
 export monitor_raw
 export replay_source
-export AbstractProvider, LiveSession, FatalStreamError, live_source, stop!,
-       schedule_close_stop!, tee
+export AbstractProvider,
+    LiveSession, FatalStreamError, live_source, stop!, schedule_close_stop!, tee
 export AlpacaProvider, market_clock, historical_trades, historical_trade_count
-export run_stream, run_backfill, session_id, setup_logging, write_session_meta,
-       start_session_meta, finalize_session_meta, reconcile_sessions!,
-       acquire_session_lock
-export tick_theme, session_figure, save_session_figures, overview_figure,
-       save_overview_figures
+export run_stream,
+    run_backfill,
+    session_id,
+    setup_logging,
+    write_session_meta,
+    start_session_meta,
+    finalize_session_meta,
+    reconcile_sessions!,
+    acquire_session_lock
+export tick_theme,
+    session_figure, save_session_figures, overview_figure, save_overview_figures
 
 include("schema.jl")
 include("config.jl")
@@ -59,6 +71,6 @@ include("replay.jl")
 include("live.jl")
 include("providers/alpaca.jl")
 include("pipeline.jl")
-include("viz.jl")
+include("visualization.jl")
 
 end # module

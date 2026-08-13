@@ -20,10 +20,14 @@ Create a channel that replays the trades recorded in raw NDJSON `paths`
 The channel closes when the recording is exhausted, which cleanly terminates
 any consumer written against [`run_sink!`](@ref)-style loops.
 """
-function replay_source(paths::AbstractVector{<:AbstractString};
-                       pace::AbstractString = "recorded", speed::Real = 1.0,
-                       capacity::Integer = 100_000)
-    pace in ("recorded", "max") || throw(ArgumentError("pace must be \"recorded\" or \"max\""))
+function replay_source(
+    paths::AbstractVector{<:AbstractString};
+    pace::AbstractString = "recorded",
+    speed::Real = 1.0,
+    capacity::Integer = 100_000,
+)
+    pace in ("recorded", "max") ||
+        throw(ArgumentError("pace must be \"recorded\" or \"max\""))
     speed > 0 || throw(ArgumentError("speed must be positive"))
     trades = sort!(read_raw(paths); by = t -> t.recv_ns)
     return Channel{Trade}(capacity; spawn = true) do ch

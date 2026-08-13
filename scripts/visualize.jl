@@ -24,35 +24,47 @@ function main()
     i = 1
     while i <= length(ARGS)
         if ARGS[i] == "--config"
-            cfg_path = ARGS[i + 1]; i += 2
+            cfg_path = ARGS[i+1]
+            i += 2
         elseif ARGS[i] == "--out"
-            out_dir = ARGS[i + 1]; i += 2
+            out_dir = ARGS[i+1]
+            i += 2
         elseif ARGS[i] == "--format"
-            formats = Tuple(split(ARGS[i + 1], ",")); i += 2
+            formats = Tuple(split(ARGS[i+1], ","))
+            i += 2
         elseif ARGS[i] == "--overview"
-            overview = true; i += 1
+            overview = true
+            i += 1
         elseif ARGS[i] == "--symbols"
-            symbols = String.(split(ARGS[i + 1], ",")); i += 2
+            symbols = String.(split(ARGS[i+1], ","))
+            i += 2
         elseif ARGS[i] == "--from"
-            from = Date(ARGS[i + 1]); i += 2
+            from = Date(ARGS[i+1])
+            i += 2
         elseif ARGS[i] == "--to"
-            to = Date(ARGS[i + 1]); i += 2
+            to = Date(ARGS[i+1])
+            i += 2
         else
-            push!(files, ARGS[i]); i += 1
+            push!(files, ARGS[i])
+            i += 1
         end
     end
     if overview
         cfg = load_config(cfg_path)
-        written = save_overview_figures(cfg.processed_dir, out_dir;
-                                        symbols, from, to, formats)
+        written =
+            save_overview_figures(cfg.processed_dir, out_dir; symbols, from, to, formats)
         println("Wrote $(length(written)) overview figure file(s):")
         foreach(f -> println("  ", f), written)
         return
     end
     if isempty(files)
         cfg = load_config(cfg_path)
-        isdir(cfg.raw_dir) &&
-            (files = filter(f -> endswith(f, ".jsonl"), readdir(cfg.raw_dir; join = true, sort = true)))
+        isdir(cfg.raw_dir) && (
+            files = filter(
+                f -> endswith(f, ".jsonl"),
+                readdir(cfg.raw_dir; join = true, sort = true),
+            )
+        )
     end
     isempty(files) && (println("No raw files found."); return)
 
@@ -67,12 +79,4 @@ function main()
     end
 end
 
-# Ctrl-C arrives as InterruptException (best-effort under threads; the
-# crash-only session lifecycle is the real guarantee) and exits cleanly.
-Base.exit_on_sigint(false)
-try
-    main()
-catch e
-    e isa InterruptException || rethrow()
-    println("\nInterrupted — exiting cleanly.")
-end
+run_entrypoint(main)

@@ -5,7 +5,7 @@ name = "alpaca"          # provider adapter; one of: "alpaca"
 feed = "delayed_sip"     # live feed; one of: "iex" | "delayed_sip" | "sip"
 
 [stream]
-# Capture basket (24 of the 30-symbol cap); selection log: notes/2026-08-01-capture-basket.md
+# Capture basket (24 of the 30-symbol cap), spanning sectors and tick-intensity tiers
 symbols = [
     "AAPL", "MSFT", "GOOGL", "AMZN", "META",
     "NVDA", "AMD", "INTC",
@@ -40,7 +40,7 @@ max_raw_file_mb = 1024           # roll to a new raw file beyond this size [MB]
 channel_capacity = 100000        # in-flight tick buffer; producer blocks when full
 max_symbols = 30                 # subscription cap
 min_free_disk_gb = 2.0           # refuse to start / stop streaming below this free space [GiB]
-max_resident_mb = 4096           # live-heap ceiling for backfill/compaction [MiB]; > 0
+max_live_heap_mb = 4096           # live-heap ceiling for backfill/compaction [MiB]; > 0
 
 [replay]
 pace = "recorded"                # one of: "recorded" (honor inter-arrival times) | "max"

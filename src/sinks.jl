@@ -14,9 +14,15 @@ stay Int64 nanoseconds — the round-trip through [`json_to_trade`](@ref) is
 lossless.
 """
 trade_to_json(t::Trade) = JSON3.write((
-    symbol = t.symbol, time_ns = t.time_ns, recv_ns = t.recv_ns,
-    price = t.price, size = t.size, exchange = t.exchange,
-    conditions = t.conditions, tape = t.tape, id = t.id,
+    symbol = t.symbol,
+    time_ns = t.time_ns,
+    recv_ns = t.recv_ns,
+    price = t.price,
+    size = t.size,
+    exchange = t.exchange,
+    conditions = t.conditions,
+    tape = t.tape,
+    id = t.id,
 ))
 
 """
@@ -29,9 +35,17 @@ function json_to_trade(line::AbstractString)
     # (e.g. a bulk-read file split into lines) it avoids a pathological JSON3
     # slow path measured at ~2000x the per-line cost.
     o = JSON3.read(String(line))
-    return Trade(String(o.symbol), Int64(o.time_ns), Int64(o.recv_ns),
-                 Float64(o.price), Float64(o.size), String(o.exchange),
-                 String.(o.conditions), String(o.tape), Int64(o.id))
+    return Trade(
+        String(o.symbol),
+        Int64(o.time_ns),
+        Int64(o.recv_ns),
+        Float64(o.price),
+        Float64(o.size),
+        String(o.exchange),
+        String.(o.conditions),
+        String(o.tape),
+        Int64(o.id),
+    )
 end
 
 """
@@ -52,6 +66,16 @@ mutable struct RawSink
     n_written::Int64
 end
 
+# First part number >= `part` whose file does not exist yet, with its path.
+function _fresh_part(dir::AbstractString, prefix::AbstractString, part::Integer)
+    path = joinpath(dir, "$(prefix)_part$(lpad(part, 3, '0')).jsonl")
+    while isfile(path)
+        part += 1
+        path = joinpath(dir, "$(prefix)_part$(lpad(part, 3, '0')).jsonl")
+    end
+    return part, path
+end
+
 """
     open_raw_sink(dir, prefix; max_mb = 1024) -> RawSink
 
@@ -61,24 +85,22 @@ already exist.
 """
 function open_raw_sink(dir::AbstractString, prefix::AbstractString; max_mb::Integer = 1024)
     mkpath(dir)
-    part = 1
-    path = joinpath(dir, "$(prefix)_part$(lpad(part, 3, '0')).jsonl")
-    while isfile(path)
-        part += 1
-        path = joinpath(dir, "$(prefix)_part$(lpad(part, 3, '0')).jsonl")
-    end
-    return RawSink(String(dir), String(prefix), Int64(max_mb) * 1024 * 1024,
-                   part, path, open(path, "a"), 0, 0)
+    part, path = _fresh_part(dir, prefix, 1)
+    return RawSink(
+        String(dir),
+        String(prefix),
+        Int64(max_mb) * 1024 * 1024,
+        part,
+        path,
+        open(path, "a"),
+        0,
+        0,
+    )
 end
 
 function _roll!(s::RawSink)
     close(s.io)
-    s.part += 1
-    s.path = joinpath(s.dir, "$(s.prefix)_part$(lpad(s.part, 3, '0')).jsonl")
-    while isfile(s.path)
-        s.part += 1
-        s.path = joinpath(s.dir, "$(s.prefix)_part$(lpad(s.part, 3, '0')).jsonl")
-    end
+    s.part, s.path = _fresh_part(s.dir, s.prefix, s.part + 1)
     s.io = open(s.path, "a")
     s.bytes = 0
     return s
@@ -87,8 +109,9 @@ end
 """
     write_batch!(s::RawSink, trades) -> RawSink
 
-Append a batch of trades as NDJSON lines and fsync-flush once. Rolls to a new
-part file when the size limit is exceeded.
+Append a batch of trades as NDJSON lines and flush the stream once (buffered
+writes reach the OS per batch, not per line). Rolls to a new part file when
+the size limit is exceeded.
 """
 function write_batch!(s::RawSink, trades::AbstractVector{Trade})
     isempty(trades) && return s
@@ -123,9 +146,13 @@ shutdown signal, so no locks or flags are needed.
 
 `on_flush(n_batch, n_total)` is called after each disk write (for logging).
 """
-function run_sink!(ch::Channel{Trade}, sink::RawSink;
-                   flush_interval_s::Real = 30.0, flush_max_ticks::Integer = 5000,
-                   on_flush = nothing)
+function run_sink!(
+    ch::Channel{Trade},
+    sink::RawSink;
+    flush_interval_s::Real = 30.0,
+    flush_max_ticks::Integer = 5000,
+    on_flush = nothing,
+)
     buf = Trade[]
     last_flush = time()
     total = 0
@@ -180,8 +207,13 @@ read_raw(path::AbstractString) = read_raw([path])
 
 # Sort one (symbol, day) group by exchange time and write it to the
 # processed tree with safesave semantics. Returns the path written.
-function _write_group(trades::Vector{Trade}, out_dir::AbstractString,
-                      sym::AbstractString, date::Date, format::AbstractString)
+function _write_group(
+    trades::Vector{Trade},
+    out_dir::AbstractString,
+    sym::AbstractString,
+    date::Date,
+    format::AbstractString,
+)
     ts = sort(trades; by = t -> t.time_ns)
     out = DataFrame(
         symbol = [t.symbol for t in ts],
@@ -204,7 +236,7 @@ end
 """
     compact_raw(raw_paths, out_dir; format = "csv", dedup = true,
                 mem_fraction = 0.5, tz = tz"America/New_York",
-                max_resident_mb = nothing) -> Vector{String}
+                max_live_heap_mb = nothing) -> Vector{String}
 
 Compact raw NDJSON files into per-symbol, per-trading-day analysis files
 (`out_dir/SYMBOL/YYYY-MM-DD.csv|.arrow`), sorted by `time_ns`. Existing
@@ -212,48 +244,61 @@ outputs are never overwritten — a ` #N` suffixed sibling is written instead
 (safesave semantics). Returns the list of files written.
 
 `dedup = true` drops exact duplicate prints (reconnection double-delivery,
-overlapping backfill/live captures) via [`dedup_trades`](@ref), logging the
+overlapping backfill/live captures) via [`deduplicate_trades`](@ref), logging the
 count. Small inputs are compacted in memory; when the estimated footprint
 exceeds `mem_fraction` of currently free RAM the input is instead streamed
 line-by-line into per-(symbol, day) spill files and each group is compacted
 independently — memory stays bounded by the largest single group.
-`max_resident_mb` additionally enforces the configured heap ceiling per
-group ([`check_resident_memory`](@ref)).
+`max_live_heap_mb` additionally enforces the configured heap ceiling per
+group ([`check_live_heap`](@ref)).
 """
-function compact_raw(raw_paths::AbstractVector{<:AbstractString}, out_dir::AbstractString;
-                     format::AbstractString = "csv", dedup::Bool = true,
-                     mem_fraction::Real = 0.5, tz::TimeZone = tz"America/New_York",
-                     max_resident_mb::Union{Nothing, Real} = nothing)
-    format in ("csv", "arrow") || throw(ArgumentError("format must be \"csv\" or \"arrow\""))
+function compact_raw(
+    raw_paths::AbstractVector{<:AbstractString},
+    out_dir::AbstractString;
+    format::AbstractString = "csv",
+    dedup::Bool = true,
+    mem_fraction::Real = 0.5,
+    tz::TimeZone = tz"America/New_York",
+    max_live_heap_mb::Union{Nothing,Real} = nothing,
+)
+    format in ("csv", "arrow") ||
+        throw(ArgumentError("format must be \"csv\" or \"arrow\""))
     bytes = sum(filesize, raw_paths; init = 0)
     est = 4 * bytes          # parsed structs + DataFrame + sort scratch
     est > mem_fraction * Sys.free_memory() &&
-        return _compact_spill(raw_paths, out_dir; format, dedup, tz, max_resident_mb)
+        return _compact_spill(raw_paths, out_dir; format, dedup, tz, max_live_heap_mb)
     trades = read_raw(raw_paths)
     if dedup
         n0 = length(trades)
-        trades = dedup_trades(trades)
+        trades = deduplicate_trades(trades)
         n0 > length(trades) && @info "dropped duplicate prints" count = n0 - length(trades)
     end
     isempty(trades) && return String[]
-    groups = Dict{Tuple{String, Date}, Vector{Trade}}()
+    groups = Dict{Tuple{String,Date},Vector{Trade}}()
     for t in trades
         push!(get!(() -> Trade[], groups, (t.symbol, trading_date(t.time_ns; tz))), t)
     end
-    return [_write_group(groups[k], out_dir, k[1], k[2], format)
-            for k in sort!(collect(keys(groups)))]
+    return [
+        _write_group(groups[k], out_dir, k[1], k[2], format) for
+        k in sort!(collect(keys(groups)))
+    ]
 end
 
 # Bounded-memory compaction: route each raw line to a per-(symbol, day)
 # spill file in one streaming pass, then compact every group independently.
-function _compact_spill(raw_paths::AbstractVector{<:AbstractString}, out_dir::AbstractString;
-                        format::AbstractString, dedup::Bool, tz::TimeZone,
-                        max_resident_mb::Union{Nothing, Real})
+function _compact_spill(
+    raw_paths::AbstractVector{<:AbstractString},
+    out_dir::AbstractString;
+    format::AbstractString,
+    dedup::Bool,
+    tz::TimeZone,
+    max_live_heap_mb::Union{Nothing,Real},
+)
     @info "large input — using spill compaction" mib =
         round(sum(filesize, raw_paths; init = 0) / 2^20; digits = 1)
     written = String[]
     mktempdir() do spill
-        handles = Dict{Tuple{String, Date}, IOStream}()
+        handles = Dict{Tuple{String,Date},IOStream}()
         nbad = 0
         for p in raw_paths, line in eachline(p)
             isempty(strip(line)) && continue
@@ -277,12 +322,12 @@ function _compact_spill(raw_paths::AbstractVector{<:AbstractString}, out_dir::Ab
             trades = read_raw(joinpath(spill, "$(sym)_$(date).jsonl"))
             if dedup
                 n0 = length(trades)
-                trades = dedup_trades(trades)
+                trades = deduplicate_trades(trades)
                 ndup += n0 - length(trades)
             end
             push!(written, _write_group(trades, out_dir, sym, date, format))
-            max_resident_mb === nothing ||
-                check_resident_memory(max_resident_mb; context = "compaction $sym $date")
+            max_live_heap_mb === nothing ||
+                check_live_heap(max_live_heap_mb; context = "compaction $sym $date")
         end
         ndup > 0 && @info "dropped duplicate prints" count = ndup
     end
