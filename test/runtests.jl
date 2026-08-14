@@ -503,6 +503,13 @@ hostname = "$(gethostname())"
                     r"^([0-9a-f]{40}|unknown)$",
                     meta["provenance"]["git_commit"],
                 )
+                # hardware fingerprint: results attributable to config + commit + hardware
+                hw = meta["hardware"]
+                @test !isempty(hw["cpu_model"])
+                @test hw["cpu_threads"] >= 1 && hw["julia_threads"] >= 1
+                @test hw["blas_threads"] >= 1
+                @test hw["total_memory_gib"] > 0
+                @test occursin("Julia Version", hw["versioninfo"])
             finally
                 close(ws)
                 close(rest)

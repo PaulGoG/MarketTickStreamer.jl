@@ -18,6 +18,7 @@ using Logging
 using Statistics
 using TOML
 using FileWatching: Pidfile
+using InteractiveUtils: InteractiveUtils
 using Printf: @sprintf
 
 using Arrow

@@ -71,10 +71,12 @@ config does). Feeds on the free tier: `iex` (real-time, single venue) and
 empirically print-complete against the historical tape); `sip` (real-time
 consolidated) requires a paid subscription.
 
-## Usage
+## Entry points
 
 All behavior is driven by `config/config.toml`; every script accepts an
-alternative config path.
+alternative config path. Each script activates and instantiates the project
+environment itself (`scripts/startup.jl`), so a fresh clone needs no manual
+environment step.
 
 ```bash
 # live capture (Ctrl-C drains buffers and exits cleanly)
@@ -95,7 +97,13 @@ julia scripts/visualize.jl data/raw/<session>_part001.jsonl
 # live dashboard for a running capture/backfill (separate terminal, read-only;
 # tick rate, tape head/lag, per-symbol counts; --full for session totals)
 julia scripts/monitor.jl
+
+# test suite (offline: unit + mock-server end-to-end + Aqua static QA)
+julia --project=. -e 'using Pkg; Pkg.test()'
 ```
+
+For interactive work against the test environment, activate it with
+`TestEnv.jl` (`using TestEnv; TestEnv.activate()`) from the project REPL.
 
 From the REPL, the same entry points are `run_stream(cfg)`,
 `run_backfill(cfg)`, `compact_raw(files, out)`, and
@@ -109,8 +117,9 @@ consumers are developed offline (see `docs/design.md`).
   session-stamped filenames, size-rolled parts, never overwritten. Source of
   truth; line-by-line recoverable after a crash.
 - `data/raw/<session_id>.meta.toml` — provenance sidecar per session:
-  session summary, git commit, Julia/package versions, full effective
-  configuration snapshot.
+  session summary, git commit, Julia/package versions, hardware fingerprint
+  (CPU, memory, thread counts, `versioninfo`), full effective configuration
+  snapshot.
 - `data/processed/SYMBOL/YYYY-MM-DD.csv|.arrow` — compacted, time-sorted
   per-day files for the analysis pipeline. Existing files are never
   overwritten (` #N` suffix siblings instead).
@@ -120,14 +129,10 @@ consumers are developed offline (see `docs/design.md`).
 
 ## Testing
 
-```julia
-using Pkg; Pkg.test()
-```
-
-The suite includes full end-to-end runs (stream → reconnect → fatal stop →
-raw files → compaction → replay) against an in-process mock of the Alpaca
-REST + WebSocket APIs — no credentials or network needed — plus static
-package QA via Aqua.jl.
+The suite runs fully offline: unit tests plus end-to-end runs (stream →
+reconnect → fatal stop → raw files → compaction → replay) against an
+in-process mock of the Alpaca REST + WebSocket APIs — no credentials or
+network needed — plus static package QA via Aqua.jl.
 
 ## Status
 

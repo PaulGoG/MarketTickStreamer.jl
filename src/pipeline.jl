@@ -167,6 +167,20 @@ _toml_value(v::Date) = string(v)
 _toml_value(v::AbstractVector) = [_toml_value(x) for x in v]
 _toml_value(v::Dict) = Dict{String,Any}(string(k) => _toml_value(x) for (k, x) in v)
 
+# Platform fingerprint stored with every session sidecar, so results stay
+# attributable to config + commit + hardware. Distributed workers and GPU
+# devices are not fingerprinted because neither is used by this package.
+function _hardware_provenance()
+    return Dict{String,Any}(
+        "cpu_model" => Sys.cpu_info()[1].model,
+        "cpu_threads" => Sys.CPU_THREADS,
+        "total_memory_gib" => round(Sys.total_memory() / 2^30; digits = 2),
+        "julia_threads" => Threads.nthreads(),
+        "blas_threads" => LinearAlgebra.BLAS.get_num_threads(),
+        "versioninfo" => sprint(InteractiveUtils.versioninfo),
+    )
+end
+
 """
     write_session_meta(cfg, sid; status, ticks, raw_files, started_utc,
                        finished_utc = nothing) -> String
@@ -174,10 +188,11 @@ _toml_value(v::Dict) = Dict{String,Any}(string(k) => _toml_value(x) for (k, x) i
 Persist a provenance sidecar `<raw_dir>/<sid>.meta.toml` next to the
 session's raw files: session summary (id, status, pid, span, tick count,
 file list), provenance (git commit + dirty flag, Julia and package
-versions, hostname), and the full effective configuration snapshot.
-The crash-only lifecycle is [`start_session_meta`](@ref) →
-[`finalize_session_meta`](@ref), reconciled at startup by
-[`reconcile_sessions!`](@ref).
+versions, hostname), a hardware fingerprint (CPU model and logical core
+count, total memory, Julia and BLAS thread counts, full `versioninfo`
+output), and the full effective configuration snapshot. The crash-only
+lifecycle is [`start_session_meta`](@ref) → [`finalize_session_meta`](@ref),
+reconciled at startup by [`reconcile_sessions!`](@ref).
 """
 function write_session_meta(
     cfg::Config,
@@ -207,6 +222,7 @@ function write_session_meta(
                 string(something(pkgversion(MarketTickStreamer), "unknown")),
             "hostname" => gethostname(),
         ),
+        "hardware" => _hardware_provenance(),
         "config" => Dict{String,Any}(
             String(f) => _toml_value(getfield(cfg, f)) for f in fieldnames(Config)
         ),

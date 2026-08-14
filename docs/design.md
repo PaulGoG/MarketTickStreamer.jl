@@ -121,7 +121,9 @@ path — no data is lost on interrupt (tested).
   the data is used for science.
 - **Provenance, crash-only**: every stream/backfill session writes its
   `<session_id>.meta.toml` sidecar at START (`status = "running"`; git
-  commit + dirty flag, versions, hostname, pid, full config snapshot) and
+  commit + dirty flag, versions, hostname, pid, hardware fingerprint —
+  CPU model/cores, memory, thread and BLAS-thread counts, `versioninfo` —
+  and the full config snapshot) and
   finalizes it at exit (`completed` / `interrupted`, counts). Startup
   reconciliation relabels sidecars of dead processes `aborted` and reports
   zero-byte raw stubs — provenance survives SIGKILL and power loss, which
