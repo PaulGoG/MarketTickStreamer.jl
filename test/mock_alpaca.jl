@@ -83,16 +83,22 @@ function start_mock_ws(plan::MockPlan; port::Integer)
 end
 
 """
-    start_mock_rest(; port, trades_per_page = 3, close_in_s = 3600.0) -> server
+    start_mock_rest(; port, trades_per_page = 3, close_in_s = 3600.0,
+                    is_open = true, open_in_s = 64800.0) -> server
 
-REST mock: `/v2/clock` (open, closing `close_in_s` from each query — shrink
-it to simulate a half-day's early close) and `/v2/stocks/{symbol}/trades`
-with two pages linked by `next_page_token = "page2"`.
+REST mock: `/v2/clock` and `/v2/stocks/{symbol}/trades` with two pages linked
+by `next_page_token = "page2"`. The clock reports `is_open`, a close
+`close_in_s` from each query (shrink it to simulate a half-day's early close)
+and an open `open_in_s` from each query — negative to place the opening bell
+in the past, which is how the `wait_for_open` railing is exercised without
+waiting.
 """
 function start_mock_rest(;
     port::Integer,
     trades_per_page::Integer = 3,
     close_in_s::Real = 3600.0,
+    is_open::Bool = true,
+    open_in_s::Real = 64800.0,
     hits::Ref{Int} = Ref(0),
 )
     router = HTTP.Router()
@@ -108,8 +114,8 @@ function start_mock_rest(;
             HTTP.Response(
                 200,
                 JSON3.write((;
-                    is_open = true,
-                    next_open = fmt(now + Dates.Hour(18)),
+                    is_open = is_open,
+                    next_open = fmt(now + Dates.Second(round(Int, open_in_s))),
                     next_close = fmt(now + Dates.Second(round(Int, close_in_s))),
                 )),
             )
@@ -160,7 +166,9 @@ function mock_config_toml(
     symbols = ["AAPL", "MSFT"],
     max_retries = 3,
     require_market_open = true,
+    wait_for_open = false,
     stale_timeout_s = 30.0,
+    feed = "iex",
 )
     path = joinpath(dir, "config.toml")
     write(
@@ -168,12 +176,13 @@ function mock_config_toml(
         """
 [provider]
 name = "alpaca"
-feed = "iex"
+feed = "$feed"
 
 [stream]
 symbols = $(JSON3.write(symbols))
 channels = ["trades"]
 require_market_open = $require_market_open
+wait_for_open = $wait_for_open
 reconnect_max_retries = $max_retries
 reconnect_base_delay_s = 0.05
 reconnect_max_delay_s = 0.2

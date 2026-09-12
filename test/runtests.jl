@@ -586,6 +586,117 @@ hostname = "$(gethostname())"
         end
     end
 
+    @testset "live E2E: watchdog severs a stalled stream" begin
+        mktempdir() do dir
+            ws_port, rest_port = freeport(9351), freeport(9371)
+            # One batch, then the server holds the socket open and says
+            # nothing. HTTP.jl 1.x has no read idle timeout, so only the
+            # client-side watchdog can end this connection.
+            plan = MockPlan(
+                [[mock_trade("AAPL", i) for i in 1:3]];
+                fatal_after = 1,
+                linger_s = 20.0,
+            )
+            ws, nconn = start_mock_ws(plan; port = ws_port)
+            rest = start_mock_rest(; port = rest_port)
+            try
+                cfg = load_config(
+                    mock_config_toml(
+                        dir;
+                        ws_port,
+                        rest_port,
+                        max_retries = 1,
+                        stale_timeout_s = 1.0,
+                    ),
+                )
+                p = AlpacaProvider(cfg, MOCK_KEY, MOCK_SECRET)
+                t0 = time()
+                result = run_stream(cfg; provider = p)
+                @test result.ticks == 3            # the batch before the stall
+                @test nconn[] == 2                 # severed, then reconnected
+                @test time() - t0 < 15.0           # the watchdog, not the linger
+            finally
+                close(ws)
+                close(rest)
+            end
+        end
+    end
+
+    @testset "live E2E: market-closed railing and wait_for_open" begin
+        mktempdir() do dir
+            ws_port, rest_port = freeport(9451), freeport(9471)
+            plan = MockPlan([[mock_trade("AAPL", i) for i in 1:3]]; fatal_after = 1)
+            # Closed market, no waiting: the session must not open a socket.
+            ws, nconn = start_mock_ws(plan; port = ws_port)
+            rest = start_mock_rest(; port = rest_port, is_open = false)
+            try
+                cfg = load_config(mock_config_toml(dir; ws_port, rest_port))
+                p = AlpacaProvider(cfg, MOCK_KEY, MOCK_SECRET)
+                result = run_stream(cfg; provider = p)
+                @test result.ticks == 0
+                @test isempty(result.raw_files)
+                @test nconn[] == 0
+            finally
+                close(ws)
+                close(rest)
+            end
+        end
+        mktempdir() do dir
+            ws_port, rest_port = freeport(9491), freeport(9511)
+            plan = MockPlan([[mock_trade("AAPL", i) for i in 1:3]]; fatal_after = 1)
+            # Closed market, waiting enabled, opening bell already past: the
+            # wait resolves to zero and the session proceeds to stream.
+            ws, nconn = start_mock_ws(plan; port = ws_port)
+            rest = start_mock_rest(; port = rest_port, is_open = false, open_in_s = -60.0)
+            try
+                cfg = load_config(
+                    mock_config_toml(dir; ws_port, rest_port, wait_for_open = true),
+                )
+                p = AlpacaProvider(cfg, MOCK_KEY, MOCK_SECRET)
+                t0 = time()
+                result = run_stream(cfg; provider = p)
+                @test result.ticks == 3
+                @test nconn[] == 2                 # streamed, then scripted fatal
+                @test time() - t0 < 30.0           # no real wait was served
+            finally
+                close(ws)
+                close(rest)
+            end
+        end
+    end
+
+    @testset "live E2E: delayed feed shifts the close railing" begin
+        mktempdir() do dir
+            ws_port, rest_port = freeport(9551), freeport(9571)
+            plan = MockPlan(
+                [[mock_trade("AAPL", i) for i in 1:3]];
+                fatal_after = 1,
+                linger_s = 5.0,
+            )
+            ws, nconn = start_mock_ws(plan; port = ws_port)
+            # A close two seconds out stops a real-time session almost at once
+            # (asserted in the early-close testset above); on `delayed_sip`
+            # the guard sits 900 s later, so the tape tail keeps arriving.
+            rest = start_mock_rest(; port = rest_port, close_in_s = 2.0)
+            try
+                cfg = load_config(
+                    mock_config_toml(dir; ws_port, rest_port, feed = "delayed_sip"),
+                )
+                p = AlpacaProvider(cfg, MOCK_KEY, MOCK_SECRET)
+                @test MarketTickStreamer.feed_delay_ns(p) ==
+                      900 * MarketTickStreamer.NS_PER_SEC
+                t0 = time()
+                result = run_stream(cfg; provider = p)
+                @test result.ticks == 3
+                @test time() - t0 > 2.0            # outlived the unshifted close
+                @test nconn[] == 2                 # ended by the fatal, not the guard
+            finally
+                close(ws)
+                close(rest)
+            end
+        end
+    end
+
     @testset "live E2E: auth failure is fatal, no retry storm" begin
         mktempdir() do dir
             ws_port, rest_port = freeport(9051), freeport(9071)
