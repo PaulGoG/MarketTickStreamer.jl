@@ -129,6 +129,7 @@ function start_mock_rest(;
     is_open::Bool = true,
     open_in_s::Real = 64800.0,
     hits::Ref{Int} = Ref(0),
+    fail_after::Integer = typemax(Int),
 )
     router = HTTP.Router()
     # next_close must lie in the future or the client's close-guard would
@@ -170,13 +171,19 @@ function start_mock_rest(;
         "/v2/stocks/{symbol}/trades",
         function (req)
             hits[] += 1
+            # `fail_after` scripts a mid-run failure, to exercise resume.
+            hits[] > fail_after && return HTTP.Response(404, "scripted backfill failure")
             sym = HTTP.getparams(req)["symbol"]
             q = HTTP.queryparams(HTTP.URI(req.target))
+            # Echo the requested day back in the timestamps, as the real
+            # endpoint does — compaction files rows by their exchange date, so
+            # a mock that ignored the range would put every day in one file.
+            day = first(get(q, "start", "2026-07-29T00:00:00Z"), 10)
             page2 = get(q, "page_token", "") == "page2"
             offset = page2 ? trades_per_page : 0
             rows = [
                 (;
-                    t = "2026-07-29T15:0$(i % 10):0$(i % 6).123456789Z",
+                    t = "$(day)T15:0$(i % 10):0$(i % 6).123456789Z",
                     x = "V",
                     p = 200.0 + offset + i,
                     s = 5 * i,
@@ -212,6 +219,8 @@ function mock_config_toml(
     wait_for_open = false,
     stale_timeout_s = 30.0,
     feed = "iex",
+    start_date = "2026-07-29",
+    end_date = "2026-07-29",
 )
     path = joinpath(dir, "config.toml")
     write(
@@ -243,8 +252,8 @@ max_raw_file_mb = 64
 channel_capacity = 10000
 
 [backfill]
-start_date = "2026-07-29"
-end_date = "2026-07-29"
+start_date = "$start_date"
+end_date = "$end_date"
 page_limit = 3
 rate_limit_sleep_s = 0.01
 

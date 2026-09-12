@@ -111,10 +111,15 @@ function _ensure_free_disk(cfg::Config)
 end
 
 # Raw part files belonging to one session, sorted.
-_session_raw_files(cfg::Config, sid::AbstractString) = filter(
-    f -> startswith(basename(f), sid) && endswith(f, ".jsonl"),
-    readdir(cfg.raw_dir; join = true, sort = true),
-)
+_raw_files_with_prefix(dir::AbstractString, prefix::AbstractString) =
+    isdir(dir) ?
+    filter(
+        f -> startswith(basename(f), prefix) && endswith(f, ".jsonl"),
+        readdir(dir; join = true, sort = true),
+    ) : String[]
+
+_session_raw_files(cfg::Config, sid::AbstractString) =
+    _raw_files_with_prefix(cfg.raw_dir, sid)
 
 """
     acquire_session_lock(data_dir) -> lock
@@ -436,11 +441,21 @@ Download historical trades for every configured symbol over
 through the same raw-NDJSON + compaction path as live data (marked by
 `recv_ns = 0`), and return the processed file paths.
 
-Robustness: pages are flushed to disk as they arrive (RAM bounded by one
-page and `limits.max_live_heap_mb`); with `backfill.resume`, `(symbol, day)`
-pairs already present under `processed/` are skipped, so a rerun after an
-abort resumes instead of re-downloading; Ctrl-C finalizes the provenance
-sidecar as `interrupted` and preserves all flushed raw data.
+Work is done one `(symbol, day)` at a time: its own raw part set, compacted
+as soon as that day finishes. Pages are flushed to disk as they arrive, so
+RAM stays bounded by one page and `limits.max_live_heap_mb`.
+
+That granularity is what makes `backfill.resume` mean anything on a long
+download. The skip test asks whether a day is already present under
+`processed/`, so a day must land there the moment it is complete and not
+before: a run killed after eight of twelve hours resumes at hour eight.
+Compacting only at the end — as this did until 2026-09-13 — left a killed run
+with raw data that resume could not see, and the rerun started from nothing.
+
+An interrupted day is not compacted and is therefore downloaded again; its
+partial raw file is left on disk rather than deleted, and compaction
+deduplicates if it is ever folded in. Ctrl-C finalizes the provenance sidecar
+as `interrupted` and returns the days that did complete.
 """
 function run_backfill(cfg::Config; provider::Union{AbstractProvider,Nothing} = nothing)
     sid = "backfill_" * session_id(cfg; feed = cfg.backfill_feed)
@@ -455,17 +470,10 @@ function run_backfill(cfg::Config; provider::Union{AbstractProvider,Nothing} = n
     status = "completed"
     total = 0
     meta_path = nothing
-    sink = nothing
-    files = String[]
+    processed = String[]
     try
         reconcile_sessions!(cfg.raw_dir)
         _ensure_free_disk(cfg)
-        sink = open_raw_sink(cfg.raw_dir, sid; max_mb = cfg.max_raw_file_mb)
-        # `sink` is also bound before `try`, because `finally` closes it; a
-        # variable assigned in two scopes is boxed when a closure captures it,
-        # which would make the per-page `write_batch!` below a dynamic call on
-        # the download path. This single-assignment binding keeps it static.
-        page_sink = sink::RawSink
         meta_path = start_session_meta(cfg, sid; started_utc)
         days = [d for d in cfg.backfill_start:Day(1):cfg.backfill_end if dayofweek(d) <= 5]
         prog = Progress(
@@ -479,19 +487,56 @@ function run_backfill(cfg::Config; provider::Union{AbstractProvider,Nothing} = n
                 next!(prog)
                 continue
             end
-            n = historical_trades(
-                provider,
-                sym,
-                day,
-                day;
-                feed = cfg.backfill_feed,
-                page_limit = cfg.backfill_page_limit,
-                rate_sleep_s = cfg.backfill_rate_sleep_s,
-                each_page = page -> begin
-                    write_batch!(page_sink, page)
-                    check_live_heap(cfg.max_live_heap_mb; context = "backfill $sym $day")
-                end,
-            )
+            # One raw part set per (symbol, day), compacted the moment the day
+            # finishes. That is what makes `resume` survive a kill: the skip
+            # test reads `processed/`, so it can only be accurate if a day
+            # lands there as soon as it is complete and never before.
+            day_prefix = "$(sid)_$(sym)_$(day)"
+            day_sink = open_raw_sink(cfg.raw_dir, day_prefix; max_mb = cfg.max_raw_file_mb)
+            n = 0
+            try
+                n = historical_trades(
+                    provider,
+                    sym,
+                    day,
+                    day;
+                    feed = cfg.backfill_feed,
+                    page_limit = cfg.backfill_page_limit,
+                    rate_sleep_s = cfg.backfill_rate_sleep_s,
+                    each_page = page -> begin
+                        write_batch!(day_sink, page)
+                        check_live_heap(
+                            cfg.max_live_heap_mb;
+                            context = "backfill $sym $day",
+                        )
+                    end,
+                )
+            finally
+                close_sink!(day_sink)
+                # A day that failed before writing anything leaves a zero-byte
+                # stub of our own making, carrying nothing to preserve.
+                day_sink.n_written == 0 &&
+                    filesize(day_sink.path) == 0 &&
+                    rm(day_sink.path; force = true)
+            end
+            day_files = _raw_files_with_prefix(cfg.raw_dir, day_prefix)
+            if n == 0
+                # A holiday, a halt, or a symbol not yet listed: drop our own
+                # empty stub rather than accumulate them.
+                for f in day_files
+                    filesize(f) == 0 && rm(f; force = true)
+                end
+            else
+                append!(
+                    processed,
+                    compact_raw(
+                        day_files,
+                        cfg.processed_dir;
+                        format = cfg.processed_format,
+                        max_live_heap_mb = cfg.max_live_heap_mb,
+                    ),
+                )
+            end
             total += n
             @info "backfilled" symbol = sym day trades = n
             next!(prog)
@@ -499,28 +544,16 @@ function run_backfill(cfg::Config; provider::Union{AbstractProvider,Nothing} = n
     catch e
         e isa InterruptException || rethrow()
         status = "interrupted"
-        @info "interrupt — flushed raw data preserved; rerun resumes" sid
+        @info "interrupt — completed days are compacted; a rerun resumes" sid
     finally
-        if sink !== nothing
-            close_sink!(sink)
-            # a fully-skipped resume run leaves an empty part file of our own
-            # making — remove it rather than accumulate stubs
-            sink.n_written == 0 && filesize(sink.path) == 0 && rm(sink.path; force = true)
-        end
-        files = _session_raw_files(cfg, sid)
-        meta_path === nothing ||
-            finalize_session_meta(meta_path, status; ticks = total, raw_files = files)
+        meta_path === nothing || finalize_session_meta(
+            meta_path,
+            status;
+            ticks = total,
+            raw_files = _session_raw_files(cfg, sid),
+        )
         close(slock)
     end
-    status == "interrupted" && return String[]
-    processed =
-        isempty(files) ? String[] :
-        compact_raw(
-            files,
-            cfg.processed_dir;
-            format = cfg.processed_format,
-            max_live_heap_mb = cfg.max_live_heap_mb,
-        )
-    @info "backfill compacted" files = processed
+    @info "backfill finished" status days = length(processed) ticks = total
     return processed
 end

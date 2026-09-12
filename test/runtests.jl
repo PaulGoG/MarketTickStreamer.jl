@@ -564,6 +564,70 @@ hostname = "$(gethostname())"
         end
     end
 
+    @testset "backfill: a killed run resumes from what was compacted" begin
+        mktempdir() do dir
+            # Two trading days, one symbol. The mock serves the first day's two
+            # pages and then refuses, so day one completes and day two dies
+            # mid-download — the shape of a multi-hour download that is killed.
+            rest_port = freeport(9771)
+            hits = Ref(0)
+            rest = start_mock_rest(; port = rest_port, hits, fail_after = 2)
+            cfg = load_config(
+                mock_config_toml(
+                    dir;
+                    ws_port = rest_port,
+                    rest_port,
+                    symbols = ["AAPL"],
+                    start_date = "2026-07-29",
+                    end_date = "2026-07-30",
+                ),
+            )
+            p = AlpacaProvider(cfg, MOCK_KEY, MOCK_SECRET)
+            try
+                @test_throws Exception run_backfill(cfg; provider = p)
+                # The completed day is compacted the moment it finishes; the
+                # interrupted one is not, which is exactly what resume reads.
+                @test isfile(joinpath(cfg.processed_dir, "AAPL", "2026-07-29.csv"))
+                @test !isfile(joinpath(cfg.processed_dir, "AAPL", "2026-07-30.csv"))
+                @test hits[] == 3                       # two pages, then the refusal
+                # No zero-byte stub left behind by the day that wrote nothing.
+                @test all(
+                    f -> filesize(f) > 0,
+                    filter(endswith(".jsonl"), readdir(cfg.raw_dir; join = true)),
+                )
+            finally
+                close(rest)
+            end
+
+            # A healthy server, same data tree: the finished day is skipped and
+            # only the missing one is fetched.
+            rest_port2 = freeport(9791)
+            hits2 = Ref(0)
+            rest2 = start_mock_rest(; port = rest_port2, hits = hits2)
+            try
+                cfg2 = load_config(
+                    mock_config_toml(
+                        dir;
+                        ws_port = rest_port2,
+                        rest_port = rest_port2,
+                        symbols = ["AAPL"],
+                        start_date = "2026-07-29",
+                        end_date = "2026-07-30",
+                    ),
+                )
+                p2 = AlpacaProvider(cfg2, MOCK_KEY, MOCK_SECRET)
+                processed = run_backfill(cfg2; provider = p2)
+                @test hits2[] == 2                      # one day only, two pages
+                @test length(processed) == 1
+                @test isfile(joinpath(cfg2.processed_dir, "AAPL", "2026-07-30.csv"))
+                # Both days are now present, each filed under its own date.
+                @test length(readdir(joinpath(cfg2.processed_dir, "AAPL"))) == 2
+            finally
+                close(rest2)
+            end
+        end
+    end
+
     @testset "monitor: attach-mode tailing" begin
         mktempdir() do dir
             sink = open_raw_sink(dir, "mon")
