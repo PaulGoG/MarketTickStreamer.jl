@@ -37,8 +37,8 @@ pace = "recorded"                # one of: "recorded" (honor inter-arrival times
 speed = 1.0                      # time-compression factor when pace = "recorded"; > 0
 
 [backfill]
-start_date = "2026-08-12"        # inclusive, exchange date (America/New_York)
-end_date = "2026-08-13"          # inclusive; >= start_date
+start_date = "today-2d"          # inclusive exchange date (America/New_York); ISO "YYYY-MM-DD" or "today" / "today-<N>d"
+end_date = "today-1d"            # inclusive; >= start_date; same forms; calendar days, not trading days
 feed = "sip"                     # historical feed; one of: "iex" | "sip"
 page_limit = 10000               # rows per REST page; provider maximum 10000
 rate_limit_sleep_s = 0.35        # pause between REST pages [s]

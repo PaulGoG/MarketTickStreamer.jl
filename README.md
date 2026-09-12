@@ -17,6 +17,7 @@ real-time analysis methods.
 ├── Manifest.toml           # exact resolved versions — the portability guarantee
 ├── .JuliaFormatter.toml    # committed formatting configuration (JuliaFormatter.jl)
 ├── .env.example            # credential template → copy to .env (gitignored)
+├── activate.jl             # silent environment activation for interactive work
 ├── config/
 │   └── config.toml         # ALL tunables: provider, symbols, storage, limits, replay
 ├── src/
@@ -49,6 +50,8 @@ real-time analysis methods.
 ├── .github/workflows/
 │   └── CI.yml              # test + coverage on push/PR (single stable-Julia job)
 ├── LICENSE                 # MIT
+├── CHANGELOG.md            # release history (Keep a Changelog)
+├── CITATION.cff            # citation metadata
 ├── data/                   # (gitignored, created on demand) raw/ + processed/
 ├── plots/                  # (gitignored) rendered diagnostic figures
 └── logs/                   # (gitignored) per-session log files
@@ -56,11 +59,11 @@ real-time analysis methods.
 
 ## Setup
 
-Requires Julia ≥ 1.10 (developed and Manifest-pinned on 1.12). From a clone:
+Requires Julia ≥ 1.11 (developed and Manifest-pinned on 1.13). From a clone:
 
 ```julia
 using Pkg
-Pkg.activate("."); Pkg.instantiate()
+Pkg.activate("."); Pkg.instantiate()   # or: julia -i activate.jl
 ```
 
 Credentials: `cp .env.example .env`, fill in `ALPACA_API_KEY_ID` /

@@ -1,6 +1,6 @@
 name = "MarketTickStreamer"
 uuid = "57360e3f-416d-4026-814a-7f453c6dc1fa"
-version = "0.1.0"
+version = "0.2.0-DEV"
 authors = ["Paul-Adrian Gogîță <gogitapaul@yahoo.ro>"]
 
 [deps]
@@ -48,7 +48,7 @@ TOML = "1"
 Test = "1"
 TimeZones = "1"
 UnicodePlots = "3.8.4"
-julia = "1.10"
+julia = "1.11"
 
 [extras]
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"

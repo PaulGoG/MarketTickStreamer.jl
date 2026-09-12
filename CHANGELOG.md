@@ -1,0 +1,59 @@
+# Changelog
+
+Notable changes to MarketTickStreamer. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows
+[Semantic Versioning](https://semver.org/).
+
+## [Unreleased]
+
+### Added
+- `activate.jl` at the repository root, activating and instantiating the
+  package environment without output, so `julia -i activate.jl` opens a REPL
+  in it. The entry points under `scripts/` already did this on start-up; this
+  file serves interactive work.
+- `CHANGELOG.md` and `CITATION.cff`.
+- Sentinel backfill dates: `backfill.start_date` and `backfill.end_date`
+  accept `"today"` and `"today-<N>d"` alongside ISO calendar dates, resolved
+  against the current exchange date in America/New_York, so a committed
+  configuration does not go stale. The sentinels count calendar days rather
+  than trading days; a window may therefore resolve onto a weekend or a
+  holiday and return no prints.
+
+### Changed
+- The Julia floor rises to 1.11, which is what `[sources]` in the auxiliary
+  environments requires; the Manifest is re-resolved on 1.13.
+- `Project.toml` opens the development version `0.2.0-DEV`.
+- The shipped configuration carries `start_date = "today-2d"` /
+  `end_date = "today-1d"` in place of the fixed August 2026 window.
+
+## [0.1.0] - 2026-08-06
+
+First tagged version, validated against the live consolidated tape: a
+three-hour capture of 3.17 M prints across 24 symbols with no duplicate,
+out-of-order or missing records, and per-symbol coverage cross-checked
+against the historical SIP tape.
+
+### Added
+- Live acquisition over the Alpaca v2 WebSocket protocol with authenticated
+  reconnection, exponential backoff, a stale-stream watchdog, and a
+  market-close guard; the `iex`, `sip` and `delayed_sip` feeds, the last
+  empirically print-complete against the consolidated tape.
+- Historical acquisition over the REST trades endpoint: per-day iteration,
+  page streaming, rate-limit pacing, and resumption of interrupted downloads.
+- A crash-only raw layer — append-only NDJSON, one normalized `Trade` per
+  line, size-rolled parts, never overwritten — with per-session
+  `.meta.toml` provenance sidecars recording the session summary, the git
+  commit, package versions, and a hardware fingerprint.
+- Compaction of raw sessions into per-symbol per-day CSV or Arrow, with
+  spill compaction for inputs that exceed the live-heap ceiling.
+- Paced replay of recorded sessions as a `Channel{Trade}` indistinguishable
+  from the live source, and `tee` fan-out to concurrent consumers.
+- A data-quality layer: duplicate detection, ordering and gap analysis,
+  session and coverage reports.
+- CairoMakie session diagnostics and a multi-day overview family; an
+  attach-mode terminal dashboard for running sessions.
+- An offline test suite driven by an in-process mock of the Alpaca REST and
+  WebSocket APIs, with Aqua static quality assurance.
+
+[Unreleased]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/releases/tag/v0.1.0

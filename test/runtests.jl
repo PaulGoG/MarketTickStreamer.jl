@@ -69,6 +69,31 @@ end
             @test_throws ArgumentError load_config(bad)
             @test_throws ArgumentError load_config(joinpath(dir, "missing.toml"))
         end
+        mktempdir() do dir
+            base = "[stream]\nsymbols = [\"A\"]\n"
+            exchange_today = Date(now(tz"America/New_York"))
+            p = joinpath(dir, "dates.toml")
+            write(p, base * "[backfill]\nstart_date = \"today-2d\"\nend_date = \"today\"\n")
+            c = load_config(p)
+            @test c.backfill_start == exchange_today - Day(2)
+            @test c.backfill_end == exchange_today
+            write(p, base * "[backfill]\nstart_date = \"today\"\nend_date = \"today\"\n")
+            @test load_config(p).backfill_start == exchange_today
+            write(
+                p,
+                base *
+                "[backfill]\nstart_date = \"2026-08-12\"\nend_date = \"2026-08-13\"\n",
+            )
+            c = load_config(p)
+            @test c.backfill_start == Date(2026, 8, 12)
+            @test c.backfill_end == Date(2026, 8, 13)
+            write(p, base * "[backfill]\nstart_date = \"yesterday\"\n")
+            @test_throws ArgumentError load_config(p)
+            write(p, base * "[backfill]\nstart_date = \"today+2d\"\n")
+            @test_throws ArgumentError load_config(p)
+            write(p, base * "[backfill]\nstart_date = \"today\"\nend_date = \"today-1d\"\n")
+            @test_throws ArgumentError load_config(p)
+        end
     end
 
     sample_trade(i; sym = "AAPL") = Trade(

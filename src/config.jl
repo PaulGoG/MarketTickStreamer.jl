@@ -110,8 +110,17 @@ function load_config(path::AbstractString = joinpath(PROJECT_ROOT, "config", "co
     replay_speed > 0 || throw(ArgumentError("replay.speed must be positive"))
 
     bf = tbl("backfill")
-    bf_start = Date(get(bf, "start_date", string(today() - Day(1))))
-    bf_end = Date(get(bf, "end_date", string(bf_start)))
+    exchange_today = Date(now(tz"America/New_York"))
+    bf_start = _resolve_config_date(
+        String(get(bf, "start_date", "today-1d")),
+        "backfill.start_date",
+        exchange_today,
+    )
+    bf_end = _resolve_config_date(
+        String(get(bf, "end_date", string(bf_start))),
+        "backfill.end_date",
+        exchange_today,
+    )
     bf_start <= bf_end || throw(ArgumentError("backfill.start_date is after end_date"))
     bf_feed = get(bf, "feed", "sip")
     bf_feed in ("iex", "sip") ||
@@ -179,6 +188,29 @@ function load_config(path::AbstractString = joinpath(PROJECT_ROOT, "config", "co
 end
 
 _resolve(p::AbstractString) = isabspath(p) ? String(p) : normpath(joinpath(PROJECT_ROOT, p))
+
+"""
+    _resolve_config_date(spec, key, reference) -> Date
+
+Resolve a configured calendar date. Accepts an ISO date (`"2026-08-12"`) or a
+sentinel relative to `reference`: `"today"`, or `"today-<N>d"` with `N` a
+non-negative integer number of calendar days. Sentinels keep a committed
+configuration from going stale; they count calendar days, not trading days, so
+a window may resolve onto a weekend or holiday and yield no prints. Throws
+`ArgumentError` naming `key` on any other value.
+"""
+function _resolve_config_date(spec::AbstractString, key::AbstractString, reference::Date)
+    m = match(r"^today(?:-(\d+)d)?$", spec)
+    m === nothing || return reference - Day(m[1] === nothing ? 0 : parse(Int, m[1]))
+    d = tryparse(Date, spec)
+    d === nothing && throw(
+        ArgumentError(
+            "$key must be an ISO date \"YYYY-MM-DD\" or a sentinel " *
+            "\"today\" / \"today-<N>d\", got \"$spec\"",
+        ),
+    )
+    return d
+end
 
 """
     load_credentials!(; env_path = joinpath(PROJECT_ROOT, ".env")) -> (key, secret)

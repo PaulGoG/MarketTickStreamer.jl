@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use MarketTickStreamer.jl in your work, cite it as below."
+title: "MarketTickStreamer.jl: provider-agnostic tick-by-tick market data acquisition and paced replay in Julia"
+type: software
+authors:
+  - family-names: "Gogîță"
+    given-names: "Paul-Adrian"
+    email: "gogitapaul@yahoo.ro"
+version: "0.1.0"
+date-released: "2026-08-06"
+license: MIT
+repository-code: "https://github.com/PaulGoG/MarketTickStreamer.jl"
+keywords:
+  - market microstructure
+  - tick data
+  - financial time series
+  - streaming acquisition
+  - paced replay
+  - econophysics
+  - Julia
