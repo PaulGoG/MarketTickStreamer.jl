@@ -45,6 +45,10 @@ real-time analysis methods.
 ├── test/
 │   ├── runtests.jl         # unit + end-to-end tests
 │   └── mock_alpaca.jl      # in-process mock of Alpaca REST + WebSocket APIs
+├── bench/
+│   ├── Project.toml        # benchmark environment (package consumed by path)
+│   ├── activate.jl         # silent environment activation
+│   └── benchmarks.jl       # BenchmarkTools suite over the hot paths
 ├── docs/
 │   └── design.md           # architecture, data flow, decisions
 ├── .github/workflows/
@@ -103,6 +107,9 @@ julia scripts/monitor.jl
 
 # test suite (offline: unit + mock-server end-to-end + Aqua static QA)
 julia --project=. -e 'using Pkg; Pkg.test()'
+
+# benchmark suite (own environment; slow first run while it instantiates)
+julia bench/benchmarks.jl
 ```
 
 For interactive work against the test environment, activate it with

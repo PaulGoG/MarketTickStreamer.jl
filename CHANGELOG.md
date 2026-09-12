@@ -21,6 +21,11 @@ Notable changes to MarketTickStreamer. The format follows
 - Static analysis in the test suite beside Aqua: `ExplicitImports.jl` asserts
   that no name enters the module namespace implicitly, and `JET.jl` analyses
   the package with its reports restricted to this module.
+- A `bench/` environment with its own `Project.toml`, activation script and
+  `BenchmarkTools.jl` suite, consuming the package by path: timestamp
+  parsing, per-line serialization (including the `SubString` path that once
+  cost 2000x), sink batch writes, compaction, unpaced replay and the session
+  quality report.
 
 ### Changed
 - The Julia floor rises to 1.12: `[sources]` in the auxiliary environments
