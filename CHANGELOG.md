@@ -21,6 +21,12 @@ Notable changes to MarketTickStreamer. The format follows
 - Static analysis in the test suite beside Aqua: `ExplicitImports.jl` asserts
   that no name enters the module namespace implicitly, and `JET.jl` analyses
   the package with its reports restricted to this module.
+- A `Documenter.jl` manual under `docs/`, in its own environment consuming
+  the package by path: an overview, the architecture record (promoted from
+  the standalone `docs/design.md`), a configuration reference covering every
+  key, the analysis-interface contract — ordering, completion, backpressure
+  and determinism guarantees for consumers of the tick channel — and an API
+  reference generated per source file.
 - A `bench/` environment with its own `Project.toml`, activation script and
   `BenchmarkTools.jl` suite, consuming the package by path: timestamp
   parsing, per-line serialization (including the `SubString` path that once

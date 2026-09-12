@@ -13,7 +13,7 @@ real-time analysis methods.
 
 ```
 .
-├── Project.toml            # package manifest (HTTP 1.x pinned; see docs/design.md §6)
+├── Project.toml            # package manifest (HTTP 1.x pinned; see the architecture page §6)
 ├── Manifest.toml           # exact resolved versions — the portability guarantee
 ├── .JuliaFormatter.toml    # committed formatting configuration (JuliaFormatter.jl)
 ├── .env.example            # credential template → copy to .env (gitignored)
@@ -50,7 +50,10 @@ real-time analysis methods.
 │   ├── activate.jl         # silent environment activation
 │   └── benchmarks.jl       # BenchmarkTools suite over the hot paths
 ├── docs/
-│   └── design.md           # architecture, data flow, decisions
+│   ├── Project.toml        # documentation environment (package consumed by path)
+│   ├── activate.jl         # silent environment activation
+│   ├── make.jl             # Documenter build → docs/build/
+│   └── src/                # manual: index, architecture, usage, replay, API
 ├── .github/workflows/
 │   └── CI.yml              # test + coverage on push/PR (single stable-Julia job)
 ├── LICENSE                 # MIT
@@ -110,6 +113,9 @@ julia --project=. -e 'using Pkg; Pkg.test()'
 
 # benchmark suite (own environment; slow first run while it instantiates)
 julia bench/benchmarks.jl
+
+# documentation site (own environment; output in docs/build/)
+julia docs/make.jl
 ```
 
 For interactive work against the test environment, activate it with
@@ -119,7 +125,7 @@ From the REPL, the same entry points are `run_stream(cfg)`,
 `run_backfill(cfg)`, `compact_raw(files, out)`, and
 `replay_source(files)` — the latter returns a `Channel{Trade}`
 indistinguishable from the live source, which is how real-time analysis
-consumers are developed offline (see `docs/design.md`).
+consumers are developed offline (see `docs/src/architecture.md`).
 
 ## Data layout
 

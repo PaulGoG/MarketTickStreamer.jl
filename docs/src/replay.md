@@ -1,0 +1,101 @@
+# Replay and analysis interfaces
+
+Analysis pipelines are external to this package. What it owes them is a
+stream whose contract is written down, and a way to develop against that
+stream without a market being open. This page is that contract.
+
+## One interface, two sources
+
+[`live_source`](@ref) and [`replay_source`](@ref) both hand back a
+`Channel{Trade}`. A consumer written against one works unchanged against the
+other, which is the point: a real-time method is developed and validated on
+recorded flux — reproducible, repeatable, free, available at three in the
+morning — and only then pointed at the wire.
+
+```julia
+using MarketTickStreamer
+
+# Recorded session, re-emitted at the original inter-arrival times.
+ch = replay_source("data/raw/session_part001.jsonl")
+
+for trade in ch                      # terminates when the recording ends
+    # ... the analysis method under test
+end
+```
+
+`pace = "max"` drops the pacing and emits as fast as the consumer takes
+them, which is the mode for throughput work; `speed` compresses recorded
+time, so `speed = 60.0` replays an hour of tape in a minute.
+
+## What a `Trade` means
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `symbol` | `String` | Ticker as the venue reports it. |
+| `time_ns` | `Int64` | Exchange timestamp, nanoseconds since the UNIX epoch (UTC). |
+| `recv_ns` | `Int64` | Local receipt timestamp, same units. **Zero for backfilled prints** — they never crossed the wire. |
+| `price` | `Float64` | Trade price. |
+| `size` | `Float64` | Trade size. Float rather than integer because fractional-share prints exist. |
+| `exchange` | `String` | Reporting venue code. |
+| `conditions` | `Vector{String}` | Sale-condition codes as reported; not filtered. |
+| `tape` | `String` | Consolidated tape identifier (`A`, `B`, `C`). |
+| `id` | `Int64` | Venue trade identifier, unique per venue and day. |
+
+Two clocks per print is a deliberate choice: with `time_ns` and `recv_ns`
+both recorded, feed latency is a measurable quantity afterwards rather than
+an assumption baked in at capture time.
+
+`Trade` carries value semantics — `==` and `hash` compare fields, not the
+identity of the `conditions` vector — so round-tripping through the raw
+layer produces objects that compare equal.
+
+## Guarantees
+
+**Ordering.** Replay emits in ascending `recv_ns`, sorted on load. The live
+source emits in arrival order, which is *not* the same as ascending
+`time_ns`: a consolidated tape interleaves venues, and late prints are
+normal. Any method that needs monotone exchange time must sort or reject
+explicitly; [`session_report`](@ref) quantifies how often it happens in a
+given capture.
+
+**Completion.** Both sources close the channel when the stream ends — the
+recording exhausted, the session deadline reached, the market closed, a
+fatal protocol error. A `for t in ch` loop therefore terminates on its own,
+and a consumer needs no separate shutdown signal.
+
+**Backpressure.** The channel is bounded (`limits.channel_capacity`). A slow
+consumer blocks the producer, and on a live session that propagates into TCP
+backpressure rather than into unbounded memory growth. This is why the
+default is to block: silently dropping ticks would corrupt exactly the
+arrival statistics the package exists to measure.
+
+**Determinism.** Replaying the same files with `pace = "max"` yields the
+identical sequence every time. With `pace = "recorded"` the *sequence* is
+identical but the *timing* is approximate: gaps under a millisecond are not
+resolvable by `sleep`, so they are emitted back to back.
+
+## Fanning out to several consumers
+
+[`tee`](@ref) splits one stream into independent channels, with a per-output
+overflow policy:
+
+```julia
+session = live_source(provider, cfg)
+persist, analyse = tee(session.channel, 2; lossy = [false, true])
+```
+
+A non-lossy output blocks the fan-out when full — use it for persistence,
+which must always win. A lossy output drops incoming ticks instead of
+stalling the capture, counts the drops, and reports them through `on_drop`.
+An analysis tap that occasionally cannot keep up belongs on a lossy output;
+one whose results depend on seeing every print does not, and should instead
+run offline against the raw files, where nothing is ever dropped.
+
+## Working from the file layer instead
+
+For methods that need the whole record rather than a stream — tail exponents,
+long-memory estimation, anything needing the sample in memory —
+[`read_raw`](@ref) returns a `Vector{Trade}` from raw NDJSON, and
+[`compact_raw`](@ref) writes per-symbol per-day CSV or Arrow that any other
+tool can read. The raw layer is the source of truth; compaction is a
+convenience over it, never a replacement.
