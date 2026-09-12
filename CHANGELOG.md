@@ -38,6 +38,13 @@ Notable changes to MarketTickStreamer. The format follows
   allocate by construction, and at a few hundred nanoseconds against
   network-bound ingestion, hand-rolling them is not justified.
 
+- Resampling onto activity clocks: `tick_bars`, `volume_bars` and
+  `dollar_bars` turn a capture into `Bar`s sampled once per fixed count of
+  prints, of shares, or of traded value, rather than per interval of the
+  calendar. Prints are ordered by exchange time, the print that crosses a
+  threshold closes the bar it completes, and a trailing incomplete bar is
+  dropped unless asked for, since its threshold is not met and it is
+  therefore not comparable to the rest.
 - Sale-condition handling: `price_forming` and `filter_price_forming` decide
   whether a print may set a price, per tape and with the tape plans'
   precedence rule that any one disqualifying condition wins;

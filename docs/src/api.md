@@ -56,6 +56,13 @@ Modules = [MarketTickStreamer]
 Pages = ["quality.jl"]
 ```
 
+## Resampling onto activity clocks
+
+```@autodocs
+Modules = [MarketTickStreamer]
+Pages = ["resample.jl"]
+```
+
 ## Replay
 
 ```@autodocs

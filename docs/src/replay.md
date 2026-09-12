@@ -115,6 +115,33 @@ price, so it varies strongly across a basket.
 State which of the two populations a result used. After the fact, a price
 series does not reveal it.
 
+## Sampling on a clock that runs with the market
+
+Market activity is not uniform in time, so sampling a price path every minute
+draws unevenly from the process that generates it — densely at the open,
+sparsely at lunch. [`tick_bars`](@ref), [`volume_bars`](@ref) and
+[`dollar_bars`](@ref) resample a capture onto clocks that advance with
+activity instead: one bar per fixed count of prints, of shares, or of traded
+value.
+
+```julia
+trades = read_raw(files)
+bars = dollar_bars(filter_price_forming(trades), 5.0e6)   # one bar per $5M traded
+```
+
+The empirical motivation is old and well tested: price changes sampled in
+transaction time are far closer to independent and normal than calendar-time
+changes (Mandelbrot & Taylor 1967; Clark 1973; Ané & Geman 2000). Of the
+three, the value clock is the one that survives a change of scale — it is
+invariant to splits and roughly invariant to price drift, so a threshold
+chosen on one sample still means something on another.
+
+Two choices are yours and are not incidental. Whether to filter to
+price-forming prints first changes the bar count by a factor of three on a
+high-priced name. And the bars carry `recv_ns = 0`, the same marker the raw
+layer uses for records that never crossed the wire, because a derived bar has
+no receipt time.
+
 ## Working from the file layer instead
 
 For methods that need the whole record rather than a stream — tail exponents,

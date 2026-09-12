@@ -77,6 +77,7 @@ export RawSink,
     compact_raw
 export deduplicate_trades, session_report, free_disk_gb, check_live_heap, coverage_report
 export NON_PRICE_CONDITIONS, price_forming, filter_price_forming
+export tick_bars, volume_bars, dollar_bars
 export monitor_raw
 export replay_source
 export AbstractProvider,
@@ -99,6 +100,7 @@ include("schema.jl")
 include("config.jl")
 include("sinks.jl")
 include("quality.jl")
+include("resample.jl")
 include("monitor.jl")
 include("replay.jl")
 include("live.jl")

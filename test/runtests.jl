@@ -345,6 +345,54 @@ end
         end
     end
 
+    @testset "resampling: transaction, volume and value clocks" begin
+        mk(id, price, size; t = id, sym = "AAPL") =
+            Trade(sym, Int64(t), 0, price, size, "V", String[], "C", id)
+        ts = [mk(1, 10.0, 1.0), mk(2, 11.0, 1.0), mk(3, 9.0, 1.0), mk(4, 12.0, 1.0)]
+
+        b = tick_bars(ts, 2)
+        @test length(b) == 2
+        @test b[1].open == 10.0 && b[1].close == 11.0
+        @test b[1].high == 11.0 && b[1].low == 10.0
+        @test b[1].trade_count == 2 && b[1].volume == 2.0
+        @test b[1].time_ns == 1                       # bar opens at its first print
+        @test b[1].vwap == 10.5
+        @test b[2].open == 9.0 && b[2].close == 12.0
+        @test b[2].low == 9.0 && b[2].high == 12.0
+        @test all(x -> x.recv_ns == 0, b)             # derived: never crossed the wire
+
+        # A trailing bar short of its threshold is not comparable to the rest.
+        @test length(tick_bars(ts, 3)) == 1
+        @test length(tick_bars(ts, 3; keep_partial = true)) == 2
+        @test tick_bars(ts, 3; keep_partial = true)[2].trade_count == 1
+
+        # Volume clock: 3 + 3 closes the first bar, the remaining 3 is partial.
+        vs = [mk(1, 10.0, 3.0), mk(2, 10.0, 3.0), mk(3, 10.0, 3.0)]
+        @test length(volume_bars(vs, 6.0)) == 1
+        @test volume_bars(vs, 6.0)[1].volume == 6.0
+        @test volume_bars(vs, 6.0; keep_partial = true)[2].volume == 3.0
+
+        # Value clock weights each print by price: 100 | 1 + 100.
+        ds = [mk(1, 100.0, 1.0), mk(2, 1.0, 1.0), mk(3, 100.0, 1.0)]
+        db = dollar_bars(ds, 100.0)
+        @test length(db) == 2
+        @test db[1].trade_count == 1 && db[2].trade_count == 2
+
+        # Bars are built on exchange time, not arrival order.
+        shuffled = [mk(2, 11.0, 1.0; t = 2), mk(1, 10.0, 1.0; t = 1)]
+        @test tick_bars(shuffled, 2)[1].open == 10.0
+        @test tick_bars(shuffled, 2)[1].close == 11.0
+
+        @test tick_bars(Trade[], 2) == Bar[]
+        @test_throws ArgumentError tick_bars(ts, 0)
+        @test_throws ArgumentError volume_bars(ts, -1.0)
+        @test_throws ArgumentError dollar_bars(ts, 0.0)
+        @test_throws ArgumentError tick_bars(
+            [mk(1, 1.0, 1.0), mk(2, 1.0, 1.0; sym = "MSFT")],
+            1,
+        )
+    end
+
     @testset "quality: condition-code price eligibility" begin
         mk(tape, conds) = Trade("AAPL", 1, 2, 100.0, 10.0, "V", conds, tape, 1)
         @test price_forming(mk("A", ["@"]))
