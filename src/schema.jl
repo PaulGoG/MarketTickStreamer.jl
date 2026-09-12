@@ -63,6 +63,118 @@ Base.hash(t::Trade, h::UInt) = hash(
     h,
 )
 
+"""
+    Quote
+
+One normalized top-of-book quote: the best bid and offer as a venue reported
+them, with both clocks kept as for [`Trade`](@ref) — `time_ns` from the
+exchange, `recv_ns` from local receipt.
+
+Quotes are parsed but not subscribed to by default, and not persisted. A
+quote stream runs an order of magnitude above the trade stream in message
+count, which is a storage decision rather than a parsing one; reach them
+through the `on_quote` callback of [`live_source`](@ref).
+
+Sizes are round lots as the tape reports them, not shares.
+"""
+struct Quote
+    symbol::String
+    time_ns::Int64
+    recv_ns::Int64
+    bid_price::Float64
+    bid_size::Float64
+    bid_exchange::String
+    ask_price::Float64
+    ask_size::Float64
+    ask_exchange::String
+    conditions::Vector{String}
+    tape::String
+end
+
+# Value semantics, for the same reason as `Trade`: the default comparison
+# would compare `conditions` by identity.
+Base.:(==)(a::Quote, b::Quote) =
+    a.symbol == b.symbol &&
+    a.time_ns == b.time_ns &&
+    a.recv_ns == b.recv_ns &&
+    a.bid_price == b.bid_price &&
+    a.bid_size == b.bid_size &&
+    a.bid_exchange == b.bid_exchange &&
+    a.ask_price == b.ask_price &&
+    a.ask_size == b.ask_size &&
+    a.ask_exchange == b.ask_exchange &&
+    a.conditions == b.conditions &&
+    a.tape == b.tape
+
+Base.hash(q::Quote, h::UInt) = hash(
+    (
+        q.symbol,
+        q.time_ns,
+        q.recv_ns,
+        q.bid_price,
+        q.bid_size,
+        q.bid_exchange,
+        q.ask_price,
+        q.ask_size,
+        q.ask_exchange,
+        q.conditions,
+        q.tape,
+    ),
+    h,
+)
+
+"""
+    Bar
+
+One normalized aggregate bar. `time_ns` is the bar's opening instant, not its
+close, so a bar and the prints inside it share a time origin.
+
+Like [`Quote`](@ref), bars are parsed but not subscribed to by default. They
+are a convenience the venue computes; anything a bar reports can be derived
+from the prints this package records, and the derivation is reproducible
+whereas the venue's aggregation rules are not fully observable.
+"""
+struct Bar
+    symbol::String
+    time_ns::Int64
+    recv_ns::Int64
+    open::Float64
+    high::Float64
+    low::Float64
+    close::Float64
+    volume::Float64
+    trade_count::Int64
+    vwap::Float64
+end
+
+Base.:(==)(a::Bar, b::Bar) =
+    a.symbol == b.symbol &&
+    a.time_ns == b.time_ns &&
+    a.recv_ns == b.recv_ns &&
+    a.open == b.open &&
+    a.high == b.high &&
+    a.low == b.low &&
+    a.close == b.close &&
+    a.volume == b.volume &&
+    a.trade_count == b.trade_count &&
+    a.vwap == b.vwap
+
+Base.hash(b::Bar, h::UInt) = hash(
+    (
+        b.symbol,
+        b.time_ns,
+        b.recv_ns,
+        b.open,
+        b.high,
+        b.low,
+        b.close,
+        b.volume,
+        b.trade_count,
+        b.vwap,
+    ),
+    h,
+)
+
 const NS_PER_SEC = 1_000_000_000
 
 const RFC3339_RE =

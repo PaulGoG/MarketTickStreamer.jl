@@ -155,6 +155,45 @@ function parse_alpaca_trade(msg, recv_ns::Int64; symbol::AbstractString = "")
     )
 end
 
+# Quote frames carry the two sides with `b*`/`a*` prefixes; `c` is the quote
+# condition list, as for trades.
+function parse_alpaca_quote(msg, recv_ns::Int64; symbol::AbstractString = "")
+    sym = isempty(symbol) ? String(msg.S) : String(symbol)
+    conds = haskey(msg, :c) && msg.c !== nothing ? String.(msg.c) : String[]
+    return Quote(
+        sym,
+        rfc3339_to_ns(String(msg.t)),
+        recv_ns,
+        Float64(msg.bp),
+        Float64(msg.bs),
+        haskey(msg, :bx) ? String(msg.bx) : "",
+        Float64(msg.ap),
+        Float64(msg.as),
+        haskey(msg, :ax) ? String(msg.ax) : "",
+        conds,
+        haskey(msg, :z) ? String(msg.z) : "",
+    )
+end
+
+# Bar frames reuse `c` for the CLOSING PRICE, not for conditions as trade and
+# quote frames do. Mixing the two up is silent and produces plausible numbers,
+# so the field is read explicitly here and nowhere else.
+function parse_alpaca_bar(msg, recv_ns::Int64; symbol::AbstractString = "")
+    sym = isempty(symbol) ? String(msg.S) : String(symbol)
+    return Bar(
+        sym,
+        rfc3339_to_ns(String(msg.t)),
+        recv_ns,
+        Float64(msg.o),
+        Float64(msg.h),
+        Float64(msg.l),
+        Float64(msg.c),
+        Float64(msg.v),
+        haskey(msg, :n) ? Int64(msg.n) : 0,
+        haskey(msg, :vw) ? Float64(msg.vw) : NaN,
+    )
+end
+
 # Core pagination loop: hands each page's parsed trades to `f` and returns
 # the total row count. `start_str`/`end_str` are inclusive RFC 3339 bounds.
 function _each_trades_page(
@@ -281,7 +320,9 @@ function stream_protocol!(
     ch::Channel{Trade},
     p::AlpacaProvider,
     cfg::Config,
-    s::LiveSession,
+    s::LiveSession;
+    on_quote = nothing,
+    on_bar = nothing,
 )
     fatal = Ref{Union{Nothing,FatalStreamError}}(nothing)
     HTTP.WebSockets.open(ws_url(p)) do ws
@@ -318,8 +359,10 @@ function stream_protocol!(
                         code in FATAL_WS_CODES &&
                             (fatal[] = FatalStreamError("Alpaca error $code: $m"))
                         fatal[] === nothing && error("Alpaca stream error $code: $m")   # retryable
-                    elseif T == "q" || T == "b"
-                        # quotes/bars: accepted but not yet normalized — future work
+                    elseif T == "q"
+                        on_quote === nothing || on_quote(parse_alpaca_quote(msg, now_ns()))
+                    elseif T == "b"
+                        on_bar === nothing || on_bar(parse_alpaca_bar(msg, now_ns()))
                     end
                 end
                 fatal[] === nothing || break

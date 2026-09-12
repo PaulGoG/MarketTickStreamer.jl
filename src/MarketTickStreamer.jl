@@ -64,7 +64,8 @@ using TimeZones:
 using UnicodePlots: barplot, lineplot
 
 export Config, load_config, load_credentials!
-export Trade, rfc3339_to_ns, ns_to_rfc3339, ns_to_datetime, now_ns, trading_date
+export Trade, Quote, Bar
+export rfc3339_to_ns, ns_to_rfc3339, ns_to_datetime, now_ns, trading_date
 export RawSink,
     open_raw_sink,
     write_batch!,

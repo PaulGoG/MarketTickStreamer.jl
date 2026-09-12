@@ -108,13 +108,19 @@ function schedule_close_stop!(s::LiveSession, close_ns::Int64; grace_s::Real = 5
 end
 
 """
-    stream_protocol!(ch, p::AbstractProvider, cfg, s::LiveSession)
+    stream_protocol!(ch, p::AbstractProvider, cfg, s::LiveSession;
+                     on_quote = nothing, on_bar = nothing)
 
 Provider interface: run one connect→auth→subscribe→stream cycle, pushing
 normalized `Trade`s into `ch`. Must return on orderly close, throw
 [`FatalStreamError`](@ref) on non-retryable protocol errors, and any other
 exception on retryable transport failures. Implemented per provider
 (see `providers/alpaca.jl`).
+
+`on_quote` and `on_bar`, when given, receive normalized [`Quote`](@ref) and
+[`Bar`](@ref) values for the corresponding frames. Neither channel is
+subscribed to by default, so neither callback fires unless
+`stream.channels` asks for it.
 """
 function stream_protocol! end
 
@@ -156,19 +162,26 @@ function bump!(s::LiveSession; ticks = 0, frames = 0, reconnects = 0)
 end
 
 """
-    live_source(p::AbstractProvider, cfg::Config) -> LiveSession
+    live_source(p::AbstractProvider, cfg::Config;
+                on_quote = nothing, on_bar = nothing) -> LiveSession
 
 Start the live producer task. Streams ticks into `session.channel` until the
 session deadline (`limits.max_session_hours`), a [`stop!`](@ref) call, a
 fatal protocol error, or reconnection exhaustion — whichever comes first.
 The channel is closed on exit so downstream consumers terminate cleanly.
 
+`on_quote` and `on_bar` are handed normalized [`Quote`](@ref) and
+[`Bar`](@ref) values when those channels are subscribed to
+(`stream.channels`); neither is by default, and neither is persisted — a
+quote stream carries an order of magnitude more messages than the trade
+stream, which is a storage decision taken separately.
+
 Reconnects with jittered exponential backoff
 (`stream.reconnect_base_delay_s * 2^attempt`, capped at
 `stream.reconnect_max_delay_s`); the attempt counter resets after any
 connection that actually delivered data.
 """
-function live_source(p::AbstractProvider, cfg::Config)
+function live_source(p::AbstractProvider, cfg::Config; on_quote = nothing, on_bar = nothing)
     SHUTTING_DOWN[] = false
     ch = Channel{Trade}(cfg.channel_capacity)
     session = LiveSession(
@@ -184,7 +197,7 @@ function live_source(p::AbstractProvider, cfg::Config)
             while !session.stop[] && time() < deadline
                 ticks_before = session.stats[].ticks
                 try
-                    stream_protocol!(ch, p, cfg, session)
+                    stream_protocol!(ch, p, cfg, session; on_quote, on_bar)
                     session.stop[] || @warn "stream closed by server"
                 catch e
                     (e isa FatalStreamError || e isa InterruptException) && rethrow()

@@ -284,6 +284,67 @@ end
         end
     end
 
+    @testset "schema: quote and bar frames" begin
+        wire(m) = JSON3.read(JSON3.write(m))
+        q = MarketTickStreamer.parse_alpaca_quote(wire(mock_quote("AAPL", 1)), 7)
+        @test q.symbol == "AAPL"
+        @test q.bid_price == 101.0 && q.ask_price == 101.5
+        @test q.bid_size == 1.0 && q.ask_size == 2.0
+        @test q.bid_exchange == "V" && q.ask_exchange == "W"
+        @test q.conditions == ["R"] && q.tape == "C"
+        @test q.recv_ns == 7
+        @test q.time_ns == rfc3339_to_ns("2026-07-30T14:30:01.000000001Z")
+
+        b = MarketTickStreamer.parse_alpaca_bar(wire(mock_bar("AAPL", 1)), 9)
+        # `c` on a bar frame is the closing price, not a condition list.
+        @test b.open == 100.0 && b.high == 101.0 && b.low == 99.0 && b.close == 100.5
+        @test b.volume == 1000.0 && b.trade_count == 42 && b.vwap == 100.25
+        @test b.recv_ns == 9
+
+        # Value semantics, as for Trade: equal content compares equal.
+        @test q == MarketTickStreamer.parse_alpaca_quote(wire(mock_quote("AAPL", 1)), 7)
+        @test b == MarketTickStreamer.parse_alpaca_bar(wire(mock_bar("AAPL", 1)), 9)
+        @test hash(q) ==
+              hash(MarketTickStreamer.parse_alpaca_quote(wire(mock_quote("AAPL", 1)), 7))
+        @test q != MarketTickStreamer.parse_alpaca_quote(wire(mock_quote("MSFT", 1)), 7)
+    end
+
+    @testset "live E2E: quote and bar frames reach their callbacks" begin
+        mktempdir() do dir
+            ws_port = freeport(9651)
+            plan = MockPlan(
+                [[
+                    mock_trade("AAPL", 1),
+                    mock_quote("AAPL", 2),
+                    mock_bar("AAPL", 3),
+                    mock_trade("AAPL", 4),
+                ]];
+                fatal_after = 1,
+            )
+            ws, nconn = start_mock_ws(plan; port = ws_port)
+            try
+                cfg = load_config(
+                    mock_config_toml(dir; ws_port, rest_port = ws_port, max_retries = 0),
+                )
+                p = AlpacaProvider(cfg, MOCK_KEY, MOCK_SECRET)
+                quotes, bars = Quote[], Bar[]
+                session = live_source(
+                    p,
+                    cfg;
+                    on_quote = q -> push!(quotes, q),
+                    on_bar = b -> push!(bars, b),
+                )
+                ticks = collect(session.channel)      # returns when the stream ends
+                @test length(ticks) == 2              # trades still go to the channel
+                @test length(quotes) == 1 && quotes[1].ask_price == 102.5
+                @test length(bars) == 1 && bars[1].trade_count == 42
+                @test all(q -> q.recv_ns > 0, quotes)
+            finally
+                close(ws)
+            end
+        end
+    end
+
     @testset "quality: condition-code price eligibility" begin
         mk(tape, conds) = Trade("AAPL", 1, 2, 100.0, 10.0, "V", conds, tape, 1)
         @test price_forming(mk("A", ["@"]))

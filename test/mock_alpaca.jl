@@ -38,6 +38,35 @@ mock_trade(
     t = "2026-07-30T14:30:$(lpad(i % 60, 2, '0')).00000000$(i % 10)Z",
 ) = (; T = "t", S = sym, i = i, x = "V", p = price, s = size, t = t, c = ["@"], z = "C")
 
+mock_quote(sym, i; t = "2026-07-30T14:30:$(lpad(i % 60, 2, '0')).000000001Z") = (;
+    T = "q",
+    S = sym,
+    bx = "V",
+    bp = 100.0 + i,
+    bs = 1,
+    ax = "W",
+    ap = 100.5 + i,
+    as = 2,
+    t = t,
+    c = ["R"],
+    z = "C",
+)
+
+# Note `c` here is the CLOSING PRICE, not a condition list: the v2 protocol
+# reuses the key across frame types.
+mock_bar(sym, i; t = "2026-07-30T14:3$(i % 10):00Z") = (;
+    T = "b",
+    S = sym,
+    o = 100.0,
+    h = 101.0,
+    l = 99.0,
+    c = 100.5,
+    v = 1000,
+    n = 42,
+    vw = 100.25,
+    t = t,
+)
+
 _send(ws, msgs...) = HTTP.WebSockets.send(ws, JSON3.write(collect(msgs)))
 
 """

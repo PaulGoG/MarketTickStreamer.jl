@@ -48,6 +48,14 @@ Notable changes to MarketTickStreamer. The format follows
   price-forming prints, an arrival process wants every execution, and
   discarding at capture would answer the first question by making the second
   unanswerable.
+- `Quote` and `Bar` structs, with the same value semantics and two-clock
+  convention as `Trade`, and parsers for the corresponding stream frames;
+  `live_source` gained `on_quote` and `on_bar` callbacks. Neither channel is
+  subscribed to by default and neither is persisted — a quote stream carries
+  an order of magnitude more messages than the trade stream, and storing it
+  is a separate decision. Bar frames reuse the `c` key for the closing price
+  rather than for a condition list, which the parser reads explicitly, since
+  confusing the two would be silent and would produce plausible numbers.
 - `condition_map` fetches the provider's own code-to-description glossary
   from `/v2/stocks/meta/conditions`, per tape and tick type, rather than
   transcribing plan tables that describe a feed this package does not consume.
