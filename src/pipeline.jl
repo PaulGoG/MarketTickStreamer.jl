@@ -133,7 +133,9 @@ function acquire_session_lock(data_dir::AbstractString)
         "another session already holds $path — one capture/backfill per data " *
         "tree (stale locks from dead processes clear automatically)",
     )
-    return lock
+    # `trymkpidlock` returns `Union{LockMonitor,Bool}`; the guard above settles
+    # it, but only an assertion narrows the binding for callers of `close`.
+    return lock::Pidfile.LockMonitor
 end
 
 _git_commit() =
@@ -459,6 +461,11 @@ function run_backfill(cfg::Config; provider::Union{AbstractProvider,Nothing} = n
         reconcile_sessions!(cfg.raw_dir)
         _ensure_free_disk(cfg)
         sink = open_raw_sink(cfg.raw_dir, sid; max_mb = cfg.max_raw_file_mb)
+        # `sink` is also bound before `try`, because `finally` closes it; a
+        # variable assigned in two scopes is boxed when a closure captures it,
+        # which would make the per-page `write_batch!` below a dynamic call on
+        # the download path. This single-assignment binding keeps it static.
+        page_sink = sink::RawSink
         meta_path = start_session_meta(cfg, sid; started_utc)
         days = [d for d in cfg.backfill_start:Day(1):cfg.backfill_end if dayofweek(d) <= 5]
         prog = Progress(
@@ -481,7 +488,7 @@ function run_backfill(cfg::Config; provider::Union{AbstractProvider,Nothing} = n
                 page_limit = cfg.backfill_page_limit,
                 rate_sleep_s = cfg.backfill_rate_sleep_s,
                 each_page = page -> begin
-                    write_batch!(sink, page)
+                    write_batch!(page_sink, page)
                     check_live_heap(cfg.max_live_heap_mb; context = "backfill $sym $day")
                 end,
             )

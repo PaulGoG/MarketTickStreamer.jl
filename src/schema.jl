@@ -78,14 +78,18 @@ offsets. Throws `ArgumentError` on malformed input.
 function rfc3339_to_ns(s::AbstractString)
     m = match(RFC3339_RE, s)
     m === nothing && throw(ArgumentError("not an RFC 3339 timestamp: $s"))
-    y, mo, d, h, mi, sec = (parse(Int, m[i]) for i in 1:6)
+    # `something` narrows the `Union{Nothing,SubString}` of a capture group:
+    # groups 1–6 are mandatory in RFC3339_RE, so a `nothing` here is a bug.
+    y, mo, d, h, mi, sec = (parse(Int, something(m[i])) for i in 1:6)
     dt = DateTime(y, mo, d, h, mi, sec)
     secs = round(Int64, datetime2unix(dt))          # exact: integer-second DateTime
     frac = m[7]
     frac_ns = frac === nothing ? 0 : parse(Int64, rpad(frac, 9, '0'))
     ns = secs * NS_PER_SEC + frac_ns
     if m[9] !== nothing                              # numeric offset → convert to UTC
-        off = (parse(Int, m[10]) * 3600 + parse(Int, m[11]) * 60) * NS_PER_SEC
+        off =
+            (parse(Int, something(m[10])) * 3600 + parse(Int, something(m[11])) * 60) *
+            NS_PER_SEC
         ns -= m[9] == "+" ? off : -off
     end
     return ns

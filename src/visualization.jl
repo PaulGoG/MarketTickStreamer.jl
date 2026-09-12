@@ -485,7 +485,7 @@ function save_overview_figures(
             for f in sort(readdir(joinpath(processed_dir, sym)))
                 m = match(r"^(\d{4}-\d{2}-\d{2})\.(csv|arrow)$", f)   # base files only
                 m === nothing && continue
-                d = Date(m[1])
+                d = Date(something(m[1]))
                 from !== nothing && d < from && continue
                 to !== nothing && d > to && continue
                 push!(days, (d, _read_processed(joinpath(processed_dir, sym, f))))

@@ -96,11 +96,11 @@ with them).
 """
 function market_clock(p::AlpacaProvider)
     resp = _get_with_retry("$(p.trading_base)/v2/clock", rest_headers(p))
-    o = JSON3.read(resp.body)
+    o = JSON3.read(resp.body)::JSON3.Object
     return (;
-        is_open = Bool(o.is_open),
-        next_open = String(o.next_open),
-        next_close = String(o.next_close),
+        is_open = Bool(o.is_open::Bool),
+        next_open = String(o.next_open::AbstractString),
+        next_close = String(o.next_close::AbstractString),
     )
 end
 
@@ -144,16 +144,19 @@ function _each_trades_page(
     total = 0
     while true
         resp = _get_with_retry(url, rest_headers(p); query)
-        o = JSON3.read(resp.body)
+        # Assertions narrow the JSON value unions to what the documented
+        # response shape guarantees; a violation is a protocol error and
+        # should fail here rather than downstream.
+        o = JSON3.read(resp.body)::JSON3.Object
         page = get(o, :trades, nothing)   # null/absent when the range has no data
-        if page !== nothing && !isempty(page)
+        if page isa JSON3.Array && !isempty(page)
             trades = Trade[parse_alpaca_trade(msg, 0; symbol) for msg in page]
             total += length(trades)
             f(trades)
         end
         token = get(o, :next_page_token, nothing)
         (token === nothing || token == "") && break
-        query["page_token"] = String(token)
+        query["page_token"] = String(token::String)
         sleep(rate_sleep_s)
     end
     return total

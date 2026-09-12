@@ -34,17 +34,20 @@ function json_to_trade(line::AbstractString)
     # String() is identity for String input; for SubStrings of a large parent
     # (e.g. a bulk-read file split into lines) it avoids a pathological JSON3
     # slow path measured at ~2000x the per-line cost.
-    o = JSON3.read(String(line))
+    # The assertions collapse JSON3's value union to what `trade_to_json`
+    # writes, so each conversion below is a static call rather than a dynamic
+    # dispatch per field per line; a malformed line fails here, loudly.
+    o = JSON3.read(String(line))::JSON3.Object
     return Trade(
-        String(o.symbol),
-        Int64(o.time_ns),
-        Int64(o.recv_ns),
-        Float64(o.price),
-        Float64(o.size),
-        String(o.exchange),
-        String.(o.conditions),
-        String(o.tape),
-        Int64(o.id),
+        String(o.symbol::AbstractString),
+        Int64(o.time_ns::Integer),
+        Int64(o.recv_ns::Integer),
+        Float64(o.price::Real),
+        Float64(o.size::Real),
+        String(o.exchange::AbstractString),
+        String.(o.conditions::JSON3.Array),
+        String(o.tape::AbstractString),
+        Int64(o.id::Integer),
     )
 end
 
