@@ -121,6 +121,20 @@ function start_mock_rest(;
             )
         end,
     )
+    # Condition decoder: the real endpoint returns a different map per tape,
+    # which is the whole reason the package fetches rather than hardcodes it.
+    HTTP.register!(
+        router,
+        "GET",
+        "/v2/stocks/meta/conditions/{ticktype}",
+        function (req)
+            tape = get(HTTP.queryparams(HTTP.URI(req.target)), "tape", "A")
+            body =
+                tape == "C" ? Dict("@" => "Regular Sale", "I" => "Odd Lot Trade") :
+                Dict("@" => "Regular Sale", "B" => "Average Price Trade")
+            return HTTP.Response(200, JSON3.write(body))
+        end,
+    )
     HTTP.register!(
         router,
         "GET",

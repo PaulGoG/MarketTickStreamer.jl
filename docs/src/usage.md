@@ -114,6 +114,27 @@ calendar days, not trading days: a window may land on a weekend or a holiday
 and return nothing, which the session report will show as an empty capture
 rather than an error.
 
+## `[quality]`
+
+`non_price_conditions` lists, per tape, the sale-condition codes that
+disqualify a print from a price path. Tapes `"A"` and `"B"` are
+CTA-processed, `"C"` is UTP-processed, `"O"` is the OTC tape; the same
+character means different things across them, which is why the lists are
+separate. The shipped defaults are the provider's own published lists.
+
+This is used only by [`price_forming`](@ref), [`filter_price_forming`](@ref)
+and the `n_price_forming` column of [`session_report`](@ref). **Capture is
+never filtered** — see [Replay & Analysis Interfaces](replay.md) for why the
+distinction belongs to the analysis rather than to the recording.
+
+A print carrying several conditions is disqualified by any one of them, and a
+print on a tape with no list is kept. The set lands in the session sidecar
+with the rest of the configuration, so a result stays attributable to the
+eligibility rule that produced it.
+
+To decode the codes themselves, fetch the provider's own glossary with
+[`condition_map`](@ref) rather than assuming a mapping.
+
 ## `[monitor]`
 
 Attach-mode terminal dashboard, read-only and opt-in.

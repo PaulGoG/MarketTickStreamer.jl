@@ -55,6 +55,8 @@ struct Config
     log_level::String
     log_to_file::Bool
     log_dir::String
+    # [quality]
+    non_price_conditions::Dict{String,Vector{String}}
     # [<provider>] endpoint roots
     endpoints::Dict{String,String}
 end
@@ -140,6 +142,32 @@ function load_config(path::AbstractString = joinpath(PROJECT_ROOT, "config", "co
     level in ("debug", "info", "warn", "error") ||
         throw(ArgumentError("logging.level must be one of debug/info/warn/error"))
 
+    # Sale-condition sets are config-driven because they change which prints
+    # count as price-forming, which is a scientific choice; the default lands
+    # in every session sidecar with the rest of the configuration.
+    qual = get(tbl("quality"), "non_price_conditions", nothing)
+    non_price = if qual === nothing
+        deepcopy(NON_PRICE_CONDITIONS)
+    else
+        d = Dict{String,Vector{String}}()
+        for (tape, codes) in qual
+            codes isa AbstractVector || throw(
+                ArgumentError(
+                    "quality.non_price_conditions.$tape must be an array of condition codes",
+                ),
+            )
+            for c in codes
+                (c isa AbstractString && !isempty(c)) || throw(
+                    ArgumentError(
+                        "quality.non_price_conditions.$tape must contain non-empty strings, got $(repr(c))",
+                    ),
+                )
+            end
+            d[String(tape)] = String[String(c) for c in codes]
+        end
+        d
+    end
+
     endpoints = Dict{String,String}(k => String(v) for (k, v) in tbl(provider))
 
     max_resident = Int(get(lim, "max_live_heap_mb", 4096))
@@ -183,6 +211,7 @@ function load_config(path::AbstractString = joinpath(PROJECT_ROOT, "config", "co
         level,
         Bool(get(lg, "log_to_file", true)),
         _resolve(get(lg, "log_dir", "logs")),
+        non_price,
         endpoints,
     )
 end

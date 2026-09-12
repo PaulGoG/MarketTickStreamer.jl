@@ -104,6 +104,39 @@ function market_clock(p::AlpacaProvider)
     )
 end
 
+"""
+    condition_map(p; ticktype = "trade", tape = "A") -> Dict{String,String}
+
+Fetch the provider's own sale-condition decoder from
+`/v2/stocks/meta/conditions/{ticktype}`: a map of condition code to
+description for one `tape` (`"A"`, `"B"`, `"C"`). `ticktype` is `"trade"` or
+`"quote"`.
+
+The same character carries different meanings on different tapes, and every
+vendor normalizes the raw CTA and UTP codes differently, so the glossary is
+fetched from the provider that produced the data rather than transcribed into
+this package. What *is* held here is the much smaller
+[`NON_PRICE_CONDITIONS`](@ref) judgement about which codes disqualify a print
+from a price path.
+
+Requires network access; call it once and cache the result.
+"""
+function condition_map(
+    p::AlpacaProvider;
+    ticktype::AbstractString = "trade",
+    tape::AbstractString = "A",
+)
+    ticktype in ("trade", "quote") ||
+        throw(ArgumentError("ticktype must be \"trade\" or \"quote\", got \"$ticktype\""))
+    resp = _get_with_retry(
+        "$(p.data_base)/v2/stocks/meta/conditions/$(ticktype)",
+        rest_headers(p);
+        query = Dict("tape" => String(tape)),
+    )
+    o = JSON3.read(resp.body)::JSON3.Object
+    return Dict{String,String}(String(k) => String(v::AbstractString) for (k, v) in o)
+end
+
 # Shared by live-stream ("S" carries the symbol) and historical REST
 # (symbol comes from the request path) message shapes.
 function parse_alpaca_trade(msg, recv_ns::Int64; symbol::AbstractString = "")

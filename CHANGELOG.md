@@ -38,6 +38,20 @@ Notable changes to MarketTickStreamer. The format follows
   allocate by construction, and at a few hundred nanoseconds against
   network-bound ingestion, hand-rolling them is not justified.
 
+- Sale-condition handling: `price_forming` and `filter_price_forming` decide
+  whether a print may set a price, per tape and with the tape plans'
+  precedence rule that any one disqualifying condition wins;
+  `NON_PRICE_CONDITIONS` holds the provider's published lists and
+  `[quality.non_price_conditions]` overrides them, so the rule a result used
+  lands in the session sidecar. `session_report` gains `n_price_forming`
+  beside `n_trades`. Capture is never filtered — a price path wants
+  price-forming prints, an arrival process wants every execution, and
+  discarding at capture would answer the first question by making the second
+  unanswerable.
+- `condition_map` fetches the provider's own code-to-description glossary
+  from `/v2/stocks/meta/conditions`, per tape and tick type, rather than
+  transcribing plan tables that describe a feed this package does not consume.
+
 ### Changed
 - The Julia floor rises to 1.12: `[sources]` in the auxiliary environments
   needs 1.11 and the JET release used for static analysis needs 1.12. The

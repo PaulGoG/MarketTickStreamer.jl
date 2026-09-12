@@ -44,6 +44,16 @@ page_limit = 10000               # rows per REST page; provider maximum 10000
 rate_limit_sleep_s = 0.35        # pause between REST pages [s]
 resume = true                    # skip (symbol, day) pairs already present in processed/
 
+[quality]
+# Sale-condition codes that disqualify a print from a price path, by tape
+# ("A"/"B": CTA-processed, "C": UTP-processed, "O": OTC). Analysis-time only —
+# capture is never filtered. Codes are provider-normalized strings.
+[quality.non_price_conditions]
+A = ["B", "C", "H", "I", "M", "Q", "R", "U", "V", "7", "9"]
+B = ["B", "C", "H", "I", "M", "Q", "R", "U", "V", "7", "9"]
+C = ["C", "H", "I", "M", "Q", "R", "U", "V", "7", "9"]
+O = ["C", "I", "N", "R", "U", "V"]
+
 [monitor]
 # Attach-mode terminal dashboard (scripts/monitor.jl); read-only, opt-in.
 refresh_s = 2.0                  # dashboard refresh interval [s]; > 0

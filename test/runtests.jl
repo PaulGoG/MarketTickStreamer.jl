@@ -284,6 +284,51 @@ end
         end
     end
 
+    @testset "quality: condition-code price eligibility" begin
+        mk(tape, conds) = Trade("AAPL", 1, 2, 100.0, 10.0, "V", conds, tape, 1)
+        @test price_forming(mk("A", ["@"]))
+        @test price_forming(mk("A", String[]))
+        @test !price_forming(mk("A", ["I"]))           # odd lot
+        @test !price_forming(mk("A", ["@", "I"]))      # any one condition disqualifies
+        # The same character differs by tape: "B" is the CTA average-price
+        # modifier, and is not an exclusion on the UTP tape.
+        @test !price_forming(mk("A", ["B"]))
+        @test price_forming(mk("C", ["B"]))
+        @test !price_forming(mk("C", ["I"]))
+        # A tape with no list gives no basis to exclude, so the print is kept.
+        @test price_forming(mk("Z", ["I"]))
+
+        trades = [mk("A", ["@"]), mk("A", ["I"]), mk("C", ["@"])]
+        @test length(filter_price_forming(trades)) == 2
+        @test filter_price_forming(trades; non_price = Dict("A" => ["@"])) ==
+              [trades[2], trades[3]]
+        @test filter_price_forming(Trade[]) == Trade[]
+
+        # The session report counts what survives, per symbol.
+        mktempdir() do dir
+            sink = open_raw_sink(dir, "cond")
+            write_batch!(sink, trades)
+            close_sink!(sink)
+            rep = session_report([sink.path])
+            @test "n_price_forming" in names(rep)
+            @test rep.n_trades[1] == 3
+            @test rep.n_price_forming[1] == 2
+        end
+
+        # Config-driven, so the set used lands in the session sidecar.
+        @test load_config().non_price_conditions["A"] == NON_PRICE_CONDITIONS["A"]
+        mktempdir() do dir
+            p = joinpath(dir, "q.toml")
+            base = "[stream]\nsymbols = [\"A\"]\n"
+            write(p, base * "[quality.non_price_conditions]\nA = [\"X\"]\n")
+            @test load_config(p).non_price_conditions == Dict("A" => ["X"])
+            write(p, base * "[quality.non_price_conditions]\nA = \"X\"\n")
+            @test_throws ArgumentError load_config(p)
+            write(p, base * "[quality.non_price_conditions]\nA = [7]\n")
+            @test_throws ArgumentError load_config(p)
+        end
+    end
+
     @testset "close guard + disk guard" begin
         s = LiveSession(
             Channel{Trade}(1),
@@ -509,6 +554,12 @@ hostname = "$(gethostname())"
             )
             clock = market_clock(p)
             @test clock.is_open
+            # The condition decoder is per tape, which is why it is fetched.
+            cmap = condition_map(p; tape = "A")
+            @test cmap["@"] == "Regular Sale"
+            @test haskey(cmap, "B")                        # CTA average price
+            @test haskey(condition_map(p; tape = "C"), "I")
+            @test_throws ArgumentError condition_map(p; ticktype = "bars")
             trades = historical_trades(
                 p,
                 "AAPL",

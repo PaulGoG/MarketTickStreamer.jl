@@ -11,6 +11,79 @@ const TickKey = Tuple{String,Int64,Int64,Float64,Float64,String}
 _tick_key(t::Trade) = (t.symbol, t.time_ns, t.id, t.price, t.size, t.exchange)::TickKey
 
 """
+    NON_PRICE_CONDITIONS
+
+Sale-condition codes that never update a bar's open or close price, keyed by
+tape: `"A"` and `"B"` are CTA-processed, `"C"` is UTP-processed, `"O"` is the
+OTC tape. The same character means different things on different tapes, which
+is why the lists are not shared.
+
+Taken from Alpaca's published lists for its own normalization of the tapes
+(verified 2026-09-13), not transcribed from the CTA and UTP plan
+specifications: the plans define raw codes, and every vendor normalizes them.
+The authoritative decoder for the codes themselves is the provider's own
+[`condition_map`](@ref).
+
+Two things this is deliberately not. It is not the plans' "last-sale
+eligible" flag, and it is not a per-field eligibility table — the plans track
+high/low, open/close, volume and last-sale eligibility separately, and a
+print may update some and not others. It answers one question, the one a
+price path needs answered: may this print set a price.
+
+Note `"9"` (corrected consolidated close): excluded here because at tick
+resolution it is a correction message rather than an execution, though for a
+daily bar it is precisely the official close.
+"""
+const NON_PRICE_CONDITIONS = Dict{String,Vector{String}}(
+    "A" => ["B", "C", "H", "I", "M", "Q", "R", "U", "V", "7", "9"],
+    "B" => ["B", "C", "H", "I", "M", "Q", "R", "U", "V", "7", "9"],
+    "C" => ["C", "H", "I", "M", "Q", "R", "U", "V", "7", "9"],
+    "O" => ["C", "I", "N", "R", "U", "V"],
+)
+
+"""
+    price_forming(t::Trade; non_price = NON_PRICE_CONDITIONS) -> Bool
+
+Whether `t` may set a price, i.e. whether none of its sale conditions is
+listed for its tape in `non_price`. A print carrying several conditions is
+disqualified by any one of them, which is the precedence rule both tape plans
+state: a single "does not update" overrides every permissive condition beside
+it.
+
+A print whose tape has no entry in `non_price` is kept. An unknown tape means
+no basis on which to exclude, and silently discarding prints on that ground
+would be the worse error; [`session_report`](@ref) counts what survives, so
+the effect stays visible.
+
+This is an analysis-time predicate. Capture is never filtered — the raw layer
+records every print the venue reported, and which subset constitutes "a
+trade" is a decision each analysis makes for itself. It is also not one
+decision: a price path wants price-forming prints only, whereas an arrival
+process or a waiting-time distribution counts every execution, odd lots and
+contingent trades included. Filtering the capture would foreclose the second
+question to answer the first.
+"""
+function price_forming(t::Trade; non_price::AbstractDict = NON_PRICE_CONDITIONS)
+    excluded = get(non_price, t.tape, nothing)
+    excluded === nothing && return true
+    for c in t.conditions
+        c in excluded && return false
+    end
+    return true
+end
+
+"""
+    filter_price_forming(trades; non_price = NON_PRICE_CONDITIONS) -> Vector{Trade}
+
+Keep only the prints for which [`price_forming`](@ref) holds, preserving
+order. Use on a loaded capture, never on the way in.
+"""
+filter_price_forming(
+    trades::AbstractVector{Trade};
+    non_price::AbstractDict = NON_PRICE_CONDITIONS,
+) = filter(t -> price_forming(t; non_price), trades)
+
+"""
     deduplicate_trades(trades) -> Vector{Trade}
 
 Remove exact duplicate prints (same symbol, exchange timestamp, id, price,
@@ -36,6 +109,10 @@ end
 Audit raw session files and return one row per symbol:
 
 - `n_trades`, `n_duplicates` (exact duplicate prints)
+- `n_price_forming` (prints that may set a price, see [`price_forming`](@ref);
+  the difference from `n_trades` is odd lots, contingent and derivatively
+  priced trades, corrections and the like — present in the tape, and in the
+  arrival process, but not in a price path)
 - `first_time`, `last_time` (UTC, ms precision, from exchange timestamps)
 - `n_out_of_order` (exchange timestamps decreasing in arrival order)
 - `max_gap_s` / `n_gaps` (largest / count of exchange-time gaps exceeding
@@ -50,6 +127,7 @@ Inspect this before trusting any captured session.
 function session_report(
     paths::AbstractVector{<:AbstractString};
     gap_threshold_s::Real = 60.0,
+    non_price::AbstractDict = NON_PRICE_CONDITIONS,
 )
     groups = Dict{String,Vector{Trade}}()
     for t in read_raw(paths)
@@ -71,6 +149,7 @@ function session_report(
                 symbol = sym,
                 n_trades = n,
                 n_duplicates = ndup,
+                n_price_forming = count(t -> price_forming(t; non_price), ts),
                 first_time = ns_to_datetime(sorted_ns[1]),
                 last_time = ns_to_datetime(sorted_ns[end]),
                 n_out_of_order = n_ooo,

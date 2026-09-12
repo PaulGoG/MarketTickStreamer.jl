@@ -75,11 +75,13 @@ export RawSink,
     read_raw,
     compact_raw
 export deduplicate_trades, session_report, free_disk_gb, check_live_heap, coverage_report
+export NON_PRICE_CONDITIONS, price_forming, filter_price_forming
 export monitor_raw
 export replay_source
 export AbstractProvider,
     LiveSession, FatalStreamError, live_source, stop!, schedule_close_stop!, tee
-export AlpacaProvider, market_clock, historical_trades, historical_trade_count
+export AlpacaProvider,
+    market_clock, historical_trades, historical_trade_count, condition_map
 export run_stream,
     run_backfill,
     session_id,

@@ -91,6 +91,30 @@ An analysis tap that occasionally cannot keep up belongs on a lossy output;
 one whose results depend on seeing every print does not, and should instead
 run offline against the raw files, where nothing is ever dropped.
 
+## Which prints count as trades
+
+`conditions` is reported, never acted on at capture. Whether a print belongs
+in your sample depends on the question, and the two questions this package
+serves want opposite answers:
+
+- A **price path** — returns, volatility, Hurst or DFA estimation — wants
+  price-forming prints only. Odd lots, contingent and derivatively priced
+  trades and corrections carry prices that were never a consolidated last
+  sale, and differencing them manufactures volatility nobody could trade on.
+- An **arrival process** — waiting-time distributions, tick intensity,
+  criticality — wants every execution. An odd lot is a real fill by a real
+  participant at a real instant, and dropping it distorts the very law under
+  study.
+
+So [`price_forming`](@ref) and [`filter_price_forming`](@ref) operate on
+loaded prints, and [`session_report`](@ref) reports `n_trades` beside
+`n_price_forming` so the size of the distinction is measured per capture
+rather than assumed. The gap is dominated by odd lots and grows with share
+price, so it varies strongly across a basket.
+
+State which of the two populations a result used. After the fact, a price
+series does not reveal it.
+
 ## Working from the file layer instead
 
 For methods that need the whole record rather than a stream — tail exponents,
