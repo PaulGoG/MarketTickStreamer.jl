@@ -12,26 +12,55 @@ Entry points: [`run_stream`](@ref), [`run_backfill`](@ref),
 """
 module MarketTickStreamer
 
-using Dates
-using LinearAlgebra
-using Logging
-using Statistics
-using TOML
+# Every name entering this namespace is listed: the test suite asserts with
+# ExplicitImports.jl that nothing arrives implicitly, so an import that is no
+# longer used, or a new name used without being imported, fails the suite.
+using Dates: Dates, @dateformat_str, Day, datetime2unix, dayofweek, unix2datetime
 using FileWatching: Pidfile
 using InteractiveUtils: InteractiveUtils
+using LinearAlgebra: LinearAlgebra
 using Printf: @sprintf
+using Statistics: Statistics, median
+using TOML: TOML
 
-using Arrow
-using CairoMakie
-using CSV
-using DataFrames
-using DotEnv
-using HTTP
-using JSON3
-using LoggingExtras
-using MathTeXEngine
-using ProgressMeter
-using TimeZones
+using Arrow: Arrow
+using CairoMakie:
+    CairoMakie,
+    Axis,
+    Colorbar,
+    Figure,
+    GridLayout,
+    Makie,
+    Relative,
+    Theme,
+    colsize!,
+    heatmap!,
+    lines!,
+    save,
+    scatterlines!,
+    stairs!,
+    text!,
+    vlines!,
+    with_theme,
+    ylims!
+using CSV: CSV
+using DataFrames: DataFrames, DataFrame, nrow
+using DotEnv: DotEnv
+using HTTP: HTTP
+using JSON3: JSON3
+using LoggingExtras:
+    LoggingExtras,
+    ConsoleLogger,
+    EarlyFilteredLogger,
+    FormatLogger,
+    Logging,
+    MinLevelLogger,
+    TeeLogger,
+    global_logger
+using MathTeXEngine: MathTeXEngine, @L_str, texfont
+using ProgressMeter: ProgressMeter, Progress, next!
+using TimeZones:
+    TimeZones, @tz_str, Date, DateTime, TimeZone, UTC, ZonedDateTime, astimezone, now
 using UnicodePlots: barplot, lineplot
 
 export Config, load_config, load_credentials!

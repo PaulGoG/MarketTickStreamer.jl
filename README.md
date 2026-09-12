@@ -59,7 +59,7 @@ real-time analysis methods.
 
 ## Setup
 
-Requires Julia ≥ 1.11 (developed and Manifest-pinned on 1.13). From a clone:
+Requires Julia ≥ 1.12 (developed and Manifest-pinned on 1.13). From a clone:
 
 ```julia
 using Pkg

@@ -1,5 +1,7 @@
 using Test
 using Aqua
+using ExplicitImports
+using JET
 using Dates
 using TimeZones
 using CSV
@@ -27,6 +29,25 @@ end
 
     @testset "static QA (Aqua)" begin
         Aqua.test_all(MarketTickStreamer)
+    end
+
+    @testset "static QA (ExplicitImports)" begin
+        # The owner and public-access checks are deliberately not asserted:
+        # the plotting stack's surface is re-exported (Makie names through
+        # CairoMakie, `save` through FileIO, `@L_str` through LaTeXStrings),
+        # and a few stable non-public names are load-bearing here
+        # (`HTTP.StatusError`, `Arrow.Table`, `Base.gc_live_bytes`).
+        @test check_no_implicit_imports(MarketTickStreamer) === nothing
+        @test check_no_stale_explicit_imports(MarketTickStreamer) === nothing
+        @test check_no_self_qualified_accesses(MarketTickStreamer) === nothing
+    end
+
+    @testset "static QA (JET)" begin
+        # Restricted to this module: the dependency tree reports a hundred-odd
+        # findings of its own, none of them actionable here. JET follows the
+        # compiler, so a Julia upgrade may surface new reports — which is the
+        # reason to run it.
+        JET.test_package(MarketTickStreamer; target_modules = (MarketTickStreamer,))
     end
 
     @testset "schema / timestamps" begin

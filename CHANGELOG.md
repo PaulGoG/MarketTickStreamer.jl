@@ -18,13 +18,24 @@ Notable changes to MarketTickStreamer. The format follows
   configuration does not go stale. The sentinels count calendar days rather
   than trading days; a window may therefore resolve onto a weekend or a
   holiday and return no prints.
+- Static analysis in the test suite beside Aqua: `ExplicitImports.jl` asserts
+  that no name enters the module namespace implicitly, and `JET.jl` analyses
+  the package with its reports restricted to this module.
 
 ### Changed
-- The Julia floor rises to 1.11, which is what `[sources]` in the auxiliary
-  environments requires; the Manifest is re-resolved on 1.13.
+- The Julia floor rises to 1.12: `[sources]` in the auxiliary environments
+  needs 1.11 and the JET release used for static analysis needs 1.12. The
+  Manifest is re-resolved on 1.13.
 - `Project.toml` opens the development version `0.2.0-DEV`.
 - The shipped configuration carries `start_date = "today-2d"` /
   `end_date = "today-1d"` in place of the fixed August 2026 window.
+
+### Fixed
+- Inference on three paths that JET flagged: the session lock was typed
+  `Union{LockMonitor,Bool}`, so releasing it dispatched dynamically over a
+  type with no `close` method; the backfill per-page closure captured a sink
+  bound in two scopes and was therefore boxed; and JSON3's value unions
+  reached the per-line `json_to_trade` conversions untyped.
 
 ## [0.1.0] - 2026-08-06
 
