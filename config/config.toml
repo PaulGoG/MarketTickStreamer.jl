@@ -41,7 +41,7 @@ start_date = "today-2d"          # inclusive exchange date (America/New_York); I
 end_date = "today-1d"            # inclusive; >= start_date; same forms; calendar days, not trading days
 feed = "sip"                     # historical feed; one of: "iex" | "sip"
 page_limit = 10000               # rows per REST page; provider maximum 10000
-rate_limit_sleep_s = 0.35        # pause between REST pages [s]
+rate_limit_sleep_s = 0.35        # pause between REST pages [s]; 0.35 measured at ~72 req/min, provider cap 200
 resume = true                    # skip (symbol, day) pairs already present in processed/
 
 [quality]
