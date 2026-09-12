@@ -1,4 +1,5 @@
 using Test
+using AllocCheck
 using Aqua
 using ExplicitImports
 using JET
@@ -48,6 +49,20 @@ end
         # compiler, so a Julia upgrade may surface new reports — which is the
         # reason to run it.
         JET.test_package(MarketTickStreamer; target_modules = (MarketTickStreamer,))
+    end
+
+    @testset "static QA (allocation-free hot paths)" begin
+        # These three run once per print on the ingest and compaction paths.
+        # Zero allocations is the measured state, asserted here so an
+        # accidental boxing or a dynamic dispatch shows up as a test failure.
+        @test isempty(check_allocs(MarketTickStreamer.ns_to_datetime, (Int64,)))
+        @test isempty(check_allocs(MarketTickStreamer.now_ns, ()))
+        @test isempty(check_allocs(MarketTickStreamer.trading_date, (Int64,)))
+        # `rfc3339_to_ns` and `ns_to_rfc3339` are deliberately NOT asserted:
+        # the first matches a regular expression and validates through
+        # `DateTime`, the second builds a String. At 438 ns and 304 ns against
+        # network-bound ingestion, hand-rolling either to reach zero is not
+        # justified by measurement — see bench/benchmarks.jl.
     end
 
     @testset "schema / timestamps" begin

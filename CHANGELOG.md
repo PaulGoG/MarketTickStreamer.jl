@@ -32,6 +32,11 @@ Notable changes to MarketTickStreamer. The format follows
   parsing, per-line serialization (including the `SubString` path that once
   cost 2000x), sink batch writes, compaction, unpaced replay and the session
   quality report.
+- `AllocCheck.jl` in the test suite, asserting that `ns_to_datetime`,
+  `now_ns` and `trading_date` allocate nothing. The two RFC 3339 string
+  functions are excluded by measurement rather than by oversight: they
+  allocate by construction, and at a few hundred nanoseconds against
+  network-bound ingestion, hand-rolling them is not justified.
 
 ### Changed
 - The Julia floor rises to 1.12: `[sources]` in the auxiliary environments
