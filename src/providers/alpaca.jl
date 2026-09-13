@@ -234,6 +234,21 @@ function _each_trades_page(
     return total
 end
 
+# Midnight of an exchange date, as ns since the epoch. The request window has
+# to be built from the same convention `trading_date` files rows under, or a
+# "day" means one thing on the way in and another on the way out: a UTC
+# calendar day equals an exchange date only while New York is UTC-4, so from
+# November to March a UTC-day request returns the previous date's last
+# post-market hour and stops an hour short of its own. `ZonedDateTime` resolves
+# the offset per date, including across the transitions.
+_exchange_day_start_ns(d::Date) =
+    round(
+        Int64,
+        datetime2unix(
+            DateTime(astimezone(ZonedDateTime(DateTime(d), tz"America/New_York"), tz"UTC")),
+        ),
+    ) * NS_PER_SEC
+
 """
     historical_trades(p, symbol, start_date, end_date;
                       feed = "sip", page_limit = 10_000, rate_sleep_s = 0.35,
@@ -266,8 +281,8 @@ function historical_trades(
     total = _each_trades_page(
         p,
         symbol;
-        start_str = "$(start_date)T00:00:00Z",
-        end_str = "$(end_date)T23:59:59Z",
+        start_str = ns_to_rfc3339(_exchange_day_start_ns(start_date)),
+        end_str = ns_to_rfc3339(_exchange_day_start_ns(end_date + Day(1)) - 1),
         feed,
         page_limit,
         rate_sleep_s,

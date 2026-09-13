@@ -88,6 +88,44 @@ end
         @test trading_date(rfc3339_to_ns("2026-07-30T20:30:00Z")) == Date(2026, 7, 30)
         @test trading_date(rfc3339_to_ns("2026-07-31T01:00:00Z")) == Date(2026, 7, 30)
         @test now_ns() > rfc3339_to_ns("2026-01-01T00:00:00Z")
+        # The last nanosecond of an exchange day must file under that day.
+        # Routing through `ns_to_datetime` divides by 1e9 in floating point and
+        # rounds to the millisecond, which pushed this instant into the next
+        # date; `trading_date` floors in integer arithmetic instead.
+        @test trading_date(rfc3339_to_ns("2026-07-31T03:59:59.999999999Z")) ==
+              Date(2026, 7, 30)                      # 23:59:59.999999999 EDT
+        @test trading_date(rfc3339_to_ns("2026-07-31T04:00:00Z")) == Date(2026, 7, 31)
+        @test trading_date(rfc3339_to_ns("2025-11-04T04:59:59.999999999Z")) ==
+              Date(2025, 11, 3)                      # the same instant in EST
+        @test trading_date(rfc3339_to_ns("2025-11-04T05:00:00Z")) == Date(2025, 11, 4)
+    end
+
+    @testset "backfill window follows exchange dates, not UTC days" begin
+        # The request window has to use the convention `trading_date` files
+        # rows under. A UTC calendar day equals an exchange date only while
+        # New York is UTC-4, so from November to March a UTC-day request
+        # returned the previous date's last post-market hour and stopped an
+        # hour short of its own — splitting each date across two requests.
+        bounds(d) = (
+            MarketTickStreamer._exchange_day_start_ns(d),
+            MarketTickStreamer._exchange_day_start_ns(d + Day(1)) - 1,
+        )
+        for d in (
+            Date(2026, 7, 1),      # EDT, UTC-4
+            Date(2025, 11, 3),     # EST, UTC-5
+            Date(2025, 11, 2),     # 25-hour day, DST ends
+            Date(2026, 3, 8),      # 23-hour day, DST begins
+        )
+            lo, hi = bounds(d)
+            @test trading_date(lo) == d          # first instant of the date
+            @test trading_date(hi) == d          # last instant of the date
+            @test trading_date(lo - 1) == d - Day(1)
+            @test trading_date(hi + 1) == d + Day(1)
+        end
+        # Local midnight in each offset regime.
+        @test ns_to_rfc3339(bounds(Date(2026, 7, 1))[1]) == "2026-07-01T04:00:00.000000000Z"
+        @test ns_to_rfc3339(bounds(Date(2025, 11, 3))[1]) ==
+              "2025-11-03T05:00:00.000000000Z"
     end
 
     @testset "config" begin

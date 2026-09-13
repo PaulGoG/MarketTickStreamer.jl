@@ -247,6 +247,12 @@ Exchange-local calendar date of a nanosecond epoch timestamp; used to bucket
 ticks into per-day files. `tz` defaults to America/New_York.
 """
 function trading_date(ns::Int64; tz::TimeZone = tz"America/New_York")
-    zdt = ZonedDateTime(ns_to_datetime(ns), tz"UTC")
+    # Floor to whole seconds in integer arithmetic rather than going through
+    # `ns_to_datetime`: that divides by 1e9 in floating point and rounds to the
+    # millisecond, so a timestamp in the last half-millisecond of an exchange
+    # day rounds up to midnight and files under the following date. US equity
+    # tapes close at 20:00 local and never produce such a print, but a 24-hour
+    # venue would, and this function decides which file a print lands in.
+    zdt = ZonedDateTime(unix2datetime(fld(ns, NS_PER_SEC)), tz"UTC")
     return Date(astimezone(zdt, tz))
 end
