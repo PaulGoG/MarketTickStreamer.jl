@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/PaulGoG/MarketTickStreamer.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/PaulGoG/MarketTickStreamer.jl/actions/workflows/CI.yml)
 [![codecov](https://codecov.io/gh/PaulGoG/MarketTickStreamer.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/PaulGoG/MarketTickStreamer.jl)
+[![docs](https://img.shields.io/badge/docs-dev-blue.svg)](https://PaulGoG.github.io/MarketTickStreamer.jl/dev/)
 
 Provider-agnostic tick-by-tick market data acquisition in pure Julia, built
 for scientific time series research: live WebSocket streaming, historical
@@ -59,7 +60,8 @@ real-time analysis methods.
 │   ├── make.jl             # Documenter build → docs/build/
 │   └── src/                # manual: index, architecture, usage, replay, API
 ├── .github/workflows/
-│   └── CI.yml              # test + coverage on push/PR (single stable-Julia job)
+│   └── CI.yml              # tests (stable + compat floor + prerelease),
+│                           #   formatting check, docs build & deploy
 ├── LICENSE                 # MIT
 ├── CHANGELOG.md            # release history (Keep a Changelog)
 ├── CITATION.cff            # citation metadata
