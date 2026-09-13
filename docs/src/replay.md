@@ -91,6 +91,39 @@ An analysis tap that occasionally cannot keep up belongs on a lossy output;
 one whose results depend on seeing every print does not, and should instead
 run offline against the raw files, where nothing is ever dropped.
 
+## A worked consumer
+
+`examples/waiting_times.jl` is this page in code: it replays a recorded
+session, splits it with [`tee`](@ref) into a lossless consumer and a lossy
+analysis tap, accumulates inter-arrival times in a single pass, and stops
+when the channel closes — no shutdown protocol of its own.
+
+```bash
+julia examples/waiting_times.jl data/raw/<session>_part001.jsonl
+```
+
+It reports both populations side by side, which is the cheapest way to see
+what the choice costs on your own data. One AAPL session, 1 225 831 prints:
+
+```
+every execution          n=  1225830  mean=  0.0470 s  median=  0.0007 s  p99=  0.6231 s  max=   30.080 s
+price-forming only       n=   420968  mean=  0.1368 s  median=  0.0006 s  p99=  1.3651 s  max=  116.269 s
+```
+
+A median of 0.7 ms against a mean of 47 ms is the distribution announcing
+itself. Note also that excluding odd lots raises the mean roughly threefold
+while leaving the median where it was: it thins the dense clusters and
+stretches the tail rather than rescaling the whole distribution.
+
+Both `tee` outputs in the example are lossless, deliberately. At maximum
+replay rate a lossy tap lost 85 000 of those prints — and it does not thin a
+sample evenly, it removes the bursts, which is where a waiting-time
+distribution lives. Backpressure costs nothing offline, since a blocked
+output only slows the replay.
+
+The suite executes the example, so it cannot drift from the interface it
+documents.
+
 ## Which prints count as trades
 
 `conditions` is reported, never acted on at capture. Whether a print belongs

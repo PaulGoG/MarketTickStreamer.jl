@@ -45,6 +45,8 @@ real-time analysis methods.
 ├── test/
 │   ├── runtests.jl         # unit + end-to-end tests
 │   └── mock_alpaca.jl      # in-process mock of Alpaca REST + WebSocket APIs
+├── examples/
+│   └── waiting_times.jl    # worked consumer: tee → lossy tap → waiting times
 ├── bench/
 │   ├── Project.toml        # benchmark environment (package consumed by path)
 │   ├── activate.jl         # silent environment activation
@@ -110,6 +112,9 @@ julia scripts/monitor.jl
 
 # test suite (offline: unit + mock-server end-to-end + Aqua static QA)
 julia --project=. -e 'using Pkg; Pkg.test()'
+
+# worked consumer example: waiting-time statistics off a replayed session
+julia examples/waiting_times.jl data/raw/<session>_part001.jsonl
 
 # benchmark suite (own environment; slow first run while it instantiates)
 julia bench/benchmarks.jl

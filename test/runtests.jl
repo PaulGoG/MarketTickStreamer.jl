@@ -628,6 +628,44 @@ hostname = "$(gethostname())"
         end
     end
 
+    @testset "examples: the worked consumer runs and adds up" begin
+        # The example is the manual's claim about the interface, in code, so
+        # the suite executes it rather than trusting it to stay true.
+        mktempdir() do dir
+            sink = open_raw_sink(dir, "example")
+            # Ten prints a millisecond apart; two carry the odd-lot condition,
+            # so the two populations differ by a known amount.
+            trades = [
+                Trade(
+                    "AAPL",
+                    1_753_886_600_000_000_000 + i * 1_000_000,
+                    1_753_886_600_100_000_000 + i * 1_000_000,
+                    100.0 + i,
+                    10.0,
+                    "V",
+                    i in (4, 7) ? ["I"] : ["@"],
+                    "C",
+                    i,
+                ) for i in 1:10
+            ]
+            write_batch!(sink, trades)
+            close_sink!(sink)
+
+            mod = Module(:WaitingTimesExample)
+            Base.include(mod, joinpath(@__DIR__, "..", "examples", "waiting_times.jl"))
+            w = Base.invokelatest(mod.consume, [sink.path])
+            @test w.n_prints == 10
+            @test length(w.gaps) == 9                  # one gap fewer than prints
+            @test all(≈(0.001), w.gaps)                # 1 ms apart in exchange time
+            @test w.n_nonpositive == 0
+
+            pf = Base.invokelatest(mod.consume, [sink.path]; price_forming_only = true)
+            @test pf.n_prints == 8                     # the two odd lots are excluded
+            @test length(pf.gaps) == 7
+            @test sum(pf.gaps) ≈ 0.009 atol = 1e-9     # gaps still span the session
+        end
+    end
+
     @testset "monitor: attach-mode tailing" begin
         mktempdir() do dir
             sink = open_raw_sink(dir, "mon")
