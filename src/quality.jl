@@ -118,12 +118,12 @@ average close over an evaluation month, effective the first business day of
 May and of November.
 
 The consequence is that the odd-lot flag, and therefore the price-forming
-population, silently changes membership at those dates. Measured on this
-package's own AAPL corpus, the lot fell from 100 to 40 shares on 2026-05-01
-and the median inter-arrival time of the price-forming population dropped by
-a factor of eight across the boundary with no change in market behaviour. A
-symbol near a tier threshold can also oscillate: ERIE went 100, 40, then 100
-again within eight months.
+population, silently changes membership at those dates. On a 251-day AAPL
+capture taken with this package, the lot fell from 100 to 40 shares on
+2026-05-01 and the median inter-arrival time of the price-forming population
+dropped by a factor of eight across the boundary, with no change in market
+behaviour. A symbol near a tier threshold can also oscillate: over the same
+span ERIE went 100, 40, then 100 again inside eight months.
 
 Reporting it turns an invisible redefinition into an observable, and it costs
 one pass over prints already in memory.

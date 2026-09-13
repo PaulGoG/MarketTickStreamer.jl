@@ -4,6 +4,13 @@ Analysis pipelines are external to this package. What it owes them is a
 stream whose contract is written down, and a way to develop against that
 stream without a market being open. This page is that contract.
 
+The pipelines this was built to feed — exact waiting-time distributions of
+scalar series, long-memory estimation, criticality in tick arrival — live in
+separate packages of their own, not yet released. Nothing here depends on
+them, and the contract below is what any consumer gets. Two worked consumers
+ship under `examples/`, and the test suite executes both, so they cannot
+drift from what this page promises.
+
 ## One interface, two sources
 
 [`live_source`](@ref) and [`replay_source`](@ref) both hand back a
