@@ -1,14 +1,23 @@
 # MarketTickStreamer.jl
 
-[![CI](https://github.com/PaulGoG/MarketTickStreamer.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/PaulGoG/MarketTickStreamer.jl/actions/workflows/CI.yml)
-[![codecov](https://codecov.io/gh/PaulGoG/MarketTickStreamer.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/PaulGoG/MarketTickStreamer.jl)
-[![docs](https://img.shields.io/badge/docs-dev-blue.svg)](https://PaulGoG.github.io/MarketTickStreamer.jl/dev/)
+[![Documentation](https://img.shields.io/badge/docs-dev-blue.svg)](https://PaulGoG.github.io/MarketTickStreamer.jl/dev/)
+[![CI](https://github.com/PaulGoG/MarketTickStreamer.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/PaulGoG/MarketTickStreamer.jl/actions/workflows/CI.yml)
+[![Coverage](https://codecov.io/gh/PaulGoG/MarketTickStreamer.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/PaulGoG/MarketTickStreamer.jl)
+[![Aqua QA](https://raw.githubusercontent.com/JuliaTesting/Aqua.jl/master/badge.svg)](https://github.com/JuliaTesting/Aqua.jl)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 Provider-agnostic tick-by-tick market data acquisition in pure Julia, built
 for scientific time series research: live WebSocket streaming, historical
 REST backfill, append-only raw persistence, compaction to analysis-ready
 files, and paced replay of recorded sessions for reproducible development of
 real-time analysis methods.
+
+**[Manual](https://PaulGoG.github.io/MarketTickStreamer.jl/dev/)** ·
+[Architecture](https://PaulGoG.github.io/MarketTickStreamer.jl/dev/architecture/) ·
+[Configuration](https://PaulGoG.github.io/MarketTickStreamer.jl/dev/usage/) ·
+[Analysis interfaces](https://PaulGoG.github.io/MarketTickStreamer.jl/dev/replay/) ·
+[API](https://PaulGoG.github.io/MarketTickStreamer.jl/dev/api/) ·
+[Changelog](CHANGELOG.md)
 
 ## File structure
 
