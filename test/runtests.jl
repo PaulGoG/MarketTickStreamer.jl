@@ -479,6 +479,31 @@ end
         end
     end
 
+    @testset "quality: the round lot is read off the tape" begin
+        mk(sz, conds) =
+            Trade("AAPL", 1_753_886_600_000_000_000, 0, 100.0, sz, "V", conds, "C", 1)
+        # One share more than the largest print still flagged an odd lot.
+        ts = [mk(99.0, ["I"]), mk(100.0, ["@"]), mk(40.0, ["I"]), mk(250.0, ["@"])]
+        @test observed_round_lot(ts) == 100.0
+        # The tiered regime: nothing above 39 carries the flag.
+        ts40 = [mk(39.0, ["I"]), mk(40.0, ["@"]), mk(12.0, ["I"])]
+        @test observed_round_lot(ts40) == 40.0
+        # No flagged print means no basis to state a lot.
+        @test isnan(observed_round_lot([mk(100.0, ["@"])]))
+        @test isnan(observed_round_lot(Trade[]))
+
+        # It reaches the session report, which is the point: a redefinition
+        # that moves the price-forming population is otherwise invisible.
+        mktempdir() do dir
+            sink = open_raw_sink(dir, "rl")
+            write_batch!(sink, ts)
+            close_sink!(sink)
+            rep = session_report(sink.path)
+            @test rep[1, :round_lot] == 100.0
+            @test rep[1, :n_price_forming] == 2      # the two unflagged prints
+        end
+    end
+
     @testset "close guard + disk guard" begin
         s = LiveSession(
             Channel{Trade}(1),

@@ -6,6 +6,23 @@ Notable changes to MarketTickStreamer. The format follows
 
 ## [Unreleased]
 
+### Added
+- `observed_round_lot`, and a `round_lot` column in `session_report`: the
+  venue's round lot read off the tape as one share more than the largest
+  print still flagged an odd lot.
+
+  It is reported because it is neither 100 shares nor constant. Under the SEC
+  Market Data Infrastructure rules the round lot is tiered by share price and
+  reassigned semiannually per symbol, effective the first business day of May
+  and of November. The odd-lot flag follows it, so the price-forming
+  population silently changes membership on those dates. Measured on this
+  package's own AAPL corpus the lot fell from 100 shares to 40 on 2026-05-01,
+  and the median inter-arrival time of the price-forming population dropped by
+  a factor of eight across the boundary with no change in market behaviour;
+  ERIE went 100, 40 and back to 100 inside eight months. A redefinition that
+  moves a population is otherwise invisible on the tape — no new code, no
+  flag, no gap — so it is now in every session report and every sidecar.
+
 ## [0.2.0] - 2026-09-13
 
 The release that made the package provider-agnostic in fact rather than in

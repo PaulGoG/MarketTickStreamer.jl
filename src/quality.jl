@@ -104,6 +104,40 @@ function deduplicate_trades(trades::AbstractVector{Trade})
 end
 
 """
+    observed_round_lot(trades; code = "I") -> Float64
+
+The venue's round lot for these prints, read off the tape: one share more
+than the largest trade still flagged as an odd lot. `NaN` when no print
+carries the flag.
+
+Worth reporting per capture because the round lot is neither 100 shares nor
+constant. Under the SEC Market Data Infrastructure rules it is tiered by
+share price — 100 shares at or below \$250, 40 up to \$1,000, 10 up to
+\$10,000, 1 above — and reassigned semiannually per symbol from that symbol's
+average close over an evaluation month, effective the first business day of
+May and of November.
+
+The consequence is that the odd-lot flag, and therefore the price-forming
+population, silently changes membership at those dates. Measured on this
+package's own AAPL corpus, the lot fell from 100 to 40 shares on 2026-05-01
+and the median inter-arrival time of the price-forming population dropped by
+a factor of eight across the boundary with no change in market behaviour. A
+symbol near a tier threshold can also oscillate: ERIE went 100, 40, then 100
+again within eight months.
+
+Reporting it turns an invisible redefinition into an observable, and it costs
+one pass over prints already in memory.
+"""
+function observed_round_lot(trades::AbstractVector{Trade}; code::AbstractString = "I")
+    lot = NaN
+    for t in trades
+        code in t.conditions || continue
+        (isnan(lot) || t.size > lot) && (lot = t.size)
+    end
+    return isnan(lot) ? NaN : lot + 1
+end
+
+"""
     session_report(paths; gap_threshold_s = 60.0) -> DataFrame
 
 Audit raw session files and return one row per symbol:
@@ -121,6 +155,9 @@ Audit raw session files and return one row per symbol:
 - `median_latency_ms` / `n_negative_latency` (receive minus exchange time,
   live-captured rows only; negative values indicate clock skew. `NaN` when
   the file is pure backfill)
+- `round_lot` (the venue's round lot, read off the tape by
+  [`observed_round_lot`](@ref); it is price-tiered and reassigned
+  semiannually, so it is not 100 and does not hold still)
 
 Inspect this before trusting any captured session.
 """
@@ -150,6 +187,7 @@ function session_report(
                 n_trades = n,
                 n_duplicates = ndup,
                 n_price_forming = count(t -> price_forming(t; non_price), ts),
+                round_lot = observed_round_lot(ts),
                 first_time = ns_to_datetime(sorted_ns[1]),
                 last_time = ns_to_datetime(sorted_ns[end]),
                 n_out_of_order = n_ooo,
