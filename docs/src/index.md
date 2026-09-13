@@ -4,6 +4,12 @@ Provider-agnostic tick-by-tick market data acquisition in pure Julia: live
 WebSocket streaming, historical REST backfill, append-only raw persistence,
 compaction to analysis-ready files, and paced replay of recorded sessions.
 
+![Per-session diagnostic: price path, trade rate, and the survival functions of inter-arrival time and trade size](assets/session_diagnostic.png)
+
+One trading day of one symbol, as `scripts/visualize.jl` renders it. The
+inter-arrival distribution spans seven decades; the size distribution carries
+a fitted tail exponent.
+
 ## Purpose
 
 The package exists to supply a real-time data flux for testing time series

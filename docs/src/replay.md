@@ -11,6 +11,8 @@ them, and the contract below is what any consumer gets. Two worked consumers
 ship under `examples/`, and the test suite executes both, so they cannot
 drift from what this page promises.
 
+![A recorded session replayed tick by tick, the price path drawing itself against exchange time](assets/replay.gif)
+
 ## One interface, two sources
 
 [`live_source`](@ref) and [`replay_source`](@ref) both hand back a

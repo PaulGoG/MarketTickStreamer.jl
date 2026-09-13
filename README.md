@@ -19,6 +19,24 @@ real-time analysis methods.
 [API](https://PaulGoG.github.io/MarketTickStreamer.jl/stable/api/) ·
 [Changelog](CHANGELOG.md)
 
+![Per-session diagnostic figure: price path, trade rate, inter-arrival survival function, and trade-size survival function with a fitted tail exponent](docs/src/assets/session_diagnostic.png)
+
+<sub>One trading day of one symbol, rendered by `scripts/visualize.jl`: the
+price path and trade rate over exchange-local time, and the survival functions
+of inter-arrival time and trade size. The inter-arrival distribution spans
+seven decades, from sub-microsecond bursts to gaps of tens of seconds; the
+size distribution carries a fitted tail exponent. These are the package's own
+diagnostics, not a mock-up — the same command produces them for any
+capture.</sub>
+
+![Animation of a recorded session replayed tick by tick, the price path drawing itself against exchange time](docs/src/assets/replay.gif)
+
+<sub>A recording replayed through `replay_source`, which hands back the same
+`Channel{Trade}` a live session yields. A consumer written against one works
+unchanged against the other, so a real-time method is developed and validated
+offline — reproducibly, and at three in the morning — and only then pointed at
+the wire.</sub>
+
 ## File structure
 
 ```
@@ -72,7 +90,9 @@ real-time analysis methods.
 │   ├── Project.toml        # documentation environment (package consumed by path)
 │   ├── activate.jl         # silent environment activation
 │   ├── make.jl             # Documenter build → docs/build/
+│   ├── make_readme_assets.jl  # regenerate the figures shown above, from a capture
 │   └── src/                # manual: index, architecture, usage, replay, API
+│       └── assets/         # the rendered figures the README and manual show
 ├── .github/workflows/
 │   └── CI.yml              # tests (stable + compat floor + prerelease),
 │                           #   formatting check, docs build & deploy
@@ -142,6 +162,9 @@ julia bench/benchmarks.jl
 
 # documentation site (own environment; output in docs/build/)
 julia docs/make.jl
+
+# regenerate the figures the README shows, from one of your own captures
+julia --project=docs docs/make_readme_assets.jl data/raw/<session>_part001.jsonl
 ```
 
 For interactive work against the test environment, activate it with
