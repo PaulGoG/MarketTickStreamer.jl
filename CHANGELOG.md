@@ -6,6 +6,16 @@ Notable changes to MarketTickStreamer. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-13
+
+The release that made the package provider-agnostic in fact rather than in
+description, and that put a year of real tape through it. A second adapter
+(Binance spot: public, 24-hour, UTC) forced provider selection, feed
+vocabulary, exchange calendar and trading days onto dispatch, each of which
+had silently been Alpaca's. Three defects found by running the pipeline at
+scale are fixed — two of them data-losing. The static-QA layer, a benchmark
+suite, a Documenter manual and two executed consumer examples arrive with it.
+
 ### Added
 - `activate.jl` at the repository root, activating and instantiating the
   package environment without output, so `julia -i activate.jl` opens a REPL
@@ -194,5 +204,6 @@ against the historical SIP tape.
 - An offline test suite driven by an in-process mock of the Alpaca REST and
   WebSocket APIs, with Aqua static quality assurance.
 
-[Unreleased]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/releases/tag/v0.1.0

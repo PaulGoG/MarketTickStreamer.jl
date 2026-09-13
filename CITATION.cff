@@ -1,15 +1,26 @@
 cff-version: 1.2.0
 message: "If you use MarketTickStreamer.jl in your work, cite it as below."
 title: "MarketTickStreamer.jl: provider-agnostic tick-by-tick market data acquisition and paced replay in Julia"
+abstract: >-
+  A Julia package for acquiring tick-by-tick market data as a scientific
+  substrate: live WebSocket streaming and paginated historical REST backfill
+  behind one provider-agnostic interface, an append-only crash-only raw layer
+  with per-session provenance, compaction to per-symbol per-day CSV or Arrow
+  on the venue's own calendar, and paced replay of a recording into the same
+  channel type the live source produces. Adapters ship for Alpaca (US
+  equities) and Binance (crypto spot). Analysis pipelines couple to a capture
+  through a documented channel contract; the package supplies the flux and
+  the guarantees, not the estimators.
 type: software
 authors:
   - family-names: "Gogîță"
     given-names: "Paul-Adrian"
     email: "gogitapaul@yahoo.ro"
-version: "0.1.0"
-date-released: "2026-08-06"
+version: "0.2.0"
+date-released: "2026-09-13"
 license: MIT
 repository-code: "https://github.com/PaulGoG/MarketTickStreamer.jl"
+url: "https://PaulGoG.github.io/MarketTickStreamer.jl/stable/"
 keywords:
   - market microstructure
   - tick data
