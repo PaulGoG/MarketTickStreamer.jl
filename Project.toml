@@ -44,6 +44,7 @@ LinearAlgebra = "1"
 Logging = "1"
 LoggingExtras = "1"
 MathTeXEngine = "0.6.9"
+OnlineStats = "1.7"
 Printf = "1"
 ProgressMeter = "1"
 Statistics = "1"
@@ -58,7 +59,8 @@ AllocCheck = "9b6a8646-10ed-4001-bbdc-1d2f46dfbb1a"
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
 ExplicitImports = "7d51a73a-1435-4ff3-83d9-f097790105c7"
 JET = "c3a54625-cd67-489e-a8e7-0a5a0ff4e31b"
+OnlineStats = "a15396b6-48d5-5d58-9928-6d29437db91e"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["AllocCheck", "Aqua", "ExplicitImports", "JET", "Test"]
+test = ["AllocCheck", "Aqua", "ExplicitImports", "JET", "OnlineStats", "Test"]

@@ -22,12 +22,12 @@ The estimator itself is deliberately minimal: an external pipeline brings its
 own. This file is about the plumbing.
 """
 
-# Activate the project environment only when this file is run as a script.
+# Activate the examples environment only when this file is run as a script.
 # The test suite includes it to check that the example still works, and there
 # the environment is already active — activating again would pull it out from
 # under the running suite.
 if abspath(PROGRAM_FILE) == @__FILE__
-    include(joinpath(@__DIR__, "..", "scripts", "startup.jl"))
+    include(joinpath(@__DIR__, "activate.jl"))
 end
 
 using MarketTickStreamer

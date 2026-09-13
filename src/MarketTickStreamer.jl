@@ -92,7 +92,8 @@ export run_stream,
     start_session_meta,
     finalize_session_meta,
     reconcile_sessions!,
-    acquire_session_lock
+    acquire_session_lock,
+    run_entrypoint
 export tick_theme,
     session_figure, save_session_figures, overview_figure, save_overview_figures
 

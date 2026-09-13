@@ -3,6 +3,7 @@ using AllocCheck
 using Aqua
 using ExplicitImports
 using JET
+using OnlineStats: OnlineStats
 using Dates
 using TimeZones
 using CSV
@@ -742,6 +743,93 @@ hostname = "$(gethostname())"
             @test pf.n_prints == 8                     # the two odd lots are excluded
             @test length(pf.gaps) == 7
             @test sum(pf.gaps) ≈ 0.009 atol = 1e-9     # gaps still span the session
+        end
+    end
+
+    @testset "example: bounded-memory live diagnostics" begin
+        mktempdir() do dir
+            sink = open_raw_sink(dir, "diag")
+            # 1 ms apart in exchange time, price 101…110, size 10 throughout,
+            # so the VWAP is the plain mean price and every gap is 1 ms.
+            write_batch!(
+                sink,
+                [
+                    Trade(
+                        "AAPL",
+                        1_753_886_600_000_000_000 + i * 1_000_000,
+                        1_753_886_600_100_000_000 + i * 1_000_000,
+                        100.0 + i,
+                        10.0,
+                        "V",
+                        ["@"],
+                        "C",
+                        i,
+                    ) for i in 1:10
+                ],
+            )
+            close_sink!(sink)
+
+            mod = Module(:LiveDiagnosticsExample)
+            Base.include(mod, joinpath(@__DIR__, "..", "examples", "live_diagnostics.jl"))
+            d, persisted, seen = Base.invokelatest(mod.consume, [sink.path])
+            @test persisted == 10                      # persistence is lossless
+            @test seen <= persisted                    # the diagnostic tap may drop
+            @test OnlineStats.nobs(d.Δt_mean) == seen - 1
+            @test OnlineStats.value(d.Δt_mean) ≈ 0.001
+            @test OnlineStats.value(d.Δt_extrema).max ≈ 0.001
+            @test d.n_nonpositive == 0
+            # Equal sizes make the VWAP the arithmetic mean of the prices seen.
+            @test Base.invokelatest(mod.vwap, d) ≈ 101.0 + (seen - 1) / 2
+            @test OnlineStats.value(d.volume) ≈ 10.0 * seen
+
+            # Gaps swept log-uniformly over five decades (100 µs … 10 s), the
+            # shape that breaks a P² sketch and the reason the example bins in
+            # log10. Deterministic, so the expected quantiles are exact.
+            spread_trades(n) = begin
+                gaps_ns = [round(Int64, 10^(-4 + 5 * (i - 1) / (n - 1)) * 1e9) for i in 1:n]
+                t = 1_753_886_600_000_000_000
+                out = Trade[]
+                for (i, g) in enumerate(gaps_ns)
+                    t += g
+                    push!(out, Trade("AAPL", t, 0, 100.0, 10.0, "V", ["@"], "C", i))
+                end
+                (out, gaps_ns ./ 1e9)
+            end
+
+            trades_s, gaps_s = spread_trades(2000)
+            s = open_raw_sink(dir, "diagspread")
+            write_batch!(s, trades_s)
+            close_sink!(s)
+            acc, persisted_s, seen_s = Base.invokelatest(mod.consume, [s.path])
+            @test persisted_s == 2000 && seen_s == 2000   # far below the tap capacity
+            # The first trade opens the series, so its gap is not observed.
+            exact = sort(gaps_s[2:end])
+            for τ in (0.5, 0.9, 0.99)
+                got = Base.invokelatest(mod.waiting_quantile, acc, τ)
+                want = exact[max(1, round(Int, τ * length(exact)))]
+                # Bin centres over five decades: accurate to a bin width, not
+                # to the digit. A P² sketch on these gaps misses by 10x+.
+                @test 0.8 * want <= got <= 1.25 * want
+            end
+            # Both calls go through invokelatest: the example's methods are
+            # younger than this world, the constructor included.
+            empty_acc = Base.invokelatest(mod.LiveDiagnostics)
+            @test isnan(Base.invokelatest(mod.waiting_quantile, empty_acc, 0.5))
+            @test_throws ArgumentError Base.invokelatest(mod.waiting_quantile, acc, 1.5)
+            @test_throws ArgumentError Base.invokelatest(mod.LiveDiagnostics; n_bins = 2)
+
+            # The point of the example: once the histogram has filled its bin
+            # budget the footprint stops growing, so a longer stream of the
+            # same shape costs exactly the same state.
+            foot = map((2000, 6000)) do n
+                tr, _ = spread_trades(n)
+                sk = open_raw_sink(dir, "diaglong$(n)")
+                write_batch!(sk, tr)
+                close_sink!(sk)
+                a, _, _ = Base.invokelatest(mod.consume, [sk.path])
+                Base.summarysize(a)
+            end
+            @test foot[1] == foot[2]
         end
     end
 

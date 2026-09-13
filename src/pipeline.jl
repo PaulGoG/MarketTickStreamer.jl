@@ -557,3 +557,31 @@ function run_backfill(cfg::Config; provider::Union{AbstractProvider,Nothing} = n
     @info "backfill finished" status days = length(processed) ticks = total
     return processed
 end
+
+"""
+    run_entrypoint(main)
+
+Run a command-line entry point's `main` with clean interrupt handling: SIGINT
+arrives as an `InterruptException` and exits without a stack trace.
+
+Delivery is best-effort under threads — the crash-only session lifecycle, not
+this wrapper, is what actually guarantees that an interrupted run leaves
+recoverable state. Shared by the scripts under `scripts/` and the worked
+examples so that every entry point behaves the same way at the terminal.
+
+# Example
+
+```julia
+run_entrypoint(() -> main(ARGS))
+```
+"""
+function run_entrypoint(main::Function)
+    Base.exit_on_sigint(false)
+    try
+        main()
+    catch e
+        e isa InterruptException || rethrow()
+        println("\nInterrupted — exiting cleanly.")
+    end
+    return nothing
+end

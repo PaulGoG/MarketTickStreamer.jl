@@ -58,7 +58,10 @@ real-time analysis methods.
 │   ├── runtests.jl         # unit + end-to-end tests
 │   └── mock_alpaca.jl      # in-process mock of Alpaca REST + WebSocket APIs
 ├── examples/
-│   └── waiting_times.jl    # worked consumer: replay → tee → waiting times
+│   ├── Project.toml        # examples environment (package consumed by path)
+│   ├── activate.jl         # silent environment activation
+│   ├── waiting_times.jl    # worked consumer: replay → tee → waiting times
+│   └── live_diagnostics.jl # worked consumer: bounded-memory live statistics
 ├── bench/
 │   ├── Project.toml        # benchmark environment (package consumed by path)
 │   ├── activate.jl         # silent environment activation
@@ -126,8 +129,11 @@ julia scripts/monitor.jl
 # test suite (offline: unit + mock-server end-to-end + Aqua static QA)
 julia --project=. -e 'using Pkg; Pkg.test()'
 
-# worked consumer example: waiting-time statistics off a replayed session
+# worked consumer examples (own environment; adds OnlineStats.jl)
+#   waiting times, lossless tap, every gap retained
 julia examples/waiting_times.jl data/raw/<session>_part001.jsonl
+#   live diagnostics, lossy tap, constant-memory sketches
+julia examples/live_diagnostics.jl data/raw/<session>_part001.jsonl
 
 # benchmark suite (own environment; slow first run while it instantiates)
 julia bench/benchmarks.jl
@@ -195,7 +201,7 @@ network needed — plus static package QA via Aqua.jl.
 | Quotes (`q`) / bars (`b`) normalization | working, tested — parsed to `Quote`/`Bar` with `on_quote`/`on_bar`; not subscribed or persisted by default |
 | Sale-condition eligibility (`price_forming`, per-tape lists, `n_price_forming`) | working, tested — capture is never filtered; the choice is made at analysis time |
 | Resampling onto activity clocks (`tick_bars`, `volume_bars`, `dollar_bars`) | working, tested |
-| Real-time analysis consumers | interface contract documented; worked example in `examples/waiting_times.jl`, executed by the suite |
+| Real-time analysis consumers | interface contract documented; two worked examples under `examples/`, both executed by the suite |
 | Credential validation (paper account): clock REST, historical SIP REST, WS auth on `iex` and `delayed_sip` | verified 2026-08-01 |
 | Live capture validation against real Alpaca feed | verified 2026-08-06: 3 h `delayed_sip` session, 24 symbols, 3.17 M ticks; QA clean (0 duplicates/out-of-order/gaps), print-complete against the historical tape |
 

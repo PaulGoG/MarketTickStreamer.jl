@@ -73,6 +73,24 @@ Notable changes to MarketTickStreamer. The format follows
   a lossy output does not thin the sample evenly, it discards precisely the
   bursts the distribution is about.
 - `compact_raw` accepts `scratch_dir`, placing the spill copy explicitly.
+- A second worked consumer, `examples/live_diagnostics.jl`, and an `examples/`
+  environment of its own so a consumer's dependencies stay out of the
+  package's. It is the mirror image of `waiting_times.jl`: the lossy tap
+  rather than the lossless one, and constant-memory `OnlineStats`
+  accumulators rather than a retained sample — the right trade for a
+  dashboard beside a live capture, the wrong one for an estimator.
+  It also records a result worth knowing before trusting a sketch: on one
+  AAPL session `P2Quantile` misses the ninth decile of the waiting-time
+  distribution by a factor of 31, and taking logarithms first rescues the
+  median but not the shoulder. The gaps span six decades with most of the
+  mass in the first millisecond, which is not the smooth unimodal density P²
+  assumes. A histogram binned in log₁₀ holds every quantile to within a few
+  percent for 100 kB of state, and that is what the example uses.
+- `run_entrypoint` is exported from the package. It was defined in
+  `scripts/startup.jl`, which put it out of reach of anything that does not
+  activate the package environment — the examples, now that they have their
+  own. Every entry point already did `using MarketTickStreamer`, so the call
+  sites are unchanged.
 
 ### Changed
 - The Julia floor rises to 1.12: `[sources]` in the auxiliary environments
