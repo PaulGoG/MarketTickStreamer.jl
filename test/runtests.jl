@@ -12,6 +12,7 @@ using TOML
 using MarketTickStreamer
 
 include("mock_alpaca.jl")
+include("mock_binance.jl")
 
 # Ports unlikely to collide; bumped per-run if busy.
 function freeport(start)
@@ -107,9 +108,10 @@ end
         # New York is UTC-4, so from November to March a UTC-day request
         # returned the previous date's last post-market hour and stopped an
         # hour short of its own — splitting each date across two requests.
+        alpaca = AlpacaProvider("k", "s", "sip", "", "", "")
         bounds(d) = (
-            MarketTickStreamer._exchange_day_start_ns(d),
-            MarketTickStreamer._exchange_day_start_ns(d + Day(1)) - 1,
+            MarketTickStreamer.exchange_day_start_ns(alpaca, d),
+            MarketTickStreamer.exchange_day_start_ns(alpaca, d + Day(1)) - 1,
         )
         for d in (
             Date(2026, 7, 1),      # EDT, UTC-4
@@ -1156,6 +1158,215 @@ hostname = "$(gethostname())"
             finally
                 close(ws)
                 close(rest)
+            end
+        end
+    end
+
+
+    @testset "provider registry and the second provider" begin
+        # The config layer must not know one vendor's vocabulary. Before this
+        # was dispatched, `provider.feed` was validated against Alpaca's feed
+        # names for every provider, and a 24-hour venue's days were cut at
+        # midnight in New York.
+        @test_throws ArgumentError provider_spec("kraken")
+        @test provider_spec("alpaca").tz == tz"America/New_York"
+        @test provider_spec("binance").tz == tz"UTC"
+        @test provider_spec("alpaca").needs_credentials
+        @test !provider_spec("binance").needs_credentials
+
+        bp = BinanceProvider("aggTrade", "http://x", "ws://x")
+        ap = AlpacaProvider("k", "s", "sip", "", "", "")
+        @test always_open(bp) && !always_open(ap)
+        @test exchange_tz(bp) == tz"UTC"
+
+        # A 24-hour venue trades on weekends; an equity venue does not. The
+        # default is every day, so a provider that rests must opt out — the
+        # reverse default silently drops two days in seven.
+        @test length(session_days(bp, Date(2026, 1, 2), Date(2026, 1, 6))) == 5
+        @test session_days(ap, Date(2026, 1, 2), Date(2026, 1, 6)) ==
+              [Date(2026, 1, 2), Date(2026, 1, 5), Date(2026, 1, 6)]
+
+        # UTC has no DST, so every Binance day is exactly 24 h.
+        d0 = MarketTickStreamer.exchange_day_start_ns(bp, Date(2026, 1, 15))
+        d1 = MarketTickStreamer.exchange_day_start_ns(bp, Date(2026, 1, 16))
+        @test d1 - d0 == 86_400 * MarketTickStreamer.NS_PER_SEC
+        @test ns_to_rfc3339(d0) == "2026-01-15T00:00:00.000000000Z"
+        # The New York equivalents are not 24 h apart across a DST boundary.
+        n0 = MarketTickStreamer.exchange_day_start_ns(ap, Date(2025, 11, 2))
+        n1 = MarketTickStreamer.exchange_day_start_ns(ap, Date(2025, 11, 3))
+        @test n1 - n0 == 25 * 3600 * MarketTickStreamer.NS_PER_SEC
+
+        @test market_clock(bp) == (; is_open = true, next_open = "", next_close = "")
+
+        # An unknown provider must fail at construction with a message naming
+        # it, not with a MethodError deep in the session. The fallback throws
+        # rather than returning, so the provider type stays narrow: a fallback
+        # with a value widens every caller's inference and leaves each
+        # downstream provider call with a no-matching-method branch.
+        cfg_now = load_config()
+        @test_throws ArgumentError MarketTickStreamer.make_provider(
+            Val(:kraken),
+            cfg_now,
+            "",
+            "",
+        )
+        @test Base.infer_return_type(MarketTickStreamer._provider_from_config, (Config,)) ==
+              Union{AlpacaProvider,BinanceProvider}
+    end
+
+    @testset "binance: frame and REST parsing" begin
+        f = mock_binance_frame("BTCUSDT", 4)
+        t = MarketTickStreamer.parse_binance_trade(JSON3.read(JSON3.write(f)), 99)
+        @test t.symbol == "BTCUSDT"
+        @test t.recv_ns == 99
+        @test t.exchange == "BINANCE" && t.tape == "SPOT"
+        @test t.id == 4
+        # Prices and sizes arrive as strings and must survive as Float64.
+        @test t.price ≈ 64_004.0 && t.size ≈ 0.004
+        # Milliseconds on the wire, nanoseconds in the schema.
+        @test t.time_ns == Int64(f.T) * 1_000_000
+        @test t.time_ns % 1_000_000 == 0
+        # `m = true` means the buyer was the maker, so the seller crossed.
+        @test t.conditions == (f.m ? ["sell"] : ["buy"])
+        # k = 6 is even, so the mock sets m = false: the buyer crossed.
+        @test MarketTickStreamer.parse_binance_trade(
+            JSON3.read(JSON3.write(mock_binance_frame("BTCUSDT", 6))),
+            0,
+        ).conditions == ["buy"]
+        # No tape entry means nothing to exclude on: every crypto print is
+        # price-forming, there being no odd lots or late prints.
+        @test price_forming(t)
+        # A raw `trade` frame carries `t` for the id where aggTrade carries `a`.
+        raw = (;
+            e = "trade",
+            E = f.T,
+            s = "BTCUSDT",
+            t = 77,
+            p = "1.5",
+            q = "2.0",
+            T = f.T,
+            m = false,
+            M = true,
+        )
+        @test MarketTickStreamer.parse_binance_trade(JSON3.read(JSON3.write(raw)), 0).id ==
+              77
+    end
+
+    @testset "binance: id-seeded backfill pagination" begin
+        rest_port = freeport(9811)
+        per_day = 7
+        server = start_mock_binance_rest(rest_port; trades_per_day = per_day)
+        try
+            p = BinanceProvider("aggTrade", "http://127.0.0.1:$rest_port", "ws://unused")
+            # One UTC date, walked in pages of 3 — the seed request uses
+            # startTime, every later one uses fromId.
+            got = historical_trades(
+                p,
+                "BTCUSDT",
+                MOCK_BINANCE_EPOCH,
+                MOCK_BINANCE_EPOCH;
+                page_limit = 3,
+                rate_sleep_s = 0.0,
+            )
+            @test length(got) == per_day
+            @test all(t -> trading_date(t.time_ns; tz = tz"UTC") == MOCK_BINANCE_EPOCH, got)
+            @test issorted([t.time_ns for t in got])
+            @test [t.id for t in got] == collect(1:per_day)
+            @test all(t -> t.recv_ns == 0, got)        # never crossed the wire
+
+            # Two dates must give exactly two days of tape, weekend included.
+            two = historical_trades(
+                p,
+                "BTCUSDT",
+                MOCK_BINANCE_EPOCH,
+                MOCK_BINANCE_EPOCH + Day(1);
+                page_limit = 3,
+                rate_sleep_s = 0.0,
+            )
+            @test length(two) == 2 * per_day
+            @test length(unique(trading_date(t.time_ns; tz = tz"UTC") for t in two)) == 2
+
+            # Streaming mode returns the count and retains nothing.
+            pages = Vector{Int}()
+            n = historical_trades(
+                p,
+                "BTCUSDT",
+                MOCK_BINANCE_EPOCH,
+                MOCK_BINANCE_EPOCH;
+                page_limit = 3,
+                rate_sleep_s = 0.0,
+                each_page = pg -> push!(pages, length(pg)),
+            )
+            @test n == per_day && sum(pages) == per_day && length(pages) > 1
+
+            # Only aggTrade can seek by time; asking for the raw feed must say so.
+            @test_throws ArgumentError historical_trades(
+                p,
+                "BTCUSDT",
+                MOCK_BINANCE_EPOCH,
+                MOCK_BINANCE_EPOCH;
+                feed = "trade",
+            )
+        finally
+            close(server)
+        end
+    end
+
+    @testset "binance: end-to-end backfill on the UTC calendar" begin
+        mktempdir() do dir
+            rest_port = freeport(9831)
+            per_day = 7
+            server = start_mock_binance_rest(rest_port; trades_per_day = per_day)
+            try
+                cfg = load_config(
+                    mock_binance_config_toml(
+                        dir;
+                        ws_port = 9999,
+                        rest_port = rest_port,
+                        start_date = string(MOCK_BINANCE_EPOCH),
+                        end_date = string(MOCK_BINANCE_EPOCH + Day(2)),
+                    ),
+                )
+                @test cfg.provider == "binance"
+                @test cfg.exchange_tz == tz"UTC"
+                files = run_backfill(cfg)
+                # Three consecutive dates, one file each — including the
+                # weekend, which an equity day loop would have skipped.
+                @test length(files) == 3
+                days = sort([basename(f)[1:10] for f in files])
+                @test days == [string(MOCK_BINANCE_EPOCH + Day(i)) for i in 0:2]
+                rows = CSV.read(first(sort(files)), DataFrame)
+                @test nrow(rows) == per_day
+                @test all(rows.tape .== "SPOT") && all(rows.exchange .== "BINANCE")
+            finally
+                close(server)
+            end
+        end
+    end
+
+    @testset "binance: live stream needs no auth handshake" begin
+        mktempdir() do dir
+            ws_port = freeport(9851)
+            frames = [mock_binance_frame("BTCUSDT", k) for k in 1:5]
+            server = start_mock_binance_ws(ws_port; frames = frames)
+            try
+                cfg = load_config(
+                    mock_binance_config_toml(
+                        dir;
+                        ws_port = ws_port,
+                        rest_port = 9999,
+                        symbols = ["BTCUSDT"],
+                    ),
+                )
+                p = BinanceProvider(cfg)
+                s = live_source(p, cfg)
+                got = collect(s.channel)
+                @test length(got) == 5
+                @test all(t -> t.symbol == "BTCUSDT", got)
+                @test all(t -> t.recv_ns > 0, got)     # live prints are stamped
+                @test [t.id for t in got] == collect(1:5)
+            finally
+                close(server)
             end
         end
     end

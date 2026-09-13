@@ -100,6 +100,16 @@ session_id(
     feed::AbstractString = cfg.feed,
 ) = "$(cfg.provider)_$(feed)_$(Dates.format(Dates.now(UTC), dateformat"yyyymmdd-HHMMSS"))"
 
+# Construct the configured provider. Credentials are loaded only for providers
+# that declare they need them: public crypto market data needs none, and
+# demanding an Alpaca key before streaming Binance would be a coupling rather
+# than a safeguard.
+function _provider_from_config(cfg::Config)
+    spec = provider_spec(cfg.provider)
+    key, secret = spec.needs_credentials ? load_credentials!() : ("", "")
+    return make_provider(Val(Symbol(cfg.provider)), cfg, key, secret)
+end
+
 # Fail-fast free-space gate shared by stream and backfill startup.
 function _ensure_free_disk(cfg::Config)
     free = free_disk_gb(cfg.raw_dir)
@@ -171,6 +181,9 @@ _git_dirty() =
 
 _toml_value(v) = v
 _toml_value(v::Date) = string(v)
+# The sidecar snapshots the whole effective config, and TOML has no timezone
+# type; the IANA name is what identifies it anyway.
+_toml_value(v::TimeZone) = string(v)
 _toml_value(v::AbstractVector) = [_toml_value(x) for x in v]
 _toml_value(v::Dict) = Dict{String,Any}(string(k) => _toml_value(x) for (k, x) in v)
 
@@ -331,10 +344,7 @@ function run_stream(cfg::Config; provider::Union{AbstractProvider,Nothing} = not
     sid = session_id(cfg)
     started_utc = Dates.now(UTC)
     global_logger(setup_logging(cfg; session_id = sid))
-    if provider === nothing
-        key, secret = load_credentials!()
-        provider = AlpacaProvider(cfg, key, secret)
-    end
+    provider === nothing && (provider = _provider_from_config(cfg))
     delay = feed_delay_ns(provider)
     delay > 0 && @info "delayed feed — railings shifted" delay_s = delay ÷ NS_PER_SEC
 
@@ -347,7 +357,12 @@ function run_stream(cfg::Config; provider::Union{AbstractProvider,Nothing} = not
         _ensure_free_disk(cfg)
 
         clock = nothing
-        if cfg.require_market_open || cfg.stop_at_market_close
+        # A venue that never closes has no open to wait for and no close to
+        # stop at; the session deadline is the only bound that applies.
+        always_open(provider) &&
+            (cfg.require_market_open || cfg.stop_at_market_close) &&
+            @info "venue trades continuously — market-hours railings do not apply"
+        if !always_open(provider) && (cfg.require_market_open || cfg.stop_at_market_close)
             clock = market_clock(provider)
             if !clock.is_open && cfg.require_market_open
                 if cfg.wait_for_open
@@ -461,10 +476,7 @@ function run_backfill(cfg::Config; provider::Union{AbstractProvider,Nothing} = n
     sid = "backfill_" * session_id(cfg; feed = cfg.backfill_feed)
     started_utc = Dates.now(UTC)
     global_logger(setup_logging(cfg; session_id = sid))
-    if provider === nothing
-        key, secret = load_credentials!()
-        provider = AlpacaProvider(cfg, key, secret)
-    end
+    provider === nothing && (provider = _provider_from_config(cfg))
     mkpath(cfg.raw_dir)
     slock = acquire_session_lock(cfg.data_dir)
     status = "completed"
@@ -475,7 +487,7 @@ function run_backfill(cfg::Config; provider::Union{AbstractProvider,Nothing} = n
         reconcile_sessions!(cfg.raw_dir)
         _ensure_free_disk(cfg)
         meta_path = start_session_meta(cfg, sid; started_utc)
-        days = [d for d in cfg.backfill_start:Day(1):cfg.backfill_end if dayofweek(d) <= 5]
+        days = session_days(provider, cfg.backfill_start, cfg.backfill_end)
         prog = Progress(
             length(cfg.symbols) * length(days);
             desc = "Backfill: ",
@@ -534,6 +546,7 @@ function run_backfill(cfg::Config; provider::Union{AbstractProvider,Nothing} = n
                         cfg.processed_dir;
                         format = cfg.processed_format,
                         max_live_heap_mb = cfg.max_live_heap_mb,
+                        tz = cfg.exchange_tz,
                     ),
                 )
             end

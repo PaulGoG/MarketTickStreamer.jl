@@ -86,6 +86,40 @@ Notable changes to MarketTickStreamer. The format follows
   mass in the first millisecond, which is not the smooth unimodal density P²
   assumes. A histogram binned in log₁₀ holds every quantile to within a few
   percent for 100 kB of state, and that is what the example uses.
+- A second provider, `BinanceProvider`: crypto spot market data over the
+  public REST and WebSocket APIs, with no credentials. It exists as much to
+  test the provider abstraction as to supply data, and it disagrees with the
+  Alpaca adapter on every axis the abstraction covers — public rather than
+  credentialed, UTC rather than New York, never closed rather than closed
+  overnight and at weekends, milliseconds and string-typed numbers on the wire
+  rather than RFC 3339 and JSON numbers.
+
+  Backfill paginates by trade id, not by time window: Binance rejects a
+  `startTime`/`endTime` pair spanning an hour or more, so the range is seeded
+  with one timed request and walked forward on `fromId`. Hour-wide windows
+  would issue 24 requests a day and still truncate, silently, any hour holding
+  more than a page of trades. Only `aggTrade` has a time-seekable public
+  endpoint, and an aggregate trade is one taker order's fill rather than an
+  execution — a population choice like odd lots on an equity tape, and left to
+  the analysis.
+
+  The aggressor side is carried in `conditions` as `"buy"` or `"sell"`,
+  spelled out so it cannot be mistaken for a CTA/UTP condition code. It is the
+  one per-print classification a crypto venue reports, and the trade sign that
+  order-flow work is built on. The tape is `"SPOT"`, which has no entry in
+  `NON_PRICE_CONDITIONS`, so every crypto print is price-forming — correctly,
+  there being no odd lots or late prints.
+- Provider selection, feed vocabulary, exchange calendar and trading days are
+  dispatched on the configured provider rather than assumed. `cfg.provider`
+  existed but the pipeline always constructed `AlpacaProvider`; `provider.feed`
+  and `backfill.feed` were validated against Alpaca's feed names whichever
+  provider was selected; the backfill day loop skipped weekends
+  unconditionally; and compaction filed rows under New York regardless. Each
+  is now a method on the provider — `provider_spec`, `make_provider`,
+  `exchange_tz`, `always_open`, `session_days` — with `Config` carrying the
+  resolved `exchange_tz`. A venue that rests must now opt out of trading every
+  day, never the reverse: an unnecessary request costs one empty response,
+  whereas a skipped day loses that day's tape in silence.
 - `run_entrypoint` is exported from the package. It was defined in
   `scripts/startup.jl`, which put it out of reach of anything that does not
   activate the package environment — the examples, now that they have their

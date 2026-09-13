@@ -45,7 +45,8 @@ real-time analysis methods.
 │   ├── pipeline.jl         # session orchestration: run_stream / run_backfill; tee
 │   ├── visualization.jl    # CairoMakie session diagnostics (price, activity, CCDFs)
 │   └── providers/
-│       └── alpaca.jl       # Alpaca adapter: REST clock/trades + v2 WS protocol
+│       ├── alpaca.jl       # Alpaca adapter: US equities, NY calendar, credentialed
+│       └── binance.jl      # Binance adapter: crypto spot, UTC calendar, public
 ├── scripts/
 │   ├── startup.jl          # silent environment activation (included by all scripts)
 │   ├── stream.jl           # live capture session
@@ -56,7 +57,8 @@ real-time analysis methods.
 │   └── visualize.jl        # QA report + per-symbol per-day diagnostic figures
 ├── test/
 │   ├── runtests.jl         # unit + end-to-end tests
-│   └── mock_alpaca.jl      # in-process mock of Alpaca REST + WebSocket APIs
+│   ├── mock_alpaca.jl      # in-process mock of Alpaca REST + WebSocket APIs
+│   └── mock_binance.jl     # in-process mock of Binance REST + WebSocket APIs
 ├── examples/
 │   ├── Project.toml        # examples environment (package consumed by path)
 │   ├── activate.jl         # silent environment activation
@@ -179,6 +181,8 @@ network needed — plus static package QA via Aqua.jl.
 | Component | State |
 |---|---|
 | Live trade streaming (Alpaca IEX/SIP) | working, tested against mock |
+| Binance spot adapter (public, 24/7, UTC calendar, `trade` + `aggTrade`) | working, tested against mock and validated against the live API |
+| Provider-agnostic config, calendar and trading-day dispatch | working, tested |
 | Reconnection, stale-connection watchdog, graceful shutdown | working, tested |
 | Market-hours railings (wait-for-open, auto-stop at close, incl. half-day early close) | working, tested |
 | Delayed-feed handling (railings shifted by feed delay; tape tail captured) | working, tested |

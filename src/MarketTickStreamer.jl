@@ -82,8 +82,9 @@ export monitor_raw
 export replay_source
 export AbstractProvider,
     LiveSession, FatalStreamError, live_source, stop!, schedule_close_stop!, tee
-export AlpacaProvider,
-    market_clock, historical_trades, historical_trade_count, condition_map
+export AlpacaProvider, BinanceProvider
+export market_clock, historical_trades, historical_trade_count, condition_map
+export ProviderSpec, provider_spec, make_provider, exchange_tz, always_open, session_days
 export run_stream,
     run_backfill,
     session_id,
@@ -106,6 +107,7 @@ include("monitor.jl")
 include("replay.jl")
 include("live.jl")
 include("providers/alpaca.jl")
+include("providers/binance.jl")
 include("pipeline.jl")
 include("visualization.jl")
 

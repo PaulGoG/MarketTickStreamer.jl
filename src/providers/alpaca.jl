@@ -37,6 +37,22 @@ end
 
 ws_url(p::AlpacaProvider) = "$(p.ws_base)/$(p.feed)"
 
+# US equities: the consolidated tape files a print under the New York calendar
+# date, and `sip` is the only backfill feed with the full tape.
+provider_spec(::Val{:alpaca}) =
+    ProviderSpec(["iex", "sip", "delayed_sip"], ["iex", "sip"], tz"America/New_York", true)
+
+make_provider(::Val{:alpaca}, cfg::Config, key::AbstractString, secret::AbstractString) =
+    AlpacaProvider(cfg, key, secret)
+
+exchange_tz(::AlpacaProvider) = provider_spec(Val(:alpaca)).tz
+
+# US equities trade Monday to Friday. Market holidays are not filtered here:
+# a holiday returns an empty day, which costs one request and is visible in
+# the log, whereas a wrong holiday calendar would skip a day that did trade.
+session_days(::AlpacaProvider, start_date::Date, end_date::Date) =
+    [d for d in start_date:Day(1):end_date if dayofweek(d) <= 5]
+
 # The delayed_sip feed replays the consolidated tape 15 minutes behind.
 feed_delay_ns(p::AlpacaProvider) = p.feed == "delayed_sip" ? 900 * NS_PER_SEC : Int64(0)
 
@@ -63,28 +79,6 @@ function subscribe_payload(
         d[c] = symbols
     end
     return JSON3.write(d)
-end
-
-# GET with exponential-backoff retry on transient statuses (rate limiting,
-# server hiccups). Client errors other than 429 fail immediately.
-const RETRYABLE_STATUS = (429, 500, 502, 503, 504)
-
-function _get_with_retry(url, headers; query = nothing, max_retries::Integer = 5)
-    for attempt in 0:max_retries
-        try
-            return HTTP.get(url, headers; query, retry = false)
-        catch e
-            (
-                e isa HTTP.StatusError &&
-                e.status in RETRYABLE_STATUS &&
-                attempt < max_retries
-            ) || rethrow()
-            ra = tryparse(Float64, HTTP.header(e.response, "Retry-After", ""))
-            delay = ra !== nothing ? ra : 2.0^attempt * (0.5 + rand())
-            @warn "REST $(e.status) — backing off" attempt delay = round(delay; digits = 1)
-            sleep(min(delay, 60.0))
-        end
-    end
 end
 
 """
@@ -234,21 +228,6 @@ function _each_trades_page(
     return total
 end
 
-# Midnight of an exchange date, as ns since the epoch. The request window has
-# to be built from the same convention `trading_date` files rows under, or a
-# "day" means one thing on the way in and another on the way out: a UTC
-# calendar day equals an exchange date only while New York is UTC-4, so from
-# November to March a UTC-day request returns the previous date's last
-# post-market hour and stops an hour short of its own. `ZonedDateTime` resolves
-# the offset per date, including across the transitions.
-_exchange_day_start_ns(d::Date) =
-    round(
-        Int64,
-        datetime2unix(
-            DateTime(astimezone(ZonedDateTime(DateTime(d), tz"America/New_York"), tz"UTC")),
-        ),
-    ) * NS_PER_SEC
-
 """
     historical_trades(p, symbol, start_date, end_date;
                       feed = "sip", page_limit = 10_000, rate_sleep_s = 0.35,
@@ -281,8 +260,8 @@ function historical_trades(
     total = _each_trades_page(
         p,
         symbol;
-        start_str = ns_to_rfc3339(_exchange_day_start_ns(start_date)),
-        end_str = ns_to_rfc3339(_exchange_day_start_ns(end_date + Day(1)) - 1),
+        start_str = ns_to_rfc3339(exchange_day_start_ns(p, start_date)),
+        end_str = ns_to_rfc3339(exchange_day_start_ns(p, end_date + Day(1)) - 1),
         feed,
         page_limit,
         rate_sleep_s,

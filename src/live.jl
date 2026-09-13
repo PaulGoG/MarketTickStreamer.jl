@@ -7,11 +7,147 @@
 """
     AbstractProvider
 
-Supertype for market-data provider adapters. A concrete provider implements
-`ws_url`, `auth_payload`, `subscribe_payload`, `market_clock`,
-`historical_trades` and message parsing (see `providers/alpaca.jl`).
+Supertype for market-data provider adapters.
+
+A concrete adapter supplies [`provider_spec`](@ref) and [`make_provider`](@ref)
+for the name it answers to, [`exchange_tz`](@ref), [`stream_protocol!`](@ref),
+[`market_clock`](@ref), [`historical_trades`](@ref) and its own message
+parsing. It overrides [`always_open`](@ref), [`session_days`](@ref) and
+[`feed_delay_ns`](@ref) where the venue departs from the defaults.
+
+Two adapters ship: `providers/alpaca.jl` (US equities, New York calendar,
+credentialed, closes overnight and at weekends) and `providers/binance.jl`
+(crypto spot, UTC calendar, public, never closes). They differ on every one of
+those axes, which is what keeps the interface honest.
 """
 abstract type AbstractProvider end
+
+"""
+    ProviderSpec(; feeds, backfill_feeds, tz, needs_credentials)
+
+What the configuration layer must know about a provider *before* any provider
+object exists: which feed names it accepts, the calendar its tape is filed
+under, and whether it needs credentials at all.
+
+Without this the config layer has to hard-code one vendor's vocabulary, which
+is how `provider.feed` came to be validated against Alpaca's feed names for
+every provider, and how a 24-hour venue would have had its days cut at
+midnight in New York.
+"""
+struct ProviderSpec
+    feeds::Vector{String}
+    backfill_feeds::Vector{String}
+    tz::TimeZone
+    needs_credentials::Bool
+end
+
+"""Provider names this build knows how to construct."""
+const KNOWN_PROVIDERS = ("alpaca", "binance")
+
+"""
+    provider_spec(::Val{name}) -> ProviderSpec
+
+Static description of the provider called `name`. Implemented per adapter.
+"""
+provider_spec(::Val{P}) where {P} = throw(
+    ArgumentError(
+        "unknown provider \"$(P)\"; known providers: $(join(KNOWN_PROVIDERS, ", "))",
+    ),
+)
+
+provider_spec(name::AbstractString) = provider_spec(Val(Symbol(name)))
+
+"""
+    make_provider(::Val{name}, cfg, key, secret) -> AbstractProvider
+
+Construct the provider called `name` from configuration and credentials.
+`key`/`secret` are empty strings when the spec says none are needed.
+Implemented per adapter.
+
+The fallback throws rather than returning anything: a fallback with a value
+would widen every caller's inferred provider type to include it, and then
+each provider method downstream would carry a branch with no matching method
+— which is how JET found this the first time it was written otherwise.
+"""
+make_provider(::Val{P}, ::Config, ::AbstractString, ::AbstractString) where {P} = throw(
+    ArgumentError(
+        "unknown provider \"$(P)\"; known providers: $(join(KNOWN_PROVIDERS, ", "))",
+    ),
+)
+
+"""
+    exchange_tz(p::AbstractProvider) -> TimeZone
+
+The calendar the provider's tape is filed under — the clock that decides which
+date a print belongs to. Defaults to the provider's [`ProviderSpec`](@ref).
+"""
+function exchange_tz end
+
+"""
+    exchange_day_start_ns(p::AbstractProvider, d::Date) -> Int64
+
+First instant of exchange date `d` on this provider's calendar, in ns since
+the epoch.
+
+A request window and the key its rows are bucketed by must come from the same
+clock. Building the window on UTC days while filing rows on exchange dates
+agrees only while the exchange sits at UTC-4, and silently loses an hour a day
+otherwise — the defect fixed in 0.2.0. `ZonedDateTime` resolves the offset per
+date, including across the 23- and 25-hour transition days.
+"""
+function exchange_day_start_ns(p::AbstractProvider, d::Date)
+    tz = exchange_tz(p)
+    return round(
+        Int64,
+        datetime2unix(DateTime(astimezone(ZonedDateTime(DateTime(d), tz), tz"UTC"))),
+    ) * NS_PER_SEC
+end
+
+# GET with exponential-backoff retry on transient statuses (rate limiting,
+# server hiccups). Client errors other than 429 fail immediately. Shared by
+# every REST adapter; `Retry-After` is honored when the server sends it.
+const RETRYABLE_STATUS = (429, 500, 502, 503, 504)
+
+function _get_with_retry(url, headers; query = nothing, max_retries::Integer = 5)
+    for attempt in 0:max_retries
+        try
+            return HTTP.get(url, headers; query, retry = false)
+        catch e
+            (
+                e isa HTTP.StatusError &&
+                e.status in RETRYABLE_STATUS &&
+                attempt < max_retries
+            ) || rethrow()
+            ra = tryparse(Float64, HTTP.header(e.response, "Retry-After", ""))
+            delay = ra !== nothing ? ra : 2.0^attempt * (0.5 + rand())
+            @warn "REST $(e.status) — backing off" attempt delay = round(delay; digits = 1)
+            sleep(min(delay, 60.0))
+        end
+    end
+end
+
+"""
+    always_open(p::AbstractProvider) -> Bool
+
+Whether the venue never closes. `true` suppresses the market-hours railings:
+there is no open to wait for and no close to stop at, and a 24-hour venue
+asked for its `next_close` can only answer with a fiction. The session is then
+bounded by `limits.max_session_hours` alone.
+"""
+always_open(::AbstractProvider) = false
+
+"""
+    session_days(p::AbstractProvider, start_date, end_date) -> Vector{Date}
+
+The dates in `[start_date, end_date]` on which the venue trades, in order.
+
+Defaults to every calendar date. A venue that rests must opt out, never the
+reverse: requesting a day the venue was shut costs one empty response, while
+skipping a day it traded loses that day's tape silently — which is what a
+hard-coded weekday filter did to a 24-hour venue before this was dispatched.
+"""
+session_days(::AbstractProvider, start_date::Date, end_date::Date) =
+    collect(start_date:Day(1):end_date)
 
 """
     feed_delay_ns(p::AbstractProvider) -> Int64

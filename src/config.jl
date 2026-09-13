@@ -59,6 +59,10 @@ struct Config
     non_price_conditions::Dict{String,Vector{String}}
     # [<provider>] endpoint roots
     endpoints::Dict{String,String}
+    # The provider's calendar — the clock that decides which date a print
+    # belongs to. Derived from the provider, not configurable: it is a
+    # property of the venue, not a preference.
+    exchange_tz::TimeZone
 end
 
 const PROJECT_ROOT = normpath(joinpath(@__DIR__, ".."))
@@ -76,10 +80,14 @@ function load_config(path::AbstractString = joinpath(PROJECT_ROOT, "config", "co
 
     tbl(name) = get(() -> Dict{String,Any}(), raw, name)
     provider = get(tbl("provider"), "name", "alpaca")
-    feed = get(tbl("provider"), "feed", "iex")
-    feed in ("iex", "sip", "delayed_sip") || throw(
+    # The provider decides its own vocabulary and calendar; validating either
+    # here would bake one vendor into every other.
+    spec = provider_spec(provider)
+    feed = get(tbl("provider"), "feed", first(spec.feeds))
+    feed in spec.feeds || throw(
         ArgumentError(
-            "provider.feed must be \"iex\", \"sip\" or \"delayed_sip\", got \"$feed\"",
+            "provider.feed must be one of $(join(map(repr, spec.feeds), ", ")) " *
+            "for provider \"$provider\", got \"$feed\"",
         ),
     )
 
@@ -112,7 +120,7 @@ function load_config(path::AbstractString = joinpath(PROJECT_ROOT, "config", "co
     replay_speed > 0 || throw(ArgumentError("replay.speed must be positive"))
 
     bf = tbl("backfill")
-    exchange_today = Date(now(tz"America/New_York"))
+    exchange_today = Date(now(spec.tz))
     bf_start = _resolve_config_date(
         String(get(bf, "start_date", "today-1d")),
         "backfill.start_date",
@@ -124,9 +132,13 @@ function load_config(path::AbstractString = joinpath(PROJECT_ROOT, "config", "co
         exchange_today,
     )
     bf_start <= bf_end || throw(ArgumentError("backfill.start_date is after end_date"))
-    bf_feed = get(bf, "feed", "sip")
-    bf_feed in ("iex", "sip") ||
-        throw(ArgumentError("backfill.feed must be \"iex\" or \"sip\""))
+    bf_feed = get(bf, "feed", last(spec.backfill_feeds))
+    bf_feed in spec.backfill_feeds || throw(
+        ArgumentError(
+            "backfill.feed must be one of $(join(map(repr, spec.backfill_feeds), ", ")) " *
+            "for provider \"$provider\", got \"$bf_feed\"",
+        ),
+    )
 
     mon = tbl("monitor")
     mon_refresh = Float64(get(mon, "refresh_s", 2.0))
@@ -213,6 +225,7 @@ function load_config(path::AbstractString = joinpath(PROJECT_ROOT, "config", "co
         _resolve(get(lg, "log_dir", "logs")),
         non_price,
         endpoints,
+        spec.tz,
     )
 end
 
