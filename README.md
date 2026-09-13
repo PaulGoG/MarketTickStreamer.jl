@@ -25,7 +25,9 @@ real-time analysis methods.
 │   ├── schema.jl           # Trade struct; Int64-ns timestamps; RFC 3339 parsing
 │   ├── config.jl           # TOML loading/validation; .env credential loading
 │   ├── sinks.jl            # raw NDJSON sink (append-only, rolling); compaction
-│   ├── quality.jl          # dedup, session QA report, disk-space probe
+│   ├── quality.jl          # dedup, session QA report, disk-space probe,
+│   │                       #   sale-condition (price-forming) predicates
+│   ├── resample.jl         # tick / volume / dollar bars — activity clocks
 │   ├── monitor.jl          # attach-mode terminal dashboard (tails raw files)
 │   ├── replay.jl           # recorded-session replay source (paced or max-rate)
 │   ├── live.jl             # provider-agnostic live source: reconnect, watchdog,
@@ -46,7 +48,7 @@ real-time analysis methods.
 │   ├── runtests.jl         # unit + end-to-end tests
 │   └── mock_alpaca.jl      # in-process mock of Alpaca REST + WebSocket APIs
 ├── examples/
-│   └── waiting_times.jl    # worked consumer: tee → lossy tap → waiting times
+│   └── waiting_times.jl    # worked consumer: replay → tee → waiting times
 ├── bench/
 │   ├── Project.toml        # benchmark environment (package consumed by path)
 │   ├── activate.jl         # silent environment activation
@@ -179,8 +181,10 @@ network needed — plus static package QA via Aqua.jl.
 | Multi-day overview figures (trading-time price, activity heatmap, intra-session waiting-time CCDF) | working, inspected |
 | Live monitoring dashboard (attach-mode, UnicodePlots) | working, tested |
 | Paced replay | working, tested |
-| Quotes (`q`) / bars (`b`) normalization | accepted on the wire, not yet normalized |
-| Real-time analysis consumers | not started — attach via `tee`/`replay_source` |
+| Quotes (`q`) / bars (`b`) normalization | working, tested — parsed to `Quote`/`Bar` with `on_quote`/`on_bar`; not subscribed or persisted by default |
+| Sale-condition eligibility (`price_forming`, per-tape lists, `n_price_forming`) | working, tested — capture is never filtered; the choice is made at analysis time |
+| Resampling onto activity clocks (`tick_bars`, `volume_bars`, `dollar_bars`) | working, tested |
+| Real-time analysis consumers | interface contract documented; worked example in `examples/waiting_times.jl`, executed by the suite |
 | Credential validation (paper account): clock REST, historical SIP REST, WS auth on `iex` and `delayed_sip` | verified 2026-08-01 |
 | Live capture validation against real Alpaca feed | verified 2026-08-06: 3 h `delayed_sip` session, 24 symbols, 3.17 M ticks; QA clean (0 duplicates/out-of-order/gaps), print-complete against the historical tape |
 
