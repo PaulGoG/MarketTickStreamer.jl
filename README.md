@@ -1,6 +1,6 @@
 # MarketTickStreamer.jl
 
-[![Documentation](https://img.shields.io/badge/docs-dev-blue.svg)](https://PaulGoG.github.io/MarketTickStreamer.jl/dev/)
+[![Documentation](https://img.shields.io/badge/docs-stable-blue.svg)](https://PaulGoG.github.io/MarketTickStreamer.jl/stable/)
 [![CI](https://github.com/PaulGoG/MarketTickStreamer.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/PaulGoG/MarketTickStreamer.jl/actions/workflows/CI.yml)
 [![Coverage](https://codecov.io/gh/PaulGoG/MarketTickStreamer.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/PaulGoG/MarketTickStreamer.jl)
 [![Aqua QA](https://raw.githubusercontent.com/JuliaTesting/Aqua.jl/master/badge.svg)](https://github.com/JuliaTesting/Aqua.jl)
@@ -12,11 +12,11 @@ REST backfill, append-only raw persistence, compaction to analysis-ready
 files, and paced replay of recorded sessions for reproducible development of
 real-time analysis methods.
 
-**[Manual](https://PaulGoG.github.io/MarketTickStreamer.jl/dev/)** ·
-[Architecture](https://PaulGoG.github.io/MarketTickStreamer.jl/dev/architecture/) ·
-[Configuration](https://PaulGoG.github.io/MarketTickStreamer.jl/dev/usage/) ·
-[Analysis interfaces](https://PaulGoG.github.io/MarketTickStreamer.jl/dev/replay/) ·
-[API](https://PaulGoG.github.io/MarketTickStreamer.jl/dev/api/) ·
+**[Manual](https://PaulGoG.github.io/MarketTickStreamer.jl/stable/)** ·
+[Architecture](https://PaulGoG.github.io/MarketTickStreamer.jl/stable/architecture/) ·
+[Configuration](https://PaulGoG.github.io/MarketTickStreamer.jl/stable/usage/) ·
+[Analysis interfaces](https://PaulGoG.github.io/MarketTickStreamer.jl/stable/replay/) ·
+[API](https://PaulGoG.github.io/MarketTickStreamer.jl/stable/api/) ·
 [Changelog](CHANGELOG.md)
 
 ## File structure
