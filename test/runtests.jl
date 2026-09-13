@@ -558,6 +558,47 @@ hostname = "$(gethostname())"
                 @test CSV.read(m, DataFrame) == CSV.read(s, DataFrame)
             end
         end
+        # The spill copy is the size of the input, so it must never default to
+        # tempdir(): /tmp is a tmpfs sized at half of RAM on systemd
+        # distributions, and spilling a 26 GB corpus there took the machine
+        # down. It goes beside out_dir instead, and is refused without room.
+        @test MarketTickStreamer._spill_parent("/data/processed", nothing) == "/data/"
+        @test MarketTickStreamer._spill_parent("/data/processed/", nothing) == "/data/"
+        @test MarketTickStreamer._spill_parent("/data/processed", "/mnt/scratch") ==
+              "/mnt/scratch"
+        @test_throws ErrorException MarketTickStreamer._ensure_spill_space(
+            "/mnt/small",
+            10 * 2^30,
+            2 * 2^30,
+        )
+        @test MarketTickStreamer._ensure_spill_space("/mnt/big", 10 * 2^30, 40 * 2^30) ===
+              nothing
+        # the message names the offending filesystem and the shortfall
+        let e = try
+                MarketTickStreamer._ensure_spill_space("/mnt/small", 10 * 2^30, 2 * 2^30)
+            catch err
+                sprint(showerror, err)
+            end
+            @test contains(e, "/mnt/small") && contains(e, "scratch_dir")
+        end
+        # scratch_dir is honored end to end: the directory is created where
+        # asked, and only the temporary subdirectory inside it is removed.
+        mktempdir() do dir
+            sink = open_raw_sink(dir, "sc")
+            write_batch!(sink, [sample_trade(i) for i in 1:20])
+            close_sink!(sink)
+            scratch = joinpath(dir, "nested", "scratch")
+            files = compact_raw(
+                [sink.path],
+                joinpath(dir, "out");
+                format = "csv",
+                mem_fraction = 1e-12,
+                scratch_dir = scratch,
+            )
+            @test length(files) == 1
+            @test isdir(scratch)
+            @test isempty(filter(startswith("compact_spill_"), readdir(scratch)))
+        end
         # lossy tee: persistence output receives everything, saturated lossy
         # output drops instead of stalling the fan-out
         src = Channel{Trade}(100)

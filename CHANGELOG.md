@@ -66,6 +66,13 @@ Notable changes to MarketTickStreamer. The format follows
 - `condition_map` fetches the provider's own code-to-description glossary
   from `/v2/stocks/meta/conditions`, per tape and tick type, rather than
   transcribing plan tables that describe a feed this package does not consume.
+- A worked consumer example, `examples/waiting_times.jl`: replay a capture,
+  fan out to two consumers, and estimate the inter-arrival distribution on
+  each. The test suite executes it, so it cannot drift from the interfaces it
+  documents. Both `tee` outputs are lossless — reading an arrival process off
+  a lossy output does not thin the sample evenly, it discards precisely the
+  bursts the distribution is about.
+- `compact_raw` accepts `scratch_dir`, placing the spill copy explicitly.
 
 ### Changed
 - The Julia floor rises to 1.12: `[sources]` in the auxiliary environments
@@ -76,6 +83,30 @@ Notable changes to MarketTickStreamer. The format follows
   `end_date = "today-1d"` in place of the fixed August 2026 window.
 
 ### Fixed
+- Backfill request windows are built from local midnight in the exchange's
+  time zone rather than from UTC midnight. The two agree only while New York
+  is at UTC-4, so between the November and March transitions every request
+  returned the previous date's last post-market hour and stopped an hour short
+  of its own. Because the day loop skips weekends, a winter Friday's closing
+  hour fell in the unrequested UTC Saturday window and was lost outright, not
+  merely misfiled. `trading_date` now floors in integer arithmetic as well: it
+  routed through `ns_to_datetime`, which divides by 1e9 in floating point and
+  rounds to the millisecond, filing the last half-millisecond of a date under
+  the next one. A query window and the key it is bucketed by must come from
+  the same clock.
+- Backfill resume granularity: each symbol-day is compacted as its download
+  finishes rather than after the whole run, so the presence of a processed
+  file is an accurate resume marker. Previously a multi-hour download killed
+  midway left raw NDJSON that resume could not use, and the rerun started
+  over.
+- Spill compaction places its scratch copy beside `out_dir` instead of in
+  `tempdir()`, and verifies the free space before reading a line. The spill
+  pass writes every input line back out once, and on systemd distributions
+  `/tmp` is a tmpfs sized at half of RAM — so the path that exists to bound
+  memory was in fact writing the copy into memory. Recompacting a 26 GB corpus
+  exhausted 30 GiB of RAM and took the machine's shell down with it; measured
+  on the same input, scratch use of tmpfs falls from the full input size to
+  zero.
 - Inference on three paths that JET flagged: the session lock was typed
   `Union{LockMonitor,Bool}`, so releasing it dispatched dynamically over a
   type with no `close` method; the backfill per-page closure captured a sink

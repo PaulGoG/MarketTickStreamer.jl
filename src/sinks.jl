@@ -239,7 +239,7 @@ end
 """
     compact_raw(raw_paths, out_dir; format = "csv", dedup = true,
                 mem_fraction = 0.5, tz = tz"America/New_York",
-                max_live_heap_mb = nothing) -> Vector{String}
+                max_live_heap_mb = nothing, scratch_dir = nothing) -> Vector{String}
 
 Compact raw NDJSON files into per-symbol, per-trading-day analysis files
 (`out_dir/SYMBOL/YYYY-MM-DD.csv|.arrow`), sorted by `time_ns`. Existing
@@ -254,6 +254,11 @@ line-by-line into per-(symbol, day) spill files and each group is compacted
 independently — memory stays bounded by the largest single group.
 `max_live_heap_mb` additionally enforces the configured heap ceiling per
 group ([`check_live_heap`](@ref)).
+
+The spill pass writes a verbatim copy of the input, so it needs scratch space
+of the input's own size. `scratch_dir` places it; the default is the directory
+containing `out_dir`, **not** `tempdir()` — see [`SPILL_HEADROOM`](@ref). The
+free space is checked up front and compaction refuses to start without it.
 """
 function compact_raw(
     raw_paths::AbstractVector{<:AbstractString},
@@ -263,13 +268,21 @@ function compact_raw(
     mem_fraction::Real = 0.5,
     tz::TimeZone = tz"America/New_York",
     max_live_heap_mb::Union{Nothing,Real} = nothing,
+    scratch_dir::Union{Nothing,AbstractString} = nothing,
 )
     format in ("csv", "arrow") ||
         throw(ArgumentError("format must be \"csv\" or \"arrow\""))
     bytes = sum(filesize, raw_paths; init = 0)
     est = 4 * bytes          # parsed structs + DataFrame + sort scratch
-    est > mem_fraction * Sys.free_memory() &&
-        return _compact_spill(raw_paths, out_dir; format, dedup, tz, max_live_heap_mb)
+    est > mem_fraction * Sys.free_memory() && return _compact_spill(
+        raw_paths,
+        out_dir;
+        format,
+        dedup,
+        tz,
+        max_live_heap_mb,
+        scratch_dir,
+    )
     trades = read_raw(raw_paths)
     if dedup
         n0 = length(trades)
@@ -287,6 +300,40 @@ function compact_raw(
     ]
 end
 
+"""
+    SPILL_HEADROOM
+
+Multiple of the input size that the spill filesystem must have free before
+[`compact_raw`](@ref) will stream to it.
+
+The spill pass trades memory for scratch space, writing every input line back
+out once. `tempdir()` is the wrong home for that: on systemd distributions
+`/tmp` is a tmpfs sized at half of RAM, so spilling there writes the copy into
+RAM and, on an input larger than that, takes the machine down — the failure
+this guard exists to prevent. The default scratch location is therefore the
+directory holding `out_dir`, and the space is verified before the first line
+is read.
+"""
+const SPILL_HEADROOM = 1.1
+
+# Where the spill copy goes. abspath(_, "..") rather than dirname: it
+# normalizes a trailing separator, which dirname would otherwise read as
+# "spill inside out_dir".
+_spill_parent(out_dir::AbstractString, scratch_dir::Nothing) = abspath(out_dir, "..")
+_spill_parent(::AbstractString, scratch_dir::AbstractString) = abspath(scratch_dir)
+
+# Refuse to start a spill the scratch filesystem cannot hold. `free` is passed
+# in rather than queried here so the refusal is testable without a full disk.
+function _ensure_spill_space(parent::AbstractString, bytes::Real, free::Real)
+    gib(x) = round(x / 2^30; digits = 2)
+    free < SPILL_HEADROOM * bytes && error(
+        "spill compaction of $(gib(bytes)) GiB needs $(gib(SPILL_HEADROOM * bytes)) " *
+        "GiB of scratch space, but $(parent) has only $(gib(free)) GiB free — " *
+        "pass scratch_dir to place it on another filesystem",
+    )
+    return nothing
+end
+
 # Bounded-memory compaction: route each raw line to a per-(symbol, day)
 # spill file in one streaming pass, then compact every group independently.
 function _compact_spill(
@@ -296,11 +343,17 @@ function _compact_spill(
     dedup::Bool,
     tz::TimeZone,
     max_live_heap_mb::Union{Nothing,Real},
+    scratch_dir::Union{Nothing,AbstractString} = nothing,
 )
-    @info "large input — using spill compaction" mib =
-        round(sum(filesize, raw_paths; init = 0) / 2^20; digits = 1)
+    bytes = sum(filesize, raw_paths; init = 0)
+    mkpath(out_dir)
+    parent = _spill_parent(out_dir, scratch_dir)
+    mkpath(parent)
+    _ensure_spill_space(parent, bytes, Base.diskstat(parent).available)
+    @info "large input — using spill compaction" mib = round(bytes / 2^20; digits = 1) scratch =
+        parent
     written = String[]
-    mktempdir() do spill
+    mktempdir(parent; prefix = "compact_spill_") do spill
         handles = Dict{Tuple{String,Date},IOStream}()
         nbad = 0
         for p in raw_paths, line in eachline(p)

@@ -135,7 +135,10 @@ path — no data is lost on interrupt (tested).
   stop); `backfill.resume` skips pairs already processed, so a rerun after
   any abort resumes. Compaction spills to per-group files when the input
   exceeds the in-memory budget, bounding memory by the largest single
-  (symbol, day) group.
+  (symbol, day) group. Those files go beside `out_dir`, never to `tempdir()`:
+  the spill copies the whole input once, and `/tmp` is RAM on a systemd
+  distribution, so the bounded-memory path would otherwise be the one that
+  exhausts memory. The free space is checked before the first line is read.
 - **Single-instance lock**: a PID-file lock per data tree prevents two
   sessions from interleaving on one raw directory; stale locks from dead
   processes break automatically.
