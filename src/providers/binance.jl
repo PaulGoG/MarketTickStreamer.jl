@@ -27,12 +27,17 @@ points the client at a local mock server.
 `feed` selects the trade granularity: `"trade"` is every execution,
 `"aggTrade"` aggregates executions that filled at one price from a single
 taker order. They are different populations — see [`historical_trades`](@ref).
+`rest` bounds its REST requests ([`RestPolicy`](@ref)).
 """
 struct BinanceProvider <: AbstractProvider
     feed::String
     rest_base::String
     ws_base::String
+    rest::RestPolicy
 end
+
+BinanceProvider(feed::AbstractString, rest_base::AbstractString, ws_base::AbstractString) =
+    BinanceProvider(feed, rest_base, ws_base, RestPolicy())
 
 function BinanceProvider(cfg::Config)
     ep = cfg.endpoints
@@ -40,6 +45,7 @@ function BinanceProvider(cfg::Config)
         cfg.feed,
         get(ep, "rest_base", "https://api.binance.com"),
         get(ep, "ws_base", "wss://stream.binance.com:9443"),
+        RestPolicy(cfg),
     )
 end
 
@@ -200,7 +206,7 @@ function historical_trades(
         "limit" => string(page_limit),
     )
     while true
-        resp = _get_with_retry(url, Pair{String,String}[]; query)
+        resp = _get_with_retry(url, Pair{String,String}[]; query, policy = p.rest)
         rows = JSON3.read(resp.body)::JSON3.Array
         isempty(rows) && break
         page = Trade[]
@@ -245,8 +251,8 @@ function stream_protocol!(
         @debug "Binance adapter streams trades only; quote and bar callbacks are idle"
     HTTP.WebSockets.open(ws_url(p, cfg.symbols)) do ws
         s.ws[] = ws
-        last_frame = Ref(time())
-        alive = Ref(true)
+        last_frame = Threads.Atomic{Float64}(time())
+        alive = Threads.Atomic{Bool}(true)
         watchdog = spawn_watchdog(ws, s, last_frame, alive, cfg.stale_timeout_s)
         try
             for raw in ws

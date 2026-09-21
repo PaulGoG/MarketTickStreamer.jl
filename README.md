@@ -62,6 +62,13 @@ Without them everything else works, `monitor_raw` prints a text dashboard, and
 a call to a figure function says which package to load. The scripts have their
 own environment with both installed.
 
+Relative paths in a configuration (`storage.data_dir`, `logging.log_dir`,
+`credentials.env_file`) are relative to the configuration file, so the shipped
+`config/config.toml` writes to `data/` and `logs/` of the clone. A project that
+installs the package (`Pkg.add(url = ...)`) copies that file — the installed
+one is a read-only template, `MarketTickStreamer.DEFAULT_CONFIG` — and passes
+its own path to `load_config`.
+
 Credentials: `cp .env.example .env`, fill in `ALPACA_API_KEY_ID` /
 `ALPACA_SECRET_KEY` (free keys: https://alpaca.markets; paper-account keys
 work — point `[alpaca] trading_base` at the paper endpoint, as the shipped

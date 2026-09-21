@@ -120,9 +120,24 @@ path — no data is lost on interrupt (tested).
 - **Resource guards**: free-disk check before and during a session
   (`limits.min_free_disk_gb`, mid-session breach stops the stream
   gracefully); compaction reroutes raw inputs whose estimated footprint
-  exceeds half of free RAM through bounded-memory spill compaction; a channel-occupancy warning fires when the sink
-  lags the stream (>80% capacity); REST calls back off exponentially on
-  429/5xx honoring `Retry-After`.
+  exceeds `limits.compact_mem_fraction` of free RAM through bounded-memory
+  spill compaction, which keeps at most `limits.max_open_spill_files` spill
+  files open and so stays inside the file-descriptor limit however many
+  symbol-days the input spans; a channel-occupancy warning fires when the
+  sink lags the stream (>80% capacity).
+- **REST requests are bounded**: every request carries a read and a
+  connection timeout (`[rest]`), so a server that accepts a connection and
+  goes silent cannot block a backfill for good. Timeouts, refused or dropped
+  connections and 429/5xx are retried with exponential backoff, honoring
+  `Retry-After`; anything else fails at once.
+- **Nothing is process-global**: a session runs under its own logger
+  (`with_logger`), which it closes when it ends, and its stop flag is an
+  atomic owned by the session and shared with that logger to mute transport
+  teardown noise. The caller's global logger is untouched, and two sessions
+  in one process neither share a log nor mute each other.
+- **A dead analysis tap cannot end persistence**: `tee` drops an output its
+  consumer closed, with a warning, and keeps feeding the others; the fan-out
+  task is monitored, so its own failure is logged rather than lost.
 - **Data integrity**: compaction removes exact duplicate prints
   (reconnection double-delivery, overlapping backfill/live captures);
   `session_report` audits every capture for duplicates, exchange-time gaps,

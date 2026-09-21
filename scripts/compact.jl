@@ -26,7 +26,7 @@ function main()
         )
     end
     isempty(files) && (println("No raw files to compact."); return)
-    written = compact_raw(files, cfg.processed_dir; format = cfg.processed_format)
+    written = compact_raw(cfg, files)
     println("Wrote $(length(written)) processed file(s):")
     for f in written
         println("  ", f)

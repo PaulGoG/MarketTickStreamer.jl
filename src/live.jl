@@ -122,24 +122,82 @@ function exchange_day_start_ns(p::AbstractProvider, d::Date)
     ) * NS_PER_SEC
 end
 
+"""
+    RestPolicy(request_timeout_s, connect_timeout_s, max_retries)
+    RestPolicy()                 # 30 s, 10 s, 5 retries
+    RestPolicy(cfg::Config)      # the `[rest]` table
+
+How a provider's REST requests are bounded: the read timeout and the connection
+timeout, both in whole seconds, and the number of retries on a transient
+failure. Without a read timeout a request against a server that accepts the
+connection and then goes silent blocks its task for good, and with it a
+backfill.
+"""
+struct RestPolicy
+    request_timeout_s::Int
+    connect_timeout_s::Int
+    max_retries::Int
+    function RestPolicy(
+        request_timeout_s::Integer,
+        connect_timeout_s::Integer,
+        max_retries::Integer,
+    )
+        request_timeout_s >= 1 ||
+            throw(ArgumentError("request_timeout_s must be >= 1, got $request_timeout_s"))
+        connect_timeout_s >= 1 ||
+            throw(ArgumentError("connect_timeout_s must be >= 1, got $connect_timeout_s"))
+        max_retries >= 0 ||
+            throw(ArgumentError("max_retries must be >= 0, got $max_retries"))
+        return new(request_timeout_s, connect_timeout_s, max_retries)
+    end
+end
+
+RestPolicy() = RestPolicy(30, 10, 5)
+RestPolicy(cfg::Config) =
+    RestPolicy(cfg.rest_request_timeout_s, cfg.rest_connect_timeout_s, cfg.rest_max_retries)
+
 # GET with exponential-backoff retry on transient statuses (rate limiting,
 # server hiccups). Client errors other than 429 fail immediately. Shared by
 # every REST adapter; `Retry-After` is honored when the server sends it.
+# Requests are bounded by the caller's `RestPolicy` timeouts, and a transport
+# failure — refused connection, read timeout, broken stream — retries on the
+# same schedule.
 const RETRYABLE_STATUS = (429, 500, 502, 503, 504)
 
-function _get_with_retry(url, headers; query = nothing, max_retries::Integer = 5)
-    for attempt in 0:max_retries
+# Transport failures worth retrying: the connection could not be made, the
+# server went silent past the read timeout, or the stream broke mid-response.
+_transient(e) =
+    e isa HTTP.ConnectError ||
+    e isa HTTP.TimeoutError ||
+    e isa HTTP.RequestError ||
+    e isa Base.IOError ||
+    e isa EOFError
+
+function _get_with_retry(url, headers; query = nothing, policy::RestPolicy = RestPolicy())
+    for attempt in 0:policy.max_retries
         try
-            return HTTP.get(url, headers; query, retry = false)
+            return HTTP.get(
+                url,
+                headers;
+                query,
+                retry = false,
+                readtimeout = policy.request_timeout_s,
+                connect_timeout = policy.connect_timeout_s,
+            )
         catch e
-            (
-                e isa HTTP.StatusError &&
-                e.status in RETRYABLE_STATUS &&
-                attempt < max_retries
-            ) || rethrow()
-            ra = tryparse(Float64, HTTP.header(e.response, "Retry-After", ""))
+            status = e isa HTTP.StatusError && e.status in RETRYABLE_STATUS
+            ((status || _transient(e)) && attempt < policy.max_retries) || rethrow()
+            ra =
+                status ? tryparse(Float64, HTTP.header(e.response, "Retry-After", "")) :
+                nothing
             delay = ra !== nothing ? ra : 2.0^attempt * (0.5 + rand())
-            @warn "REST $(e.status) — backing off" attempt delay = round(delay; digits = 1)
+            if status
+                @warn "REST $(e.status) — backing off" attempt delay =
+                    round(delay; digits = 1)
+            else
+                @warn "REST transport failure — backing off" attempt delay =
+                    round(delay; digits = 1) exception = e
+            end
             sleep(min(delay, 60.0))
         end
     end
@@ -192,20 +250,20 @@ end
 # Alpaca error codes that retrying cannot fix.
 const FATAL_WS_CODES = (401, 402, 403, 404, 405, 406, 409, 410, 411)
 
-# Set while a session shuts down deliberately; the logging layer uses it to
-# suppress transport-teardown noise from HTTP.jl internals (an EOFError from
-# a socket we closed ourselves is expected, not an incident).
-const SHUTTING_DOWN = Ref(false)
-
 """
     LiveSession
 
 Handle for a running live stream: the tick channel plus control state.
 Obtain via [`live_source`](@ref); request shutdown with [`stop!`](@ref).
+
+`stop` is atomic: it is written by whoever ends the session and read by the
+producer, the watchdog and the guard tasks, which run on other threads. The
+logging layer reads the same flag to mute transport-teardown noise, so the flag
+belongs to one session and not to the process.
 """
 struct LiveSession
     channel::Channel{Trade}
-    stop::Ref{Bool}
+    stop::Threads.Atomic{Bool}
     ws::Ref{Any}
     stats::Ref{NamedTuple{(:ticks, :frames, :reconnects),NTuple{3,Int}}}
 end
@@ -219,7 +277,6 @@ letting sinks drain and finish.
 """
 function stop!(s::LiveSession)
     s.stop[] = true
-    SHUTTING_DOWN[] = true
     ws = s.ws[]
     if ws !== nothing
         try
@@ -294,11 +351,13 @@ function stream_protocol! end
 # websockets have no read idle timeout, and a silently dead TCP connection
 # would otherwise block the read loop forever. Providers call this inside
 # their protocol loop; set `alive[] = false` and `wait` it before returning.
+# `last_frame` and `alive` are atomics: the protocol loop writes them, this
+# task reads them from another thread.
 function spawn_watchdog(
     ws,
     s::LiveSession,
-    last_frame::Ref{Float64},
-    alive::Ref{Bool},
+    last_frame::Threads.Atomic{Float64},
+    alive::Threads.Atomic{Bool},
     stale_timeout_s::Float64,
 )
     return Threads.@spawn begin
@@ -329,7 +388,8 @@ end
 
 """
     live_source(p::AbstractProvider, cfg::Config;
-                on_quote = nothing, on_bar = nothing) -> LiveSession
+                on_quote = nothing, on_bar = nothing,
+                stop = Threads.Atomic{Bool}(false)) -> LiveSession
 
 Start the live producer task. Streams ticks into `session.channel` until the
 session deadline (`limits.max_session_hours`), a [`stop!`](@ref) call, a
@@ -342,17 +402,25 @@ The channel is closed on exit so downstream consumers terminate cleanly.
 quote stream carries an order of magnitude more messages than the trade
 stream, which is a storage decision taken separately.
 
+`stop` lets the caller own the session's stop flag, which [`run_stream`](@ref)
+shares with its logger.
+
 Reconnects with jittered exponential backoff
 (`stream.reconnect_base_delay_s * 2^attempt`, capped at
 `stream.reconnect_max_delay_s`); the attempt counter resets after any
 connection that actually delivered data.
 """
-function live_source(p::AbstractProvider, cfg::Config; on_quote = nothing, on_bar = nothing)
-    SHUTTING_DOWN[] = false
+function live_source(
+    p::AbstractProvider,
+    cfg::Config;
+    on_quote = nothing,
+    on_bar = nothing,
+    stop::Threads.Atomic{Bool} = Threads.Atomic{Bool}(false),
+)
     ch = Channel{Trade}(cfg.channel_capacity)
     session = LiveSession(
         ch,
-        Ref(false),
+        stop,
         Ref{Any}(nothing),
         Ref((; ticks = 0, frames = 0, reconnects = 0)),
     )

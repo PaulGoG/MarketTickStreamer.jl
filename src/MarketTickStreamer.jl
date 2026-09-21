@@ -6,7 +6,8 @@ series research: live WebSocket streaming, historical REST backfill,
 append-only raw persistence, compaction to analysis-ready files, and paced
 replay of recorded sessions.
 
-Everything is driven by `config/config.toml`; credentials come from `.env`.
+Everything is driven by a TOML configuration (`config/config.toml` in a clone);
+credentials come from the environment file it names.
 Entry points: [`run_stream`](@ref), [`run_backfill`](@ref),
 [`replay_source`](@ref), [`compact_raw`](@ref).
 
@@ -42,8 +43,7 @@ using LoggingExtras:
     FormatLogger,
     Logging,
     MinLevelLogger,
-    TeeLogger,
-    global_logger
+    TeeLogger
 using ProgressMeter: ProgressMeter, Progress, next!
 using TimeZones:
     TimeZones, @tz_str, Date, DateTime, TimeZone, UTC, ZonedDateTime, astimezone, now
@@ -65,6 +65,7 @@ export NON_PRICE_CONDITIONS, price_forming, filter_price_forming, observed_round
 export tick_bars, volume_bars, dollar_bars
 export monitor_raw
 export replay_source
+export RestPolicy
 export AbstractProvider,
     LiveSession, FatalStreamError, live_source, stop!, schedule_close_stop!, tee
 export AlpacaProvider, BinanceProvider

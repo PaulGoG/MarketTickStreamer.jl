@@ -2,13 +2,25 @@
 # taps), with structured logging and graceful shutdown.
 
 """
-    setup_logging(cfg; session_id) -> AbstractLogger
+    setup_logging(cfg; session_id, shutting_down = Threads.Atomic{Bool}(false))
+        -> (logger, io)
 
 Console logger at `cfg.log_level`, optionally teed to
-`cfg.log_dir/<session_id>.log` (plain formatting, no ANSI). The caller
-installs it with `global_logger`.
+`cfg.log_dir/<session_id>.log` (plain formatting, no ANSI, flushed per record).
+Returns the logger and the open log file, or `nothing` without file logging;
+the caller runs the session under `with_logger(logger)` and closes `io` when it
+ends. Nothing is installed globally, so a session leaves the caller's logger
+as it found it and two sessions in one process keep separate logs.
+
+While `shutting_down[]` is true, records from HTTP.jl internals are dropped:
+during a deliberate shutdown an `EOFError` from a socket we closed ourselves is
+expected, not an incident.
 """
-function setup_logging(cfg::Config; session_id::AbstractString)
+function setup_logging(
+    cfg::Config;
+    session_id::AbstractString,
+    shutting_down::Threads.Atomic{Bool} = Threads.Atomic{Bool}(false),
+)
     level = Dict(
         "debug" => Logging.Debug,
         "info" => Logging.Info,
@@ -18,17 +30,15 @@ function setup_logging(cfg::Config; session_id::AbstractString)
     # During a deliberate shutdown, transport-teardown errors surfacing from
     # HTTP.jl internals (EOFError on a socket we closed) are expected noise.
     quiet(logger) = EarlyFilteredLogger(
-        log -> !(SHUTTING_DOWN[] && startswith(string(log._module), "HTTP")),
+        log -> !(shutting_down[] && startswith(string(log._module), "HTTP")),
         logger,
     )
     console = ConsoleLogger(stderr, level)
-    cfg.log_to_file || return quiet(console)
+    cfg.log_to_file || return quiet(console), nothing
     mkpath(cfg.log_dir)
+    io = open(joinpath(cfg.log_dir, "$(session_id).log"), "a")
     # always_flush: an abruptly killed session must not lose its log tail.
-    file = FormatLogger(
-        open(joinpath(cfg.log_dir, "$(session_id).log"), "a");
-        always_flush = true,
-    ) do io, args
+    file = FormatLogger(io; always_flush = true) do io, args
         println(
             io,
             "[",
@@ -41,8 +51,12 @@ function setup_logging(cfg::Config; session_id::AbstractString)
             " | " * join(("$k=$v" for (k, v) in args.kwargs), " "),
         )
     end
-    return quiet(TeeLogger(console, MinLevelLogger(file, level)))
+    return quiet(TeeLogger(console, MinLevelLogger(file, level))), io
 end
+
+# Items buffered in a channel. `Base.n_avail` is not public API and has no
+# public equivalent; it is read here and nowhere else.
+_occupancy(ch::Channel) = Base.n_avail(ch)
 
 """
     tee(src::Channel{Trade}, n; capacity = 10_000, lossy = falses(n),
@@ -57,6 +71,12 @@ which must always win). A `lossy` output drops the incoming tick instead
 when its buffer is full (use for analysis taps that must never stall the
 capture); drops are counted, reported via `on_drop(output_index, n_dropped)`
 when given, and warned on first occurrence.
+
+A consumer that closes its output is dropped from the fan-out with a warning
+and the other outputs keep receiving, so an analysis tap that dies cannot end
+the persistence branch. If every output is closed the fan-out stops with an
+error record. A failure of the fan-out task itself is logged (`errormonitor`)
+rather than lost.
 """
 function tee(
     src::Channel{Trade},
@@ -67,24 +87,46 @@ function tee(
 )
     outs = [Channel{Trade}(capacity) for _ in 1:n]
     dropped = zeros(Int, n)
-    Threads.@spawn begin
+    live = trues(n)
+    task = Threads.@spawn begin
         try
             for t in src
                 for (i, o) in enumerate(outs)
-                    if lossy[i] && Base.n_avail(o) >= capacity
+                    live[i] || continue
+                    if !isopen(o)
+                        live[i] = false
+                        @warn "tee output closed by its consumer — dropped from the fan-out" output =
+                            i
+                        continue
+                    end
+                    if lossy[i] && _occupancy(o) >= capacity
                         dropped[i] += 1
                         dropped[i] == 1 &&
-                            @warn "lossy tee output saturated — dropping ticks" output = i
+                            @warn "lossy tee output saturated — dropping ticks" output =
+                                i
                         on_drop === nothing || on_drop(i, dropped[i])
                     else
-                        put!(o, t)
+                        try
+                            put!(o, t)
+                        catch e
+                            # closed between the check and the put
+                            e isa InvalidStateException || rethrow()
+                            live[i] = false
+                            @warn "tee output closed by its consumer — dropped from the fan-out" output =
+                                i
+                        end
                     end
+                end
+                if !any(live)
+                    @error "every tee output is closed — fan-out stopped"
+                    break
                 end
             end
         finally
             foreach(close, outs)
         end
     end
+    errormonitor(task)
     return outs
 end
 
@@ -106,7 +148,7 @@ session_id(
 # than a safeguard.
 function _provider_from_config(cfg::Config)
     spec = provider_spec(cfg.provider)
-    key, secret = spec.needs_credentials ? load_credentials!() : ("", "")
+    key, secret = spec.needs_credentials ? load_credentials!(cfg) : ("", "")
     return make_provider(Val(Symbol(cfg.provider)), cfg, key, secret)
 end
 
@@ -369,12 +411,30 @@ Run one complete live capture session:
 3. batched raw NDJSON persistence,
 4. graceful shutdown on Ctrl-C, session deadline, or stream termination.
 
-Returns `(; ticks, raw_files)`. Blocks until the session ends.
+Returns `(; ticks, raw_files)`. Blocks until the session ends. Logging is
+scoped to the call: the session runs under its own logger and the caller's
+global logger is untouched.
 """
 function run_stream(cfg::Config; provider::Union{AbstractProvider,Nothing} = nothing)
     sid = session_id(cfg)
+    stop = Threads.Atomic{Bool}(false)
+    logger, log_io = setup_logging(cfg; session_id = sid, shutting_down = stop)
+    try
+        return Logging.with_logger(logger) do
+            _run_stream(cfg, sid, provider, stop)
+        end
+    finally
+        log_io === nothing || close(log_io)
+    end
+end
+
+function _run_stream(
+    cfg::Config,
+    sid::AbstractString,
+    provider::Union{AbstractProvider,Nothing},
+    stop::Threads.Atomic{Bool},
+)
     started_utc = Dates.now(UTC)
-    global_logger(setup_logging(cfg; session_id = sid))
     provider === nothing && (provider = _provider_from_config(cfg))
     delay = feed_delay_ns(provider)
     delay > 0 && @info "delayed feed — railings shifted" delay_s = delay ÷ NS_PER_SEC
@@ -413,7 +473,7 @@ function run_stream(cfg::Config; provider::Union{AbstractProvider,Nothing} = not
             clock.is_open && @info "market open" next_close = clock.next_close
         end
 
-        session = live_source(provider, cfg)
+        session = live_source(provider, cfg; stop)
         # Delayed feeds keep transmitting the tape tail past the bell; allow an
         # extra minute for late-reported closing prints on top of the delay.
         cfg.stop_at_market_close &&
@@ -430,7 +490,7 @@ function run_stream(cfg::Config; provider::Union{AbstractProvider,Nothing} = not
 
         on_flush = function (n, tot)
             @info "flushed batch" batch = n total = tot
-            occ = Base.n_avail(session.channel)
+            occ = _occupancy(session.channel)
             occ > 0.8 * cfg.channel_capacity &&
                 @warn "tick channel nearly full — sink is lagging the stream" occupancy =
                     occ capacity = cfg.channel_capacity
@@ -504,11 +564,28 @@ deduplicates if it is ever folded in. Ctrl-C finalizes the provenance sidecar
 as `interrupted` and returns the days that did complete. Any other error
 finalizes it as `failed` and propagates; the days compacted before the error
 remain valid and a rerun resumes after them.
+
+Logging is scoped to the call: the session runs under its own logger and the
+caller's global logger is untouched.
 """
 function run_backfill(cfg::Config; provider::Union{AbstractProvider,Nothing} = nothing)
     sid = "backfill_" * session_id(cfg; feed = cfg.backfill_feed)
+    logger, log_io = setup_logging(cfg; session_id = sid)
+    try
+        return Logging.with_logger(logger) do
+            _run_backfill(cfg, sid, provider)
+        end
+    finally
+        log_io === nothing || close(log_io)
+    end
+end
+
+function _run_backfill(
+    cfg::Config,
+    sid::AbstractString,
+    provider::Union{AbstractProvider,Nothing},
+)
     started_utc = Dates.now(UTC)
-    global_logger(setup_logging(cfg; session_id = sid))
     provider === nothing && (provider = _provider_from_config(cfg))
     mkpath(cfg.raw_dir)
     slock = acquire_session_lock(cfg.data_dir)
@@ -572,16 +649,7 @@ function run_backfill(cfg::Config; provider::Union{AbstractProvider,Nothing} = n
                     filesize(f) == 0 && rm(f; force = true)
                 end
             else
-                append!(
-                    processed,
-                    compact_raw(
-                        day_files,
-                        cfg.processed_dir;
-                        format = cfg.processed_format,
-                        max_live_heap_mb = cfg.max_live_heap_mb,
-                        tz = cfg.exchange_tz,
-                    ),
-                )
+                append!(processed, compact_raw(cfg, day_files))
             end
             total += n
             @info "backfilled" symbol = sym day trades = n

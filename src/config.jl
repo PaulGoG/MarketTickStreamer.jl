@@ -1,7 +1,8 @@
 # TOML configuration loading and validation.
 #
-# Everything tunable comes from config/config.toml; nothing operational is
-# hardcoded. Credentials come from `.env` / the process environment only.
+# Everything tunable comes from the TOML configuration; nothing operational is
+# hardcoded. Credentials come from the environment file the configuration
+# names, or from the process environment, and from nowhere else.
 
 """
     Config
@@ -37,6 +38,10 @@ struct Config
     max_symbols::Int
     min_free_disk_gb::Float64
     max_live_heap_mb::Int
+    max_open_spill_files::Int
+    compact_mem_fraction::Float64
+    spill_headroom::Float64
+    compact_footprint_factor::Float64
     # [replay]
     replay_pace::String
     replay_speed::Float64
@@ -48,6 +53,10 @@ struct Config
     backfill_page_limit::Int
     backfill_rate_sleep_s::Float64
     backfill_resume::Bool
+    # [rest]
+    rest_request_timeout_s::Int
+    rest_connect_timeout_s::Int
+    rest_max_retries::Int
     # [monitor]
     monitor_refresh_s::Float64
     monitor_top_symbols::Int
@@ -56,6 +65,8 @@ struct Config
     log_level::String
     log_to_file::Bool
     log_dir::String
+    # [credentials]
+    env_file::String
     # [quality]
     non_price_conditions::Dict{String,Vector{String}}
     # [<provider>] endpoint roots
@@ -67,6 +78,20 @@ struct Config
 end
 
 const PROJECT_ROOT = normpath(joinpath(@__DIR__, ".."))
+
+"""
+    DEFAULT_CONFIG
+
+Path of the configuration shipped with the package, `config/config.toml`. In a
+clone of the repository it is the working configuration; in an installed copy
+it is a template to copy from, since the package directory is read-only there.
+"""
+const DEFAULT_CONFIG = joinpath(PROJECT_ROOT, "config", "config.toml")
+
+# Whether this copy of the package sits in a depot's `packages` tree, i.e. was
+# installed by Pkg rather than cloned or developed by path.
+_installed_in_depot() =
+    any(d -> startswith(PROJECT_ROOT, joinpath(d, "packages")), DEPOT_PATH)
 
 # Keys accepted in each configuration table. Provider tables (KNOWN_PROVIDERS)
 # hold endpoint roots and accept any string-valued key.
@@ -98,6 +123,10 @@ const CONFIG_KEYS = Dict{String,Vector{String}}(
         "max_symbols",
         "min_free_disk_gb",
         "max_live_heap_mb",
+        "max_open_spill_files",
+        "compact_mem_fraction",
+        "spill_headroom",
+        "compact_footprint_factor",
     ],
     "replay" => ["pace", "speed", "clock"],
     "backfill" => [
@@ -108,8 +137,10 @@ const CONFIG_KEYS = Dict{String,Vector{String}}(
         "rate_limit_sleep_s",
         "resume",
     ],
+    "rest" => ["request_timeout_s", "connect_timeout_s", "max_retries"],
     "monitor" => ["refresh_s", "top_symbols", "rate_window_s"],
     "logging" => ["level", "log_to_file", "log_dir"],
+    "credentials" => ["env_file"],
     "quality" => ["non_price_conditions"],
 )
 
@@ -228,16 +259,34 @@ function _reject_unknown_keys(raw::AbstractDict)
     return nothing
 end
 
-"""
-    load_config(path = joinpath(PROJECT_ROOT, "config", "config.toml")) -> Config
+function _default_config_path()
+    _installed_in_depot() && throw(
+        ArgumentError(
+            "MarketTickStreamer is installed as a package, so its shipped " *
+            "configuration is a template and its directory is read-only. Copy " *
+            "$(DEFAULT_CONFIG) into your project and pass its path to load_config.",
+        ),
+    )
+    return DEFAULT_CONFIG
+end
 
-Read and validate the TOML configuration. Relative storage/log paths are
-resolved against the project root. Every key is checked for type and documented
-bounds, and unknown tables or keys are rejected, so a misspelt key cannot fall
-back to its default unnoticed. Throws `ArgumentError` naming the offending key.
 """
-function load_config(path::AbstractString = joinpath(PROJECT_ROOT, "config", "config.toml"))
+    load_config(path = DEFAULT_CONFIG) -> Config
+
+Read and validate the TOML configuration. Relative `storage.data_dir`,
+`logging.log_dir` and `credentials.env_file` are resolved against the directory
+of `path`. Every key is checked for type and documented bounds, and unknown
+tables or keys are rejected, so a misspelt key cannot fall back to its default
+unnoticed. Throws `ArgumentError` naming the offending key.
+
+The no-argument form reads the configuration shipped with the repository and
+suits a clone of it. In an installed copy of the package it throws an
+`ArgumentError`: there [`DEFAULT_CONFIG`](@ref) is a read-only template to copy
+into a project of your own.
+"""
+function load_config(path::AbstractString = _default_config_path())
     isfile(path) || throw(ArgumentError("config file not found: $path"))
+    config_dir = dirname(abspath(path))
     raw = TOML.parsefile(path)
     _reject_unknown_keys(raw)
 
@@ -278,7 +327,7 @@ function load_config(path::AbstractString = joinpath(PROJECT_ROOT, "config", "co
         throw(ArgumentError("stream.stale_timeout_s must be > 0, got $stale_timeout"))
 
     sto = tbl("storage")
-    data_dir = _resolve(_cfg_value(sto, "storage", "data_dir", String, "data"))
+    data_dir = _resolve(_cfg_value(sto, "storage", "data_dir", String, "data"), config_dir)
     fmt = _cfg_value(sto, "storage", "processed_format", String, "csv")
     fmt in ("csv", "arrow") ||
         throw(ArgumentError("storage.processed_format must be \"csv\" or \"arrow\""))
@@ -313,6 +362,28 @@ function load_config(path::AbstractString = joinpath(PROJECT_ROOT, "config", "co
     max_resident = _cfg_value(lim, "limits", "max_live_heap_mb", Int, 4096)
     max_resident > 0 ||
         throw(ArgumentError("limits.max_live_heap_mb must be > 0, got $max_resident"))
+    max_open_spill_files = _cfg_value(lim, "limits", "max_open_spill_files", Int, 256)
+    max_open_spill_files >= 1 || throw(
+        ArgumentError(
+            "limits.max_open_spill_files must be >= 1, got $max_open_spill_files",
+        ),
+    )
+    compact_mem_fraction = _cfg_value(lim, "limits", "compact_mem_fraction", Float64, 0.5)
+    0 < compact_mem_fraction <= 1 || throw(
+        ArgumentError(
+            "limits.compact_mem_fraction must be in (0, 1], got $compact_mem_fraction",
+        ),
+    )
+    spill_headroom = _cfg_value(lim, "limits", "spill_headroom", Float64, 1.1)
+    spill_headroom >= 1 ||
+        throw(ArgumentError("limits.spill_headroom must be >= 1, got $spill_headroom"))
+    compact_footprint_factor =
+        _cfg_value(lim, "limits", "compact_footprint_factor", Float64, 4.0)
+    compact_footprint_factor > 0 || throw(
+        ArgumentError(
+            "limits.compact_footprint_factor must be > 0, got $compact_footprint_factor",
+        ),
+    )
 
     rep = tbl("replay")
     pace = _cfg_value(rep, "replay", "pace", String, "recorded")
@@ -355,6 +426,19 @@ function load_config(path::AbstractString = joinpath(PROJECT_ROOT, "config", "co
     rate_sleep >= 0 ||
         throw(ArgumentError("backfill.rate_limit_sleep_s must be >= 0, got $rate_sleep"))
 
+    rst = tbl("rest")
+    rest_request_timeout = _cfg_value(rst, "rest", "request_timeout_s", Int, 30)
+    rest_request_timeout >= 1 || throw(
+        ArgumentError("rest.request_timeout_s must be >= 1, got $rest_request_timeout"),
+    )
+    rest_connect_timeout = _cfg_value(rst, "rest", "connect_timeout_s", Int, 10)
+    rest_connect_timeout >= 1 || throw(
+        ArgumentError("rest.connect_timeout_s must be >= 1, got $rest_connect_timeout"),
+    )
+    rest_max_retries = _cfg_value(rst, "rest", "max_retries", Int, 5)
+    rest_max_retries >= 0 ||
+        throw(ArgumentError("rest.max_retries must be >= 0, got $rest_max_retries"))
+
     mon = tbl("monitor")
     mon_refresh = _cfg_value(mon, "monitor", "refresh_s", Float64, 2.0)
     mon_refresh > 0 || throw(ArgumentError("monitor.refresh_s must be positive"))
@@ -368,6 +452,12 @@ function load_config(path::AbstractString = joinpath(PROJECT_ROOT, "config", "co
     level = _cfg_value(lg, "logging", "level", String, "info")
     level in ("debug", "info", "warn", "error") ||
         throw(ArgumentError("logging.level must be one of debug/info/warn/error"))
+
+    cr = tbl("credentials")
+    env_file = _cfg_value(cr, "credentials", "env_file", String, ".env")
+    isempty(env_file) && throw(
+        ArgumentError("credentials.env_file must be non-empty, got $(repr(env_file))"),
+    )
 
     # Sale-condition sets are config-driven because they change which prints
     # count as price-forming, which is a scientific choice; the default lands
@@ -424,6 +514,10 @@ function load_config(path::AbstractString = joinpath(PROJECT_ROOT, "config", "co
         max_symbols,
         min_free_disk_gb,
         max_resident,
+        max_open_spill_files,
+        compact_mem_fraction,
+        spill_headroom,
+        compact_footprint_factor,
         pace,
         replay_speed,
         replay_clock,
@@ -433,19 +527,26 @@ function load_config(path::AbstractString = joinpath(PROJECT_ROOT, "config", "co
         page_limit,
         rate_sleep,
         _cfg_value(bf, "backfill", "resume", Bool, true),
+        rest_request_timeout,
+        rest_connect_timeout,
+        rest_max_retries,
         mon_refresh,
         mon_top,
         mon_window,
         level,
         _cfg_value(lg, "logging", "log_to_file", Bool, true),
-        _resolve(_cfg_value(lg, "logging", "log_dir", String, "logs")),
+        _resolve(_cfg_value(lg, "logging", "log_dir", String, "logs"), config_dir),
+        _resolve(env_file, config_dir),
         non_price,
         endpoints,
         spec.tz,
     )
 end
 
-_resolve(p::AbstractString) = isabspath(p) ? String(p) : normpath(joinpath(PROJECT_ROOT, p))
+# Relative paths in a configuration are relative to the file that states
+# them, which keeps a config meaningful wherever the package is installed.
+_resolve(p::AbstractString, base::AbstractString) =
+    isabspath(p) ? String(p) : normpath(joinpath(base, p))
 
 """
     _resolve_config_date(spec, key, reference) -> Date
@@ -470,14 +571,19 @@ function _resolve_config_date(spec::AbstractString, key::AbstractString, referen
     return d
 end
 
-"""
-    load_credentials!(; env_path = joinpath(PROJECT_ROOT, ".env")) -> (key, secret)
+load_credentials!(cfg::Config) = load_credentials!(; env_path = cfg.env_file)
 
-Load API credentials from `.env` (if present) into the environment and return
-`(key_id, secret_key)`. Looks for `ALPACA_API_KEY_ID` / `ALPACA_SECRET_KEY`.
-Throws an error listing what is missing if either is absent.
 """
-function load_credentials!(; env_path::AbstractString = joinpath(PROJECT_ROOT, ".env"))
+    load_credentials!(cfg::Config) -> (key, secret)
+    load_credentials!(; env_path) -> (key, secret)
+
+Load API credentials from the environment file (`credentials.env_file` of the
+configuration, or `env_path`), if it exists, into the process environment and
+return `(key_id, secret_key)`. Looks for `ALPACA_API_KEY_ID` /
+`ALPACA_SECRET_KEY`. Throws an error listing what is missing if either is
+absent.
+"""
+function load_credentials!(; env_path::AbstractString)
     if isfile(env_path)
         Sys.isunix() &&
             (filemode(env_path) & 0o044) != 0 &&

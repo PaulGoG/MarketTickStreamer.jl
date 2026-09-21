@@ -245,9 +245,27 @@ _read_processed(path::AbstractString) =
     endswith(path, ".arrow") ? DataFrame(Arrow.Table(path)) : CSV.read(path, DataFrame)
 
 """
+    SPILL_HEADROOM
+
+Default multiple of the input size that the spill filesystem must have free
+before [`compact_raw`](@ref) will stream to it (`spill_headroom`).
+
+The spill pass trades memory for scratch space, writing every input line back
+out once. `tempdir()` is the wrong home for that: on systemd distributions
+`/tmp` is a tmpfs sized at half of RAM, so spilling there writes the copy into
+RAM and, on an input larger than that, takes the machine down — the failure
+this guard exists to prevent. The default scratch location is therefore the
+directory holding `out_dir`, and the space is verified before the first line
+is read.
+"""
+const SPILL_HEADROOM = 1.1
+
+"""
     compact_raw(raw_paths, out_dir; format = "csv", dedup = true,
                 mem_fraction = 0.5, tz = tz"America/New_York",
-                max_live_heap_mb = nothing, scratch_dir = nothing) -> Vector{String}
+                max_live_heap_mb = nothing, scratch_dir = nothing,
+                footprint_factor = 4.0, spill_headroom = SPILL_HEADROOM,
+                max_open_spill_files = 256) -> Vector{String}
 
 Compact raw NDJSON files into per-symbol, per-trading-day analysis files
 (`out_dir/SYMBOL/YYYY-MM-DD.csv|.arrow`), sorted by `time_ns`. An existing
@@ -268,6 +286,14 @@ The spill pass writes a verbatim copy of the input, so it needs scratch space
 of the input's own size. `scratch_dir` places it; the default is the directory
 containing `out_dir`, **not** `tempdir()` — see [`SPILL_HEADROOM`](@ref). The
 free space is checked up front and compaction refuses to start without it.
+
+`footprint_factor` is the estimated in-memory size of the parsed input per
+input byte, `spill_headroom` the scratch space required as a multiple of the
+input size, and `max_open_spill_files` the number of spill files held open at
+once: further groups are served by closing the least recently written file and
+reopening it in append mode, so the pass works within the process's
+file-descriptor limit however many symbol-days the input spans. The pipeline
+takes all of them from `[limits]`.
 """
 function compact_raw(
     raw_paths::AbstractVector{<:AbstractString},
@@ -278,11 +304,25 @@ function compact_raw(
     tz::TimeZone = tz"America/New_York",
     max_live_heap_mb::Union{Nothing,Real} = nothing,
     scratch_dir::Union{Nothing,AbstractString} = nothing,
+    footprint_factor::Real = 4.0,
+    spill_headroom::Real = SPILL_HEADROOM,
+    max_open_spill_files::Integer = 256,
 )
     format in ("csv", "arrow") ||
         throw(ArgumentError("format must be \"csv\" or \"arrow\""))
+    0 < mem_fraction <= 1 ||
+        throw(ArgumentError("mem_fraction must be in (0, 1], got $(mem_fraction)"))
+    footprint_factor > 0 ||
+        throw(ArgumentError("footprint_factor must be positive, got $(footprint_factor)"))
+    spill_headroom >= 1 ||
+        throw(ArgumentError("spill_headroom must be at least 1, got $(spill_headroom)"))
+    max_open_spill_files >= 1 || throw(
+        ArgumentError(
+            "max_open_spill_files must be at least 1, got $(max_open_spill_files)",
+        ),
+    )
     bytes = sum(filesize, raw_paths; init = 0)
-    est = 4 * bytes          # parsed structs + DataFrame + sort scratch
+    est = footprint_factor * bytes          # parsed structs + DataFrame + sort scratch
     est > mem_fraction * Sys.free_memory() && return _compact_spill(
         raw_paths,
         out_dir;
@@ -291,6 +331,8 @@ function compact_raw(
         tz,
         max_live_heap_mb,
         scratch_dir,
+        spill_headroom,
+        max_open_spill_files,
     )
     trades = read_raw(raw_paths)
     if dedup
@@ -310,20 +352,32 @@ function compact_raw(
 end
 
 """
-    SPILL_HEADROOM
+    compact_raw(cfg::Config, raw_paths; dedup = true, scratch_dir = nothing)
+        -> Vector{String}
 
-Multiple of the input size that the spill filesystem must have free before
-[`compact_raw`](@ref) will stream to it.
-
-The spill pass trades memory for scratch space, writing every input line back
-out once. `tempdir()` is the wrong home for that: on systemd distributions
-`/tmp` is a tmpfs sized at half of RAM, so spilling there writes the copy into
-RAM and, on an input larger than that, takes the machine down — the failure
-this guard exists to prevent. The default scratch location is therefore the
-directory holding `out_dir`, and the space is verified before the first line
-is read.
+Compact into `cfg.processed_dir` with everything else taken from the
+configuration: format, the provider's calendar, the heap ceiling and the spill
+thresholds of `[limits]`. This is the form the pipeline and the scripts use, so
+a capture is never filed under a calendar other than its provider's.
 """
-const SPILL_HEADROOM = 1.1
+compact_raw(
+    cfg::Config,
+    raw_paths::AbstractVector{<:AbstractString};
+    dedup::Bool = true,
+    scratch_dir::Union{Nothing,AbstractString} = nothing,
+) = compact_raw(
+    raw_paths,
+    cfg.processed_dir;
+    format = cfg.processed_format,
+    dedup,
+    mem_fraction = cfg.compact_mem_fraction,
+    tz = cfg.exchange_tz,
+    max_live_heap_mb = cfg.max_live_heap_mb,
+    scratch_dir,
+    footprint_factor = cfg.compact_footprint_factor,
+    spill_headroom = cfg.spill_headroom,
+    max_open_spill_files = cfg.max_open_spill_files,
+)
 
 # Where the spill copy goes. abspath(_, "..") rather than dirname: it
 # normalizes a trailing separator, which dirname would otherwise read as
@@ -333,13 +387,62 @@ _spill_parent(::AbstractString, scratch_dir::AbstractString) = abspath(scratch_d
 
 # Refuse to start a spill the scratch filesystem cannot hold. `free` is passed
 # in rather than queried here so the refusal is testable without a full disk.
-function _ensure_spill_space(parent::AbstractString, bytes::Real, free::Real)
+function _ensure_spill_space(
+    parent::AbstractString,
+    bytes::Real,
+    free::Real;
+    headroom::Real = SPILL_HEADROOM,
+)
     gib(x) = round(x / 2^30; digits = 2)
-    free < SPILL_HEADROOM * bytes && error(
-        "spill compaction of $(gib(bytes)) GiB needs $(gib(SPILL_HEADROOM * bytes)) " *
+    free < headroom * bytes && error(
+        "spill compaction of $(gib(bytes)) GiB needs $(gib(headroom * bytes)) " *
         "GiB of scratch space, but $(parent) has only $(gib(free)) GiB free — " *
         "pass scratch_dir to place it on another filesystem",
     )
+    return nothing
+end
+
+# Open spill files, bounded. A (symbol, day) group's file is opened in append
+# mode on demand; when the pool is full the least recently written handle is
+# closed, and reopened later if its group recurs. `seen` remembers every group
+# ever written so the second pass can find its file.
+mutable struct SpillPool
+    dir::String
+    capacity::Int
+    handles::Dict{Tuple{String,Date},IOStream}
+    last_use::Dict{Tuple{String,Date},Int}
+    seen::Set{Tuple{String,Date}}
+    clock::Int
+end
+
+SpillPool(dir::AbstractString, capacity::Integer) = SpillPool(
+    String(dir),
+    Int(capacity),
+    Dict{Tuple{String,Date},IOStream}(),
+    Dict{Tuple{String,Date},Int}(),
+    Set{Tuple{String,Date}}(),
+    0,
+)
+
+_spill_path(pool::SpillPool, key::Tuple{String,Date}) =
+    joinpath(pool.dir, "$(key[1])_$(key[2]).jsonl")
+
+function _spill_handle!(pool::SpillPool, key::Tuple{String,Date})
+    pool.clock += 1
+    pool.last_use[key] = pool.clock
+    io = get(pool.handles, key, nothing)
+    io === nothing || return io
+    if length(pool.handles) >= pool.capacity
+        victim = argmin(k -> pool.last_use[k], keys(pool.handles))
+        close(pop!(pool.handles, victim))
+    end
+    push!(pool.seen, key)
+    return pool.handles[key] = open(_spill_path(pool, key), "a")
+end
+
+function _close_all!(pool::SpillPool)
+    foreach(close, values(pool.handles))
+    empty!(pool.handles)
     return nothing
 end
 
@@ -353,39 +456,46 @@ function _compact_spill(
     tz::TimeZone,
     max_live_heap_mb::Union{Nothing,Real},
     scratch_dir::Union{Nothing,AbstractString} = nothing,
+    spill_headroom::Real = SPILL_HEADROOM,
+    max_open_spill_files::Integer = 256,
 )
     bytes = sum(filesize, raw_paths; init = 0)
     mkpath(out_dir)
     parent = _spill_parent(out_dir, scratch_dir)
     mkpath(parent)
-    _ensure_spill_space(parent, bytes, Base.diskstat(parent).available)
+    _ensure_spill_space(
+        parent,
+        bytes,
+        Base.diskstat(parent).available;
+        headroom = spill_headroom,
+    )
     @info "large input — using spill compaction" mib = round(bytes / 2^20; digits = 1) scratch =
         parent
     written = String[]
     mktempdir(parent; prefix = "compact_spill_") do spill
-        handles = Dict{Tuple{String,Date},IOStream}()
+        pool = SpillPool(spill, max_open_spill_files)
         nbad = 0
-        for p in raw_paths, line in eachline(p)
-            isempty(strip(line)) && continue
-            t = try
-                json_to_trade(line)
-            catch e
-                e isa InterruptException && rethrow()
-                nbad += 1
-                continue
+        try
+            for p in raw_paths, line in eachline(p)
+                isempty(strip(line)) && continue
+                t = try
+                    json_to_trade(line)
+                catch e
+                    e isa InterruptException && rethrow()
+                    nbad += 1
+                    continue
+                end
+                key = (t.symbol, trading_date(t.time_ns; tz))
+                println(_spill_handle!(pool, key), line)
             end
-            key = (t.symbol, trading_date(t.time_ns; tz))
-            io = get!(handles, key) do
-                open(joinpath(spill, "$(key[1])_$(key[2]).jsonl"), "w")
-            end
-            println(io, line)
+        finally
+            _close_all!(pool)
         end
         nbad > 0 && @warn "skipped corrupt lines" count = nbad
-        foreach(close, values(handles))
         ndup = 0
-        for key in sort!(collect(keys(handles)))
+        for key in sort!(collect(pool.seen))
             sym, date = key
-            trades = read_raw(joinpath(spill, "$(sym)_$(date).jsonl"))
+            trades = read_raw(_spill_path(pool, key))
             if dedup
                 n0 = length(trades)
                 trades = deduplicate_trades(trades)

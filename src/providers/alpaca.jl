@@ -12,7 +12,8 @@
 
 Connection descriptor for Alpaca Markets: credentials, feed selection and
 endpoint roots (overridable via the `[alpaca]` config table, which lets the
-test suite point the client at a local mock server).
+test suite point the client at a local mock server). `rest` bounds its REST
+requests ([`RestPolicy`](@ref)).
 """
 struct AlpacaProvider <: AbstractProvider
     key::String
@@ -21,7 +22,17 @@ struct AlpacaProvider <: AbstractProvider
     trading_base::String
     data_base::String
     ws_base::String
+    rest::RestPolicy
 end
+
+AlpacaProvider(
+    key::AbstractString,
+    secret::AbstractString,
+    feed::AbstractString,
+    trading_base::AbstractString,
+    data_base::AbstractString,
+    ws_base::AbstractString,
+) = AlpacaProvider(key, secret, feed, trading_base, data_base, ws_base, RestPolicy())
 
 function AlpacaProvider(cfg::Config, key::AbstractString, secret::AbstractString)
     ep = cfg.endpoints
@@ -32,6 +43,7 @@ function AlpacaProvider(cfg::Config, key::AbstractString, secret::AbstractString
         get(ep, "trading_base", "https://api.alpaca.markets"),
         get(ep, "data_base", "https://data.alpaca.markets"),
         get(ep, "ws_base", "wss://stream.data.alpaca.markets/v2"),
+        RestPolicy(cfg),
     )
 end
 
@@ -97,7 +109,7 @@ RFC 3339 strings Alpaca sends (display only — nothing downstream computes
 with them).
 """
 function market_clock(p::AlpacaProvider)
-    resp = _get_with_retry("$(p.trading_base)/v2/clock", rest_headers(p))
+    resp = _get_with_retry("$(p.trading_base)/v2/clock", rest_headers(p); policy = p.rest)
     o = JSON3.read(resp.body)::JSON3.Object
     return (;
         is_open = Bool(o.is_open::Bool),
@@ -134,6 +146,7 @@ function condition_map(
         "$(p.data_base)/v2/stocks/meta/conditions/$(ticktype)",
         rest_headers(p);
         query = Dict("tape" => String(tape)),
+        policy = p.rest,
     )
     o = JSON3.read(resp.body)::JSON3.Object
     return Dict{String,String}(String(k) => String(v::AbstractString) for (k, v) in o)
@@ -226,7 +239,7 @@ function _each_trades_page(
     )
     total = 0
     while true
-        resp = _get_with_retry(url, rest_headers(p); query)
+        resp = _get_with_retry(url, rest_headers(p); query, policy = p.rest)
         # Assertions narrow the JSON value unions to what the documented
         # response shape guarantees; a violation is a protocol error and
         # should fail here rather than downstream.
@@ -338,8 +351,8 @@ function stream_protocol!(
     fatal = Ref{Union{Nothing,FatalStreamError}}(nothing)
     HTTP.WebSockets.open(ws_url(p)) do ws
         s.ws[] = ws
-        last_frame = Ref(time())
-        alive = Ref(true)
+        last_frame = Threads.Atomic{Float64}(time())
+        alive = Threads.Atomic{Bool}(true)
         watchdog = spawn_watchdog(ws, s, last_frame, alive, cfg.stale_timeout_s)
         try
             for raw in ws

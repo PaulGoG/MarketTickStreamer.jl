@@ -655,7 +655,7 @@ sample_trade(i; sym = "AAPL") = Trade(
     @testset "close guard + disk guard" begin
         s = LiveSession(
             Channel{Trade}(1),
-            Ref(false),
+            Threads.Atomic{Bool}(false),
             Ref{Any}(nothing),
             Ref((; ticks = 0, frames = 0, reconnects = 0)),
         )
@@ -1132,6 +1132,287 @@ hostname = "$(gethostname())"
             e
         end
         @test err isa MethodError && !occursin("CairoMakie", sprint(showerror, err))
+    end
+
+    @testset "config: paths follow the file, new tables, credentials file" begin
+        mktempdir() do dir
+            base = "[stream]\nsymbols = [\"A\"]\n"
+            p = joinpath(dir, "conf", "my.toml")
+            mkpath(dirname(p))
+            # Relative paths are relative to the configuration file.
+            write(
+                p,
+                base *
+                "[storage]\ndata_dir = \"../d\"\n[logging]\nlog_dir = \"l\"\n" *
+                "[credentials]\nenv_file = \"secrets/keys.env\"\n",
+            )
+            cfg = load_config(p)
+            @test cfg.data_dir == joinpath(dir, "d")
+            @test cfg.raw_dir == joinpath(dir, "d", "raw")
+            @test cfg.log_dir == joinpath(dir, "conf", "l")
+            @test cfg.env_file == joinpath(dir, "conf", "secrets", "keys.env")
+            # Defaults sit beside the file too, and absolute paths are kept.
+            write(p, base)
+            cfg = load_config(p)
+            @test cfg.data_dir == joinpath(dir, "conf", "data")
+            @test cfg.env_file == joinpath(dir, "conf", ".env")
+            write(p, base * "[storage]\ndata_dir = \"$(joinpath(dir, "abs"))\"\n")
+            @test load_config(p).data_dir == joinpath(dir, "abs")
+            # The same file read through a relative path resolves identically.
+            cd(dirname(p)) do
+                @test load_config("my.toml").data_dir == joinpath(dir, "abs")
+            end
+
+            # New keys: defaults, then every documented bound.
+            write(p, base)
+            cfg = load_config(p)
+            @test (
+                cfg.rest_request_timeout_s,
+                cfg.rest_connect_timeout_s,
+                cfg.rest_max_retries,
+            ) == (30, 10, 5)
+            @test cfg.max_open_spill_files == 256
+            @test cfg.compact_mem_fraction == 0.5
+            @test cfg.spill_headroom == 1.1
+            @test cfg.compact_footprint_factor == 4.0
+            for bad in (
+                "[rest]\nrequest_timeout_s = 0\n",
+                "[rest]\nrequest_timeout_s = 1.5\n",
+                "[rest]\nconnect_timeout_s = 0\n",
+                "[rest]\nmax_retries = -1\n",
+                "[rest]\nretries = 3\n",
+                "[limits]\nmax_open_spill_files = 0\n",
+                "[limits]\ncompact_mem_fraction = 0.0\n",
+                "[limits]\ncompact_mem_fraction = 1.5\n",
+                "[limits]\nspill_headroom = 0.9\n",
+                "[limits]\ncompact_footprint_factor = 0\n",
+                "[credentials]\nenv_file = \"\"\n",
+                "[credentials]\nenv_file = 3\n",
+            )
+                write(p, base * bad)
+                @test_throws ArgumentError load_config(p)
+            end
+
+            # Credentials come from the file the configuration names.
+            write(p, base * "[credentials]\nenv_file = \"keys.env\"\n")
+            write(
+                joinpath(dir, "conf", "keys.env"),
+                "ALPACA_API_KEY_ID=key-from-file\nALPACA_SECRET_KEY=secret-from-file\n",
+            )
+            chmod(joinpath(dir, "conf", "keys.env"), 0o600)
+            withenv("ALPACA_API_KEY_ID" => nothing, "ALPACA_SECRET_KEY" => nothing) do
+                @test load_credentials!(load_config(p)) ==
+                      ("key-from-file", "secret-from-file")
+            end
+        end
+        # The shipped configuration is the working one in a clone, where its
+        # relative paths land in the repository, and a template elsewhere.
+        root = pkgdir(MarketTickStreamer)
+        @test !MarketTickStreamer._installed_in_depot()
+        @test MarketTickStreamer.DEFAULT_CONFIG == joinpath(root, "config", "config.toml")
+        shipped = load_config()
+        @test shipped.data_dir == joinpath(root, "data")
+        @test shipped.log_dir == joinpath(root, "logs")
+        @test shipped.env_file == joinpath(root, ".env")
+    end
+
+    @testset "REST policy: timeouts and transport retry" begin
+        @test MarketTickStreamer.RestPolicy() == MarketTickStreamer.RestPolicy(30, 10, 5)
+        @test_throws ArgumentError MarketTickStreamer.RestPolicy(0, 10, 5)
+        @test_throws ArgumentError MarketTickStreamer.RestPolicy(30, 0, 5)
+        @test_throws ArgumentError MarketTickStreamer.RestPolicy(30, 10, -1)
+        # A server that accepts the request and goes silent once, then answers.
+        port = freeport(8961)
+        hits = Threads.Atomic{Int}(0)
+        server = HTTP.serve!("127.0.0.1", port; verbose = false) do _
+            Threads.atomic_add!(hits, 1) == 0 && sleep(3.0)   # returns the old value
+            return HTTP.Response(200, "ok")
+        end
+        try
+            policy = MarketTickStreamer.RestPolicy(1, 1, 2)
+            resp = MarketTickStreamer._get_with_retry(
+                "http://127.0.0.1:$port/x",
+                Pair{String,String}[];
+                policy,
+            )
+            @test String(resp.body) == "ok"
+            @test hits[] == 2
+        finally
+            close(server)
+        end
+        # Nothing listening: retried, then the transport error surfaces.
+        dead = freeport(8971)
+        t0 = time()
+        @test_throws Exception MarketTickStreamer._get_with_retry(
+            "http://127.0.0.1:$dead/x",
+            Pair{String,String}[];
+            policy = MarketTickStreamer.RestPolicy(1, 1, 1),
+        )
+        @test time() - t0 >= 0.5                     # one backoff was taken
+        # A provider built from a configuration carries its [rest] table.
+        mktempdir() do dir
+            p = joinpath(dir, "c.toml")
+            write(
+                p,
+                "[stream]\nsymbols = [\"A\"]\n[rest]\nrequest_timeout_s = 7\nmax_retries = 0\n",
+            )
+            prov = AlpacaProvider(load_config(p), "k", "s")
+            @test prov.rest == MarketTickStreamer.RestPolicy(7, 10, 0)
+        end
+        @test AlpacaProvider("k", "s", "iex", "a", "b", "c").rest ==
+              MarketTickStreamer.RestPolicy()
+    end
+
+    @testset "logging is scoped to the session" begin
+        ws_port, rest_port = freeport(8981), freeport(8991)
+        rest = start_mock_rest(; port = rest_port, trades_per_page = 3)
+        try
+            mktempdir() do dir
+                cfg = load_config(
+                    mock_config_toml(
+                        dir;
+                        ws_port,
+                        rest_port,
+                        symbols = ["AAPL"],
+                        log_to_file = true,
+                    ),
+                )
+                provider = MarketTickStreamer.make_provider(Val(:alpaca), cfg, "k", "s")
+                before = Base.CoreLogging.global_logger()
+                run_backfill(cfg; provider)
+                @test Base.CoreLogging.global_logger() === before
+                logs = filter(endswith(".log"), readdir(cfg.log_dir; join = true))
+                @test length(logs) == 1
+                # The handle was closed with the session.
+                if Sys.islinux()
+                    open_fds = [
+                        try
+                            readlink(f)
+                        catch
+                            ""
+                        end for f in readdir("/proc/self/fd"; join = true)
+                    ]
+                    @test !(only(logs) in open_fds)
+                end
+            end
+        finally
+            close(rest)
+        end
+        # The shutdown flag belongs to one session: muting HTTP teardown noise
+        # in one leaves another session's records alone.
+        mktempdir() do dir
+            p = joinpath(dir, "c.toml")
+            write(
+                p,
+                "[stream]\nsymbols = [\"A\"]\n[logging]\nlevel = \"info\"\nlog_dir = \"logs\"\n",
+            )
+            cfg = load_config(p)
+            stopping, running = Threads.Atomic{Bool}(true), Threads.Atomic{Bool}(false)
+            la, ioa = setup_logging(cfg; session_id = "a", shutting_down = stopping)
+            lb, iob = setup_logging(cfg; session_id = "b", shutting_down = running)
+            redirect_stderr(devnull) do
+                for logger in (la, lb)
+                    Base.CoreLogging.with_logger(logger) do
+                        @warn "socket teardown" _module = HTTP
+                        @warn "own record"
+                    end
+                end
+            end
+            close(ioa)
+            close(iob)
+            a = read(joinpath(cfg.log_dir, "a.log"), String)
+            b = read(joinpath(cfg.log_dir, "b.log"), String)
+            @test !occursin("socket teardown", a) && occursin("own record", a)
+            @test occursin("socket teardown", b) && occursin("own record", b)
+        end
+    end
+
+    @testset "tee: a consumer that closes its output does not end the others" begin
+        src = Channel{Trade}(10)
+        outs = tee(src, 2; capacity = 100)
+        close(outs[2])                                 # the analysis tap dies
+        for i in 1:20
+            put!(src, sample_trade(i))
+        end
+        close(src)
+        @test length(collect(outs[1])) == 20           # persistence got everything
+        # Every output closed: the fan-out stops instead of draining into nothing.
+        src = Channel{Trade}(10)
+        outs = tee(src, 1; capacity = 100)
+        close(outs[1])
+        put!(src, sample_trade(1))
+        close(src)
+        @test isempty(collect(outs[1]))
+    end
+
+    @testset "spill compaction within a file-handle budget" begin
+        day_ns = 86_400 * 1_000_000_000
+        mk(i, sym, day) = Trade(
+            sym,
+            1_753_886_600_000_000_000 + day * day_ns + i * 1_000_000,
+            0,
+            100.0 + i,
+            1.0 * i,
+            "V",
+            ["@"],
+            "C",
+            i,
+        )
+        # Three symbols over two days, interleaved so that with two handles
+        # every group is evicted and reopened many times.
+        trades = [mk(i, sym, day) for i in 1:40 for day in 0:1 for sym in ("A", "B", "C")]
+        mktempdir() do dir
+            sink = open_raw_sink(dir, "lru")
+            write_batch!(sink, trades)
+            close_sink!(sink)
+            mem = compact_raw([sink.path], joinpath(dir, "mem"); format = "csv")
+            spill = compact_raw(
+                [sink.path],
+                joinpath(dir, "spill");
+                format = "csv",
+                mem_fraction = 1e-12,
+                max_open_spill_files = 2,
+            )
+            @test length(mem) == length(spill) == 6
+            @test all(read(a) == read(b) for (a, b) in zip(mem, spill))
+            @test !any(startswith("compact_spill_"), readdir(dir))   # scratch removed
+            pool = MarketTickStreamer.SpillPool(mktempdir(dir), 2)
+            for key in
+                (("A", Date(2026, 1, 1)), ("B", Date(2026, 1, 1)), ("C", Date(2026, 1, 1)))
+                println(MarketTickStreamer._spill_handle!(pool, key), "x")
+                @test length(pool.handles) <= 2
+            end
+            @test length(pool.seen) == 3
+            @test !haskey(pool.handles, ("A", Date(2026, 1, 1)))      # least recently written
+            MarketTickStreamer._close_all!(pool)
+            @test isempty(pool.handles)
+            for bad in (
+                (; mem_fraction = 0.0),
+                (; mem_fraction = 1.5),
+                (; footprint_factor = 0.0),
+                (; spill_headroom = 0.5),
+                (; max_open_spill_files = 0),
+            )
+                @test_throws ArgumentError compact_raw(
+                    [sink.path],
+                    joinpath(dir, "x");
+                    bad...,
+                )
+            end
+            # The configuration-driven form files under the provider's calendar.
+            p = joinpath(dir, "c.toml")
+            write(
+                p,
+                "[provider]\nname = \"binance\"\nfeed = \"aggTrade\"\n[stream]\nsymbols = [\"A\"]\n" *
+                "[storage]\ndata_dir = \"out\"\n[backfill]\nfeed = \"aggTrade\"\npage_limit = 1000\n" *
+                "[limits]\nmax_open_spill_files = 2\n",
+            )
+            cfg = load_config(p)
+            written = compact_raw(cfg, [sink.path])
+            @test all(startswith(cfg.processed_dir), written)
+            # 2025-07-30 14:43 UTC: one UTC date per day offset, as under New York here
+            @test length(written) == 6
+        end
     end
 
     @testset "alpaca REST: clock + paginated historical trades" begin

@@ -222,6 +222,7 @@ function mock_config_toml(
     start_date = "2026-07-29",
     end_date = "2026-07-29",
     max_session_hours = 0.05,
+    log_to_file = false,
 )
     path = joinpath(dir, "config.toml")
     write(
@@ -260,7 +261,7 @@ rate_limit_sleep_s = 0.01
 
 [logging]
 level = "warn"
-log_to_file = false
+log_to_file = $log_to_file
 log_dir = "$(joinpath(dir, "logs"))"
 
 [alpaca]

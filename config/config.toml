@@ -1,4 +1,4 @@
-# MarketTickStreamer configuration. Credentials come from `.env` (see `.env.example`).
+# MarketTickStreamer configuration. Credentials come from the file named in [credentials] (see `.env.example`).
 
 [provider]
 name = "alpaca"          # provider adapter; one of: "alpaca" | "binance"
@@ -6,6 +6,9 @@ name = "alpaca"          # provider adapter; one of: "alpaca" | "binance"
 #   alpaca : "iex" | "delayed_sip" | "sip"
 #   binance: "trade" | "aggTrade"
 feed = "delayed_sip"
+
+[credentials]
+env_file = "../.env"             # KEY=value file holding the API credentials; relative to this file or absolute
 
 [stream]
 # Symbols to subscribe; at most limits.max_symbols entries
@@ -20,7 +23,7 @@ reconnect_max_delay_s = 60.0     # backoff cap [s]; >= reconnect_base_delay_s
 stale_timeout_s = 120.0          # watchdog: reconnect after this frameless interval [s]; > 0
 
 [storage]
-data_dir = "data"                # data root; relative to project root or absolute
+data_dir = "../data"             # data root; relative to this file or absolute
 raw_subdir = "raw"               # append-only NDJSON session files
 processed_subdir = "processed"   # compacted per-day, per-symbol files
 flush_interval_s = 30.0          # sink flush interval [s]; > 0
@@ -34,6 +37,10 @@ channel_capacity = 100000        # in-flight tick buffer [ticks]; >= 1
 max_symbols = 30                 # subscription cap; >= 1
 min_free_disk_gb = 2.0           # minimum free space to start or continue a session [GiB]; >= 0
 max_live_heap_mb = 4096          # live-heap ceiling for backfill and compaction [MiB]; > 0
+max_open_spill_files = 256       # spill-compaction file handles held open; >= 1
+compact_mem_fraction = 0.5       # in-memory compaction up to this share of free RAM; 0 < x <= 1
+spill_headroom = 1.1             # scratch space required, as a multiple of the input size; >= 1
+compact_footprint_factor = 4.0   # estimated in-memory footprint per input byte; > 0
 
 [replay]
 pace = "recorded"                # one of: "recorded" | "max"
@@ -48,6 +55,11 @@ feed = "sip"                     # historical feed; alpaca: "iex" | "sip"; binan
 page_limit = 10000               # rows per REST page; 1 to the provider maximum (alpaca 10000, binance 1000)
 rate_limit_sleep_s = 0.35        # pause between REST pages [s]; >= 0
 resume = true                    # skip (symbol, day) pairs already present in processed/
+
+[rest]
+request_timeout_s = 30           # read timeout of a REST request [s]; >= 1
+connect_timeout_s = 10           # connection timeout of a REST request [s]; >= 1
+max_retries = 5                  # retries on transient failures (429, 5xx, timeouts, dropped connections); >= 0
 
 [quality]
 # Sale-condition codes excluded from the price-forming population, by tape
@@ -67,7 +79,7 @@ rate_window_s = 300.0            # rate-history window [s]; >= refresh_s
 [logging]
 level = "info"                   # one of: "debug" | "info" | "warn" | "error"
 log_to_file = true
-log_dir = "logs"                 # relative to project root
+log_dir = "../logs"              # relative to this file or absolute
 
 [alpaca]
 # Endpoint roots — overridable for testing against a mock server.

@@ -33,6 +33,25 @@ Notable changes to MarketTickStreamer. The format follows
   `10⁻¹` and one at 0.5 read `1`. Intermediate ticks now carry their mantissa.
 
 ### Changed
+- **Breaking: relative paths in a configuration are relative to the
+  configuration file**, no longer to the package directory. For a package
+  installed with `Pkg.add(url = ...)` that directory is a read-only depot
+  path which Pkg replaces on every update, so the defaults could not work for
+  exactly the projects that consume the package. The shipped configuration
+  now reads `data_dir = "../data"`, `log_dir = "../logs"`, and a new
+  `[credentials] env_file = "../.env"` replaces the hard-wired `.env`
+  location; `load_credentials!` takes the configuration (or an explicit
+  `env_path`). `load_config()` without an argument is for a clone of the
+  repository and is refused in an installed copy, where the shipped file is a
+  template (`MarketTickStreamer.DEFAULT_CONFIG`) to copy.
+- **Breaking: logging is scoped to the session.** `run_stream` and
+  `run_backfill` run under their own logger and close its file when they end;
+  they no longer replace the global logger. `setup_logging` returns
+  `(logger, io)`.
+- **Breaking: no process-global shutdown flag.** `LiveSession.stop` and the
+  watchdog flags are `Threads.Atomic`; the session's stop flag is what mutes
+  HTTP teardown noise in its own logger, so stopping one session no longer
+  silences another's records. `live_source` takes `stop`.
 - **Breaking: the price-forming population is redefined.**
   `NON_PRICE_CONDITIONS` now follows the sale-condition matrices of the tape
   plans (CTS Pillar output specification 2.11b, UTP data feed services
@@ -116,6 +135,23 @@ Notable changes to MarketTickStreamer. The format follows
   and overview panels aligned on one grid.
 
 ### Added
+- REST timeouts and transport retry. Every request carries a read and a
+  connection timeout, and timeouts, refused or dropped connections are
+  retried like 429/5xx. A request against a server that accepted the
+  connection and went silent used to block a backfill for good.
+  `RestPolicy`, a new `[rest]` table (`request_timeout_s`,
+  `connect_timeout_s`, `max_retries`), and a `rest` field on both providers.
+- Spill compaction holds at most `limits.max_open_spill_files` files open
+  (least recently written closed first, reopened in append mode), where it
+  held one per symbol-day and ran into the file-descriptor limit on a large
+  input. Its thresholds are configuration: `limits.compact_mem_fraction`,
+  `limits.spill_headroom`, `limits.compact_footprint_factor`.
+- `compact_raw(cfg, raw_paths)` takes the output directory, format, heap
+  ceiling, spill thresholds and the provider's calendar from the
+  configuration. `scripts/compact.jl` uses it; it filed a Binance capture
+  under the New York calendar before.
+- `tee` drops an output its consumer closed and keeps feeding the others,
+  and its fan-out task is monitored.
 - `observed_round_lot`, and a `round_lot` column in `session_report`: the
   venue's round lot read off the tape as one share more than the largest
   print still flagged an odd lot.

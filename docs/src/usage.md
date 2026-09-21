@@ -8,8 +8,10 @@ honor.
 
 ## Credentials
 
-Keys come from `.env` or the process environment, never from the
-configuration file. Copy the template and fill it in:
+Keys come from the file named by `credentials.env_file` — `.env` beside the
+repository root in the shipped configuration — or from the process
+environment, never from the configuration file itself. Copy the template and
+fill it in:
 
 ```bash
 cp .env.example .env      # then set ALPACA_API_KEY_ID and ALPACA_SECRET_KEY
@@ -54,6 +56,19 @@ On the free tier `delayed_sip` is the scientifically stronger choice: it is
 the complete consolidated tape, and a fixed 15-minute offset is irrelevant
 to any analysis that is not trading on it.
 
+## `[credentials]`
+
+| Key | Meaning |
+| --- | --- |
+| `env_file` | `KEY=value` file holding the API credentials, relative to the configuration file unless absolute. |
+
+Relative paths are resolved against the directory of the configuration file,
+so a configuration can be copied into any project and keeps working.
+`load_config()` without an argument reads the repository's own
+`config/config.toml`, and is refused in an installed copy of the package,
+where that file is a read-only template to copy
+(`MarketTickStreamer.DEFAULT_CONFIG`).
+
 ## `[stream]`
 
 | Key | Meaning |
@@ -76,7 +91,7 @@ loop indefinitely.
 
 | Key | Meaning |
 | --- | --- |
-| `data_dir` | Root of the data tree, relative to the project root unless absolute. |
+| `data_dir` | Root of the data tree, relative to the configuration file, or absolute. |
 | `raw_subdir` | Append-only NDJSON session files. |
 | `processed_subdir` | Compacted per-symbol per-day files. |
 | `flush_interval_s` | Sink flush interval. |
@@ -93,6 +108,10 @@ loop indefinitely.
 | `max_symbols` | Subscription cap. |
 | `min_free_disk_gb` | Refuse to start, and stop an active session, below this free space. |
 | `max_live_heap_mb` | Live-heap ceiling for backfill and compaction; the streaming paths check it and spill rather than exhaust memory. |
+| `max_open_spill_files` | File handles a spilling compaction keeps open at once. |
+| `compact_mem_fraction` | Share of the free RAM an in-memory compaction may claim; beyond it the run spills. |
+| `spill_headroom` | Scratch space a spilling compaction requires, as a multiple of the input size. |
+| `compact_footprint_factor` | Estimated in-memory footprint per byte of input, which decides whether a file fits in memory. |
 
 These are the safety margins. They are the sole source of truth for the
 cutoffs — no threshold is hardcoded elsewhere in the pipeline.
@@ -119,6 +138,14 @@ The sentinels keep a committed configuration from going stale. They count
 calendar days, not trading days: a window may land on a weekend or a holiday
 and return nothing, which the session report will show as an empty capture
 rather than an error.
+
+## `[rest]`
+
+| Key | Meaning |
+| --- | --- |
+| `request_timeout_s` | Read timeout of a REST request. |
+| `connect_timeout_s` | Connection timeout of a REST request. |
+| `max_retries` | Retries on transient failures: 429, 5xx, timeouts and dropped connections. |
 
 ## `[quality]`
 
@@ -157,7 +184,7 @@ Attach-mode terminal dashboard, read-only and opt-in.
 | --- | --- |
 | `level` | `"debug"`, `"info"`, `"warn"` or `"error"`. |
 | `log_to_file` | Tee the log to a per-session file under `log_dir`. |
-| `log_dir` | Log directory, relative to the project root. |
+| `log_dir` | Log directory, relative to the configuration file, or absolute. |
 
 File logs are always flushed and are sanitized of terminal control
 sequences, so a killed session still leaves a readable tail.
