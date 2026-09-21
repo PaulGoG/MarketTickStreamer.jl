@@ -39,8 +39,13 @@ ws_url(p::AlpacaProvider) = "$(p.ws_base)/$(p.feed)"
 
 # US equities: the consolidated tape files a print under the New York calendar
 # date, and `sip` is the only backfill feed with the full tape.
-provider_spec(::Val{:alpaca}) =
-    ProviderSpec(["iex", "sip", "delayed_sip"], ["iex", "sip"], tz"America/New_York", true)
+provider_spec(::Val{:alpaca}) = ProviderSpec(
+    ["iex", "sip", "delayed_sip"],
+    ["iex", "sip"],
+    tz"America/New_York",
+    true,
+    10_000,
+)
 
 make_provider(::Val{:alpaca}, cfg::Config, key::AbstractString, secret::AbstractString) =
     AlpacaProvider(cfg, key, secret)
@@ -200,6 +205,10 @@ function _each_trades_page(
     page_limit::Integer,
     rate_sleep_s::Real,
 )
+    max_limit = provider_spec(Val(:alpaca)).max_page_limit
+    1 <= page_limit <= max_limit || throw(
+        ArgumentError("page_limit must be in 1:$max_limit for Alpaca, got $page_limit"),
+    )
     url = "$(p.data_base)/v2/stocks/$(symbol)/trades"
     query = Dict{String,String}(
         "start" => String(start_str),

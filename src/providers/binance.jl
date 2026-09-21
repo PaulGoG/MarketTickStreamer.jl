@@ -47,7 +47,7 @@ end
 # has no local trading day to speak of, and UTC is the convention its own
 # timestamps and daily data dumps use.
 provider_spec(::Val{:binance}) =
-    ProviderSpec(["trade", "aggTrade"], ["aggTrade"], tz"UTC", false)
+    ProviderSpec(["trade", "aggTrade"], ["aggTrade"], tz"UTC", false, 1_000)
 
 make_provider(::Val{:binance}, cfg::Config, ::AbstractString, ::AbstractString) =
     BinanceProvider(cfg)
@@ -142,6 +142,9 @@ with a single `startTime` request and then walked forward with
 `fromId = last id + 1` until a row's timestamp passes the end of the range.
 Walking hour-wide windows instead would issue 24 requests a day and still
 truncate any hour holding more than `page_limit` trades, silently.
+`page_limit` above the venue maximum of 1000 is rejected here, because the
+server would clamp it silently and the short-page termination rule would then
+end the walk after the first page.
 
 **`aggTrade` is not the tape.** Binance aggregates executions that filled at
 one price from one taker order into a single row, so an aggregate trade is a
@@ -166,6 +169,13 @@ function historical_trades(
             "Binance backfill supports only the \"aggTrade\" feed, got \"$feed\": " *
             "/api/v3/trades and /api/v3/historicalTrades cannot seek by time",
         ),
+    )
+    max_limit = provider_spec(Val(:binance)).max_page_limit
+    # The server clamps an over-limit request to its maximum and answers 200,
+    # so the short-page test below would read the clamped page as the end of
+    # the tape and truncate the day after one request.
+    1 <= page_limit <= max_limit || throw(
+        ArgumentError("page_limit must be in 1:$max_limit for Binance, got $page_limit"),
     )
     sym = uppercase(String(symbol))
     url = "$(p.rest_base)/api/v3/aggTrades"

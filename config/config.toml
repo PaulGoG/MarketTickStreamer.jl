@@ -4,55 +4,54 @@
 name = "alpaca"          # provider adapter; one of: "alpaca" | "binance"
 # Live feed. Valid values depend on the provider:
 #   alpaca : "iex" | "delayed_sip" | "sip"
-#   binance: "trade" (every execution) | "aggTrade" (one taker order's fill)
+#   binance: "trade" | "aggTrade"
 feed = "delayed_sip"
 
 [stream]
 # Symbols to subscribe; at most limits.max_symbols entries
 symbols = ["AAPL", "NVDA", "TSLA", "JPM", "ERIE", "SPY"]
 channels = ["trades"]            # subset of: "trades" | "quotes" | "bars"
-require_market_open = true       # query market clock before connecting; exit if closed
-wait_for_open = false            # if closed: sleep until next_open instead of exiting
-stop_at_market_close = true      # schedule graceful stop at the session's next_close
-reconnect_max_retries = 10       # per-disconnect reconnection attempts before giving up
-reconnect_base_delay_s = 1.0     # backoff base [s]; delay = base * 2^attempt, jittered
-reconnect_max_delay_s = 60.0     # backoff cap [s]
-stale_timeout_s = 120.0          # watchdog: force-reconnect after this frameless interval [s]
+require_market_open = true       # require an open market to start
+wait_for_open = false            # wait for the next open when closed
+stop_at_market_close = true      # stop at the session's close
+reconnect_max_retries = 10       # reconnection attempts per disconnect; >= 0
+reconnect_base_delay_s = 1.0     # backoff base [s]; > 0
+reconnect_max_delay_s = 60.0     # backoff cap [s]; >= reconnect_base_delay_s
+stale_timeout_s = 120.0          # watchdog: reconnect after this frameless interval [s]; > 0
 
 [storage]
-data_dir = "data"                # relative to project root (absolute paths also accepted)
+data_dir = "data"                # data root; relative to project root or absolute
 raw_subdir = "raw"               # append-only NDJSON session files
 processed_subdir = "processed"   # compacted per-day, per-symbol files
-flush_interval_s = 30.0          # sink flush interval [s]; flushes at interval or max_ticks
-flush_max_ticks = 5000           # sink flush batch-size threshold
+flush_interval_s = 30.0          # sink flush interval [s]; > 0
+flush_max_ticks = 5000           # sink flush batch-size threshold; >= 1
 processed_format = "csv"         # one of: "csv" | "arrow"
 
 [limits]
-max_session_hours = 8.0          # hard stop for a live session [h]
-max_raw_file_mb = 1024           # roll to a new raw file beyond this size [MB]
-channel_capacity = 100000        # in-flight tick buffer; producer blocks when full
-max_symbols = 30                 # subscription cap
-min_free_disk_gb = 2.0           # refuse to start / stop streaming below this free space [GiB]
-max_live_heap_mb = 4096           # live-heap ceiling for backfill/compaction [MiB]; > 0
+max_session_hours = 8.0          # hard stop for a live session [h]; > 0
+max_raw_file_mb = 1024           # roll to a new raw file beyond this size [MiB]; >= 1
+channel_capacity = 100000        # in-flight tick buffer [ticks]; >= 1
+max_symbols = 30                 # subscription cap; >= 1
+min_free_disk_gb = 2.0           # minimum free space to start or continue a session [GiB]; >= 0
+max_live_heap_mb = 4096          # live-heap ceiling for backfill and compaction [MiB]; > 0
 
 [replay]
-pace = "recorded"                # one of: "recorded" (honor inter-arrival times) | "max"
+pace = "recorded"                # one of: "recorded" | "max"
 speed = 1.0                      # time-compression factor when pace = "recorded"; > 0
+clock = "auto"                   # pacing timestamp; one of: "auto" | "recv" | "exchange"
 
 [backfill]
-# Dates are resolved on the provider's own calendar (alpaca: America/New_York,
-# binance: UTC), which is also the calendar rows are filed under.
-start_date = "today-2d"          # inclusive exchange date; ISO "YYYY-MM-DD" or "today" / "today-<N>d"
-end_date = "today-1d"            # inclusive; >= start_date; same forms; calendar days, not trading days
+# Dates are exchange dates on the provider's calendar (alpaca: America/New_York, binance: UTC).
+start_date = "today-2d"          # inclusive start; ISO "YYYY-MM-DD" or "today" / "today-<N>d"
+end_date = "today-1d"            # inclusive end; >= start_date; same forms
 feed = "sip"                     # historical feed; alpaca: "iex" | "sip"; binance: "aggTrade"
-page_limit = 10000               # rows per REST page; alpaca maximum 10000, binance 1000
-rate_limit_sleep_s = 0.35        # pause between REST pages [s]; 0.35 measured at ~72 req/min, alpaca cap 200
+page_limit = 10000               # rows per REST page; 1 to the provider maximum (alpaca 10000, binance 1000)
+rate_limit_sleep_s = 0.35        # pause between REST pages [s]; >= 0
 resume = true                    # skip (symbol, day) pairs already present in processed/
 
 [quality]
-# Sale-condition codes that disqualify a print from a price path, by tape
-# ("A"/"B": CTA-processed, "C": UTP-processed, "O": OTC). Analysis-time only —
-# capture is never filtered. Codes are provider-normalized strings.
+# Sale-condition codes excluded from the price-forming population, by tape
+# ("A"/"B": CTA, "C": UTP, "O": OTC).
 [quality.non_price_conditions]
 A = ["B", "C", "H", "I", "M", "Q", "R", "U", "V", "7", "9"]
 B = ["B", "C", "H", "I", "M", "Q", "R", "U", "V", "7", "9"]
@@ -60,7 +59,7 @@ C = ["C", "H", "I", "M", "Q", "R", "U", "V", "7", "9"]
 O = ["C", "I", "N", "R", "U", "V"]
 
 [monitor]
-# Attach-mode terminal dashboard (scripts/monitor.jl); read-only, opt-in.
+# Terminal dashboard (scripts/monitor.jl).
 refresh_s = 2.0                  # dashboard refresh interval [s]; > 0
 top_symbols = 10                 # bar-plot rows; >= 1
 rate_window_s = 300.0            # rate-history window [s]; >= refresh_s
@@ -78,7 +77,6 @@ data_base = "https://data.alpaca.markets"
 ws_base = "wss://stream.data.alpaca.markets/v2"
 
 [binance]
-# Endpoint roots — overridable for testing against a mock server. Spot market
-# data is public, so this provider needs no credentials.
+# Endpoint roots — overridable for testing against a mock server.
 rest_base = "https://api.binance.com"
 ws_base = "wss://stream.binance.com:9443"

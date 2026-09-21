@@ -23,22 +23,28 @@ those axes, which is what keeps the interface honest.
 abstract type AbstractProvider end
 
 """
-    ProviderSpec(; feeds, backfill_feeds, tz, needs_credentials)
+    ProviderSpec(feeds, backfill_feeds, tz, needs_credentials, max_page_limit)
 
 What the configuration layer must know about a provider *before* any provider
 object exists: which feed names it accepts, the calendar its tape is filed
-under, and whether it needs credentials at all.
+under, whether it needs credentials at all, and the largest REST page the
+venue serves.
 
 Without this the config layer has to hard-code one vendor's vocabulary, which
 is how `provider.feed` came to be validated against Alpaca's feed names for
 every provider, and how a 24-hour venue would have had its days cut at
 midnight in New York.
+
+`max_page_limit` exists because a venue may clamp an over-limit request
+instead of rejecting it, and a clamped page is indistinguishable from the last
+page of the tape.
 """
 struct ProviderSpec
     feeds::Vector{String}
     backfill_feeds::Vector{String}
     tz::TimeZone
     needs_credentials::Bool
+    max_page_limit::Int
 end
 
 """Provider names this build knows how to construct."""
