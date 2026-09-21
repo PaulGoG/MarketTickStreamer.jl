@@ -1,0 +1,28 @@
+[deps]
+AllocCheck = "9b6a8646-10ed-4001-bbdc-1d2f46dfbb1a"
+Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
+CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+ExplicitImports = "7d51a73a-1435-4ff3-83d9-f097790105c7"
+HTTP = "cd3eb016-35fb-5094-929b-558a96fad6f3"
+JET = "c3a54625-cd67-489e-a8e7-0a5a0ff4e31b"
+JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
+MarketTickStreamer = "57360e3f-416d-4026-814a-7f453c6dc1fa"
+OnlineStats = "a15396b6-48d5-5d58-9928-6d29437db91e"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
+TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+TimeZones = "f269a46b-ccf7-5d73-abea-4c690281aa53"
+
+[compat]
+AllocCheck = "0.2"
+Aqua = "0.8"
+ExplicitImports = "1.15"
+JET = "0.12"
+OnlineStats = "1.7"
+julia = "1.12"
+
+[sources]
+MarketTickStreamer = {path = ".."}
