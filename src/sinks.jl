@@ -233,9 +233,10 @@ function _write_group(
     )
     dir = joinpath(out_dir, sym)
     mkpath(dir)
-    path = _safepath(joinpath(dir, "$(date).$(format == "csv" ? "csv" : "arrow")"))
-    format == "csv" ? CSV.write(path, out) : Arrow.write(path, out)
-    return path
+    path = joinpath(dir, "$(date).$(format == "csv" ? "csv" : "arrow")")
+    return _safesave(path) do tmp
+        format == "csv" ? CSV.write(tmp, out) : Arrow.write(tmp, out)
+    end
 end
 
 """
@@ -244,9 +245,10 @@ end
                 max_live_heap_mb = nothing, scratch_dir = nothing) -> Vector{String}
 
 Compact raw NDJSON files into per-symbol, per-trading-day analysis files
-(`out_dir/SYMBOL/YYYY-MM-DD.csv|.arrow`), sorted by `time_ns`. Existing
-outputs are never overwritten — a ` #N` suffixed sibling is written instead
-(safesave semantics). Returns the list of files written.
+(`out_dir/SYMBOL/YYYY-MM-DD.csv|.arrow`), sorted by `time_ns`. An existing
+output is never destroyed: the new file takes the canonical name and the one
+it displaces is kept as a numbered backup `YYYY-MM-DD_#N.csv|.arrow`
+(safesave semantics, see `_safesave`). Returns the list of files written.
 
 `dedup = true` drops exact duplicate prints (reconnection double-delivery,
 overlapping backfill/live captures) via [`deduplicate_trades`](@ref), logging the
@@ -393,13 +395,60 @@ function _compact_spill(
     return written
 end
 
-# First non-existing variant of `path`: path, then "name #2.ext", "name #3.ext", …
-function _safepath(path::AbstractString)
-    isfile(path) || return String(path)
+# First free backup name for `path`: "<base>_#1<ext>", "<base>_#2<ext>", …
+function _backup_path(path::AbstractString)
     base, ext = splitext(path)
-    n = 2
-    while isfile("$base #$n$ext")
+    n = 1
+    while ispath("$(base)_#$(n)$(ext)")
         n += 1
     end
-    return "$base #$n$ext"
+    return "$(base)_#$(n)$(ext)"
+end
+
+"""
+    _safesave(write_fn, path) -> String
+
+Write a file through `write_fn(tmp_path)` so that `path` always holds the
+newest complete result and nothing already there is lost.
+
+The content goes to `<base>.partial<ext>` in the same directory first (the
+extension is kept last because writers such as `FileIO.save` infer the format
+from it). If `path` already exists it is then preserved as the first free
+`<base>_#N<ext>`, `N` from 1 — a hard link where the filesystem allows one, a
+copy otherwise — and finally the partial file is renamed onto `path`. The
+rename replaces atomically on one filesystem, so at every instant `path` is
+either the previous complete file or the new complete one, never absent and
+never half-written. Backups are numbered in order of displacement: `_#1` is
+the oldest.
+
+If `write_fn` throws, the partial file is removed, `path` is left untouched
+and the exception propagates.
+
+These are the semantics of DrWatson's `safesave` — newest data canonical,
+prior results kept as numbered backups — without the dependency.
+"""
+function _safesave(write_fn, path::AbstractString)
+    base, ext = splitext(path)
+    partial = base * ".partial" * ext
+    try
+        write_fn(partial)
+    catch
+        rm(partial; force = true)
+        rethrow()
+    end
+    ispath(path) && _link_or_copy(path, _backup_path(path))
+    Base.Filesystem.rename(partial, path)
+    return String(path)
+end
+
+# Hard links are refused by some filesystems (FAT, several network mounts);
+# the backup is then a plain copy.
+function _link_or_copy(src::AbstractString, dst::AbstractString)
+    try
+        hardlink(src, dst)
+    catch e
+        e isa Base.IOError || rethrow()
+        cp(src, dst)
+    end
+    return dst
 end

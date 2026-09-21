@@ -171,7 +171,8 @@ validated offline, reproducibly, before it is pointed at the wire.</sub>
   snapshot.
 - `data/processed/SYMBOL/YYYY-MM-DD.csv|.arrow` — compacted, time-sorted
   per-day files for the analysis pipeline. Existing files are never
-  overwritten (` #N` suffix siblings instead).
+  destroyed (the new file takes the canonical name; the displaced one is
+  kept as a `_#N` backup).
 - Timestamps are Int64 nanoseconds since the UNIX epoch (UTC) everywhere;
   `time_ns` is the exchange timestamp, `recv_ns` local receive time
   (`0` marks backfilled records).

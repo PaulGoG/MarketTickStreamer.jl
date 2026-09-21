@@ -225,8 +225,7 @@ function _snapshot_manifest(raw_dir::AbstractString, sid::AbstractString)
     src = _active_manifest()
     src === nothing && return ""
     mkpath(raw_dir)
-    dst = _safepath(joinpath(raw_dir, "$(sid).manifest.toml"))
-    cp(src, dst)
+    dst = _safesave(tmp -> cp(src, tmp), joinpath(raw_dir, "$(sid).manifest.toml"))
     return basename(dst)
 end
 
@@ -279,9 +278,9 @@ function write_session_meta(
             String(f) => _toml_value(getfield(cfg, f)) for f in fieldnames(Config)
         ),
     )
-    path = _safepath(joinpath(cfg.raw_dir, "$(sid).meta.toml"))
-    open(io -> TOML.print(io, meta), path, "w")
-    return path
+    return _safesave(joinpath(cfg.raw_dir, "$(sid).meta.toml")) do tmp
+        open(io -> TOML.print(io, meta), tmp, "w")
+    end
 end
 
 """

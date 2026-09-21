@@ -62,7 +62,14 @@ instead of dropping or buffering unboundedly.
 2. **Processed** — per-symbol, per-trading-day (America/New_York calendar)
    CSV or Arrow, time-sorted, produced by `compact_raw`. CSV is the default
    per project convention; Arrow is one config switch away when volume
-   demands it. Existing files get ` #N` siblings, never overwritten.
+   demands it. A rewrite never destroys a result: the new file takes the
+   canonical name and the file it displaces is kept as a numbered backup,
+   `_#1`, `_#2`, …, so the canonical path is always the newest data. These
+   are the semantics of DrWatson's `safesave`, implemented in a dozen lines
+   instead of taken as a dependency, because DrWatson would bring JLD2 and
+   FileIO's loader stack into a library whose processed formats are CSV and
+   Arrow. The write goes to a `.partial` file first and is renamed into
+   place, so a reader never sees a half-written day.
 
 Scale-up path (not yet needed at a-few-symbols IEX volume): swap the raw
 layer to `Arrow.append` on stream-format files and query with DuckDB.jl —

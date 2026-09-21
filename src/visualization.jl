@@ -556,9 +556,10 @@ end
 
 Render one diagnostic figure per (symbol, trading day) found in the raw
 NDJSON `raw_paths`, saved as `out_dir/SYMBOL_YYYY-MM-DD.pdf|png` (safesave —
-existing files are never overwritten). Groups with fewer than `min_trades`
-ticks are skipped with an `@info` (distribution panels are meaningless).
-PNG output is written at `px_per_unit = 4`. Returns the files written.
+the new figure takes the canonical name, a displaced one is kept as `_#N`).
+Groups with fewer than `min_trades` ticks are skipped with an `@info`
+(distribution panels are meaningless). PNG output is written at
+`px_per_unit = 4`. Returns the files written.
 """
 function save_session_figures(
     raw_paths::AbstractVector{<:AbstractString},
@@ -585,8 +586,9 @@ function save_session_figures(
             end
             fig = session_figure(g; tz)
             for fmt in formats
-                path = _safepath(joinpath(out_dir, "$(sym)_$(date).$(fmt)"))
-                fmt == "png" ? save(path, fig; px_per_unit = 4) : save(path, fig)
+                path = _safesave(joinpath(out_dir, "$(sym)_$(date).$(fmt)")) do tmp
+                    fmt == "png" ? save(tmp, fig; px_per_unit = 4) : save(tmp, fig)
+                end
                 push!(written, path)
             end
         end
@@ -604,11 +606,11 @@ save_session_figures(path::AbstractString, args...; kwargs...) =
                           min_days = 2) -> Vector{String}
 
 Render one multi-day [`overview_figure`](@ref) per symbol from the processed
-tree (`processed_dir/SYMBOL/YYYY-MM-DD.csv|.arrow`; safesave ` #N` siblings
-are ignored — the base file per day is authoritative). `symbols`, `from`,
-and `to` restrict the sweep. Output: `out_dir/SYMBOL_<from>_<to>.pdf|png`
-(safesave). Days are loaded one symbol at a time, so memory stays bounded
-by one symbol's span.
+tree (`processed_dir/SYMBOL/YYYY-MM-DD.csv|.arrow`; safesave `_#N` backups
+and `.partial` files are ignored — the base file per day is authoritative
+and always the newest). `symbols`, `from`, and `to` restrict the sweep.
+Output: `out_dir/SYMBOL_<from>_<to>.pdf|png` (safesave). Days are loaded one
+symbol at a time, so memory stays bounded by one symbol's span.
 """
 function save_overview_figures(
     processed_dir::AbstractString,
@@ -640,8 +642,9 @@ function save_overview_figures(
             fig = overview_figure(sym, days; tz)
             span = "$(days[1][1])_$(days[end][1])"
             for fmt in formats
-                path = _safepath(joinpath(out_dir, "$(sym)_$(span).$(fmt)"))
-                fmt == "png" ? save(path, fig; px_per_unit = 4) : save(path, fig)
+                path = _safesave(joinpath(out_dir, "$(sym)_$(span).$(fmt)")) do tmp
+                    fmt == "png" ? save(tmp, fig; px_per_unit = 4) : save(tmp, fig)
+                end
                 push!(written, path)
             end
         end

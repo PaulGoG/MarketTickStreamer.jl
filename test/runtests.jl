@@ -274,12 +274,47 @@ end
             files = compact_raw([sink.path], out; format = "csv")
             @test length(files) == 2                       # one per symbol, same day
             @test all(isfile, files)
-            # safesave: recompacting must not overwrite
+            # safesave: a recompaction takes the canonical names and the files
+            # it displaces survive as numbered backups.
+            before = Dict(f => read(f) for f in files)
             files2 = compact_raw([sink.path], out; format = "csv")
-            @test isempty(intersect(files, files2))
-            @test any(occursin("#2", f) for f in files2)
+            @test files2 == files
+            for f in files
+                base, ext = splitext(f)
+                @test isfile(f)
+                @test read(base * "_#1" * ext) == before[f]
+            end
+            @test !any(occursin(".partial", f) for (_, _, fs) in walkdir(out) for f in fs)
             arrow_files = compact_raw([sink.path], joinpath(dir, "arrow"); format = "arrow")
             @test length(arrow_files) == 2
+        end
+    end
+
+    @testset "safesave: newest canonical, backups numbered, failed write harmless" begin
+        safesave = MarketTickStreamer._safesave
+        mktempdir() do dir
+            p = joinpath(dir, "x.csv")
+            @test safesave(tmp -> write(tmp, "one"), p) == p
+            @test read(p, String) == "one"
+            @test readdir(dir) == ["x.csv"]                # first write leaves no backup
+            safesave(tmp -> write(tmp, "two"), p)
+            safesave(tmp -> write(tmp, "three"), p)
+            @test read(p, String) == "three"
+            @test read(joinpath(dir, "x_#1.csv"), String) == "one"   # oldest first
+            @test read(joinpath(dir, "x_#2.csv"), String) == "two"
+            # A writer that dies leaves the canonical file as it was, and no debris.
+            @test_throws ErrorException safesave(p) do tmp
+                write(tmp, "half")
+                error("writer died")
+            end
+            @test read(p, String) == "three"
+            @test sort(readdir(dir)) == ["x.csv", "x_#1.csv", "x_#2.csv"]
+            # The temporary name keeps the extension last: FileIO infers the
+            # format of a figure from it.
+            seen = Ref("")
+            safesave(tmp -> (seen[] = tmp; write(tmp, "four")), p)
+            @test endswith(seen[], ".partial.csv")
+            @test dirname(seen[]) == dir
         end
     end
 

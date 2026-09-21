@@ -39,6 +39,22 @@ Notable changes to MarketTickStreamer. The format follows
   `close_ns - time_ns` is the time the market took to transact the bar's
   fixed quantity; for a streamed one-minute bar it is `time_ns` plus 60 s.
   Positional construction of `Bar` takes eleven arguments.
+- **Breaking: rewriting a result keeps the newest data at the canonical
+  path.** Compacted day files, session sidecars, manifest snapshots and
+  figures used to be written beside an existing file as `name #2.ext`, which
+  left the stale file under the name every reader opens. The new file now
+  takes the canonical name and the one it displaces is kept as `name_#1.ext`,
+  `name_#2.ext`, … (oldest first), the semantics of DrWatson's `safesave`.
+  Writes go to `name.partial.ext` and are renamed into place, so the
+  canonical path never holds a half-written file, and a failed write leaves
+  it untouched. Files named ` #N` by earlier versions are left alone and are
+  still ignored by the readers.
+- **Breaking: `Bar` has a closing instant.** A new third field `close_ns`
+  follows `time_ns`. For `tick_bars`, `volume_bars` and `dollar_bars` it is
+  the timestamp of the print that completed the bar, so
+  `close_ns - time_ns` is the time the market took to transact the bar's
+  fixed quantity; for a streamed one-minute bar it is `time_ns` plus 60 s.
+  Positional construction of `Bar` takes eleven arguments.
 - `load_config` checks every key for type and documented bounds and rejects
   unknown tables and keys, so a misspelt key no longer falls back to its
   default. A configuration that loaded before may now be rejected.
