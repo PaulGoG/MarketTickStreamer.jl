@@ -31,6 +31,7 @@ struct Config
     flush_interval_s::Float64
     flush_max_ticks::Int
     processed_format::String
+    processed_compression::String
     # [limits]
     max_session_hours::Float64
     max_raw_file_mb::Int
@@ -115,6 +116,7 @@ const CONFIG_KEYS = Dict{String,Vector{String}}(
         "flush_interval_s",
         "flush_max_ticks",
         "processed_format",
+        "processed_compression",
     ],
     "limits" => [
         "max_session_hours",
@@ -331,6 +333,19 @@ function load_config(path::AbstractString = _default_config_path())
     fmt = _cfg_value(sto, "storage", "processed_format", String, "csv")
     fmt in ("csv", "arrow") ||
         throw(ArgumentError("storage.processed_format must be \"csv\" or \"arrow\""))
+    compression = _cfg_value(sto, "storage", "processed_compression", String, "none")
+    compression in ("none", "zstd", "lz4") || throw(
+        ArgumentError(
+            "storage.processed_compression must be one of \"none\", \"zstd\", " *
+            "\"lz4\", got \"$compression\"",
+        ),
+    )
+    (compression == "none" || fmt == "arrow") || throw(
+        ArgumentError(
+            "storage.processed_compression = \"$compression\" needs " *
+            "storage.processed_format = \"arrow\"",
+        ),
+    )
     flush_interval = _cfg_value(sto, "storage", "flush_interval_s", Float64, 30.0)
     flush_interval > 0 ||
         throw(ArgumentError("storage.flush_interval_s must be > 0, got $flush_interval"))
@@ -508,6 +523,7 @@ function load_config(path::AbstractString = _default_config_path())
         flush_interval,
         flush_max_ticks,
         fmt,
+        compression,
         max_session_hours,
         max_raw_file_mb,
         channel_capacity,

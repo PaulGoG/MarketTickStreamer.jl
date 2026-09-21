@@ -210,6 +210,12 @@ end
 
 read_raw(path::AbstractString) = read_raw([path])
 
+# Columns of a processed file that repeat a handful of values a million times
+# over. Arrow stores them dictionary-encoded: 44 B per print against 65 B on
+# a liquid US equity day, at unchanged read cost, and they read back as
+# ordinary string vectors.
+const DICTIONARY_COLUMNS = (:symbol, :exchange, :conditions, :tape)
+
 # Sort one (symbol, day) group by exchange time and write it to the
 # processed tree with safesave semantics. Returns the path written.
 function _write_group(
@@ -218,6 +224,7 @@ function _write_group(
     sym::AbstractString,
     date::Date,
     format::AbstractString,
+    compression::Union{Nothing,Symbol} = nothing,
 )
     ts = sort(trades; by = t -> t.time_ns)
     out = DataFrame(
@@ -235,7 +242,14 @@ function _write_group(
     mkpath(dir)
     path = joinpath(dir, "$(date).$(format == "csv" ? "csv" : "arrow")")
     return _safesave(path) do tmp
-        format == "csv" ? CSV.write(tmp, out) : Arrow.write(tmp, out)
+        if format == "csv"
+            CSV.write(tmp, out)
+        else
+            for c in DICTIONARY_COLUMNS
+                out[!, c] = Arrow.DictEncode(out[!, c])
+            end
+            Arrow.write(tmp, out; compress = compression)
+        end
     end
 end
 
@@ -265,7 +279,7 @@ const SPILL_HEADROOM = 1.1
                 mem_fraction = 0.5, tz = tz"America/New_York",
                 max_live_heap_mb = nothing, scratch_dir = nothing,
                 footprint_factor = 4.0, spill_headroom = SPILL_HEADROOM,
-                max_open_spill_files = 256) -> Vector{String}
+                max_open_spill_files = 256, compression = nothing) -> Vector{String}
 
 Compact raw NDJSON files into per-symbol, per-trading-day analysis files
 (`out_dir/SYMBOL/YYYY-MM-DD.csv|.arrow`), sorted by `time_ns`. An existing
@@ -294,6 +308,14 @@ once: further groups are served by closing the least recently written file and
 reopening it in append mode, so the pass works within the process's
 file-descriptor limit however many symbol-days the input spans. The pipeline
 takes all of them from `[limits]`.
+
+Arrow output stores the `symbol`, `exchange`, `conditions` and `tape` columns
+dictionary-encoded, which costs nothing to read and takes a liquid US equity
+day from 65 to 44 bytes per print. `compression` (`:zstd` or `:lz4`, Arrow
+only) compresses the record batches as well — 8 bytes per print with `:zstd`
+on the same day — at the price of memory-mapped reads: an uncompressed file is
+mapped and touched lazily, a compressed one is decompressed on load (64 ms
+against under 1 ms for that day). Uncompressed is the default.
 """
 function compact_raw(
     raw_paths::AbstractVector{<:AbstractString},
@@ -307,9 +329,17 @@ function compact_raw(
     footprint_factor::Real = 4.0,
     spill_headroom::Real = SPILL_HEADROOM,
     max_open_spill_files::Integer = 256,
+    compression::Union{Nothing,Symbol} = nothing,
 )
     format in ("csv", "arrow") ||
         throw(ArgumentError("format must be \"csv\" or \"arrow\""))
+    compression in (nothing, :zstd, :lz4) || throw(
+        ArgumentError(
+            "compression must be nothing, :zstd or :lz4, got $(repr(compression))",
+        ),
+    )
+    (compression === nothing || format == "arrow") ||
+        throw(ArgumentError("compression applies to format = \"arrow\" only"))
     0 < mem_fraction <= 1 ||
         throw(ArgumentError("mem_fraction must be in (0, 1], got $(mem_fraction)"))
     footprint_factor > 0 ||
@@ -333,6 +363,7 @@ function compact_raw(
         scratch_dir,
         spill_headroom,
         max_open_spill_files,
+        compression,
     )
     trades = read_raw(raw_paths)
     if dedup
@@ -346,7 +377,7 @@ function compact_raw(
         push!(get!(() -> Trade[], groups, (t.symbol, trading_date(t.time_ns; tz))), t)
     end
     return [
-        _write_group(groups[k], out_dir, k[1], k[2], format) for
+        _write_group(groups[k], out_dir, k[1], k[2], format, compression) for
         k in sort!(collect(keys(groups)))
     ]
 end
@@ -369,6 +400,8 @@ compact_raw(
     raw_paths,
     cfg.processed_dir;
     format = cfg.processed_format,
+    compression = cfg.processed_compression == "none" ? nothing :
+                  Symbol(cfg.processed_compression),
     dedup,
     mem_fraction = cfg.compact_mem_fraction,
     tz = cfg.exchange_tz,
@@ -458,6 +491,7 @@ function _compact_spill(
     scratch_dir::Union{Nothing,AbstractString} = nothing,
     spill_headroom::Real = SPILL_HEADROOM,
     max_open_spill_files::Integer = 256,
+    compression::Union{Nothing,Symbol} = nothing,
 )
     bytes = sum(filesize, raw_paths; init = 0)
     mkpath(out_dir)
@@ -501,7 +535,7 @@ function _compact_spill(
                 trades = deduplicate_trades(trades)
                 ndup += n0 - length(trades)
             end
-            push!(written, _write_group(trades, out_dir, sym, date, format))
+            push!(written, _write_group(trades, out_dir, sym, date, format, compression))
             max_live_heap_mb === nothing ||
                 check_live_heap(max_live_heap_mb; context = "compaction $sym $date")
         end

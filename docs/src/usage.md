@@ -97,6 +97,7 @@ loop indefinitely.
 | `flush_interval_s` | Sink flush interval. |
 | `flush_max_ticks` | Sink flush batch-size threshold; whichever trigger comes first. |
 | `processed_format` | `"csv"` or `"arrow"`. CSV for interoperability and inspection; Arrow when size or read time demands it. |
+| `processed_compression` | Compression of Arrow record batches: `"none"`, `"zstd"` or `"lz4"`; Arrow only. Uncompressed files are memory-mapped and read lazily. `"zstd"` is about five times smaller (8 against 44 bytes per print on a liquid US equity day) and is decompressed on load. |
 
 ## `[limits]`
 

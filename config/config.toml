@@ -29,6 +29,7 @@ processed_subdir = "processed"   # compacted per-day, per-symbol files
 flush_interval_s = 30.0          # sink flush interval [s]; > 0
 flush_max_ticks = 5000           # sink flush batch-size threshold; >= 1
 processed_format = "csv"         # one of: "csv" | "arrow"
+processed_compression = "none"   # Arrow record-batch compression; one of: "none" | "zstd" | "lz4"; "arrow" only
 
 [limits]
 max_session_hours = 8.0          # hard stop for a live session [h]; > 0

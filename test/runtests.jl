@@ -285,6 +285,37 @@ sample_trade(i; sym = "AAPL") = Trade(
             @test !any(occursin(".partial", f) for (_, _, fs) in walkdir(out) for f in fs)
             arrow_files = compact_raw([sink.path], joinpath(dir, "arrow"); format = "arrow")
             @test length(arrow_files) == 2
+            # Arrow stores the low-cardinality columns dictionary-encoded and
+            # reads back the same table the CSV holds, compressed or not.
+            zstd_files = compact_raw(
+                [sink.path],
+                joinpath(dir, "zstd");
+                format = "arrow",
+                compression = :zstd,
+            )
+            for (c, a, z) in zip(files, arrow_files, zstd_files)
+                csv = CSV.read(c, DataFrame; types = Dict(:conditions => String))
+                tbl = MarketTickStreamer.Arrow.Table(a)
+                @test tbl.conditions isa MarketTickStreamer.Arrow.DictEncoded
+                @test tbl.symbol isa MarketTickStreamer.Arrow.DictEncoded
+                @test !(tbl.price isa MarketTickStreamer.Arrow.DictEncoded)
+                for f in (a, z)
+                    df = MarketTickStreamer._read_processed(f)
+                    @test df.time_ns == csv.time_ns && df.price == csv.price
+                    @test df.symbol == csv.symbol && df.conditions == csv.conditions
+                end
+            end
+            @test_throws ArgumentError compact_raw(
+                [sink.path],
+                joinpath(dir, "x");
+                compression = :zstd,
+            )
+            @test_throws ArgumentError compact_raw(
+                [sink.path],
+                joinpath(dir, "x");
+                format = "arrow",
+                compression = :gzip,
+            )
         end
     end
 
@@ -1175,7 +1206,16 @@ hostname = "$(gethostname())"
             @test cfg.compact_mem_fraction == 0.5
             @test cfg.spill_headroom == 1.1
             @test cfg.compact_footprint_factor == 4.0
+            @test cfg.processed_compression == "none"
+            write(
+                p,
+                base *
+                "[storage]\nprocessed_format = \"arrow\"\nprocessed_compression = \"zstd\"\n",
+            )
+            @test load_config(p).processed_compression == "zstd"
             for bad in (
+                "[storage]\nprocessed_compression = \"zstd\"\n",          # csv cannot honor it
+                "[storage]\nprocessed_format = \"arrow\"\nprocessed_compression = \"gzip\"\n",
                 "[rest]\nrequest_timeout_s = 0\n",
                 "[rest]\nrequest_timeout_s = 1.5\n",
                 "[rest]\nconnect_timeout_s = 0\n",

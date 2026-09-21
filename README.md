@@ -152,7 +152,7 @@ consumers are developed offline (see `docs/src/architecture.md`).
 | Lossy-tap option in `tee` fan-out (persistence always wins) | working, tested |
 | Batched raw NDJSON persistence + rolling | working, tested |
 | Historical backfill (paginated REST) | working, tested against mock |
-| Compaction to CSV/Arrow with duplicate removal | working, tested |
+| Compaction to CSV/Arrow with duplicate removal (Arrow dictionary-encoded, optional zstd/lz4) | working, tested |
 | Session QA report (dupes/gaps/ordering/latency) | working, tested |
 | Diagnostic figures (price, activity, Δt & size CCDFs; HH:MM axes, decade log ticks, tail-exponent annotations) | working, inspected |
 | Multi-day overview figures (trading-time price, activity heatmap, intra-session waiting-time CCDF) | working, inspected |
