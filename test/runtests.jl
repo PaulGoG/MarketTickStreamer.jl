@@ -171,6 +171,41 @@ end
             write(p, base * "[backfill]\nstart_date = \"today\"\nend_date = \"today-1d\"\n")
             @test_throws ArgumentError load_config(p)
         end
+        mktempdir() do dir
+            base = "[stream]\nsymbols = [\"A\"]\n"
+            binance = "[provider]\nname = \"binance\"\n"
+            p = joinpath(dir, "bounds.toml")
+            rejected(body) = (write(p, body); @test_throws ArgumentError load_config(p))
+            # a misspelt table or key must not fall back to a default
+            rejected("[strem]\nsymbols = [\"A\"]\n")
+            rejected(base * "stale_timout_s = 5.0\n")
+            # types
+            rejected(base * "stale_timeout_s = \"5\"\n")
+            rejected(base * "require_market_open = 1\n")
+            rejected(base * "[limits]\nchannel_capacity = 2.5\n")
+            rejected("[stream]\nsymbols = \"A\"\n")
+            rejected(base * "[alpaca]\ndata_base = 8080\n")
+            # bounds
+            rejected(base * "reconnect_max_retries = -1\n")
+            rejected(base * "reconnect_base_delay_s = 2.0\nreconnect_max_delay_s = 1.0\n")
+            rejected(base * "[storage]\nflush_max_ticks = 0\n")
+            rejected(base * "[limits]\nmax_session_hours = 0.0\n")
+            rejected(base * "[backfill]\nrate_limit_sleep_s = -0.1\n")
+            rejected(base * "[replay]\nclock = \"wall\"\n")
+            # the page limit is the provider's: Binance clamps an over-limit
+            # request without an error, which would truncate every day
+            rejected(base * "[backfill]\npage_limit = 10001\n")
+            rejected(binance * base * "[backfill]\npage_limit = 1001\n")
+            write(p, binance * base)
+            @test load_config(p).backfill_page_limit == 1000
+            write(p, base)
+            c = load_config(p)
+            @test c.backfill_page_limit == 10_000
+            @test c.replay_clock == "auto"
+            # a TOML date is accepted as well as a date string
+            write(p, base * "[backfill]\nstart_date = 2026-08-12\nend_date = 2026-08-12\n")
+            @test load_config(p).backfill_start == Date(2026, 8, 12)
+        end
     end
 
     sample_trade(i; sym = "AAPL") = Trade(
@@ -261,6 +296,47 @@ end
             got2 = collect(replay_source(sink.path; pace = "recorded", speed = 1e9))
             @test length(got2) == 50
             @test_throws ArgumentError replay_source(sink.path; pace = "warp")
+            @test_throws ArgumentError replay_source(sink.path; clock = "wall")
+            # A backfilled recording has no receive clock. `auto` must pace it
+            # on exchange time rather than emit at full speed; `recv` refuses.
+            spaced(n, gap_ns) = [
+                Trade(
+                    "AAPL",
+                    1_753_886_600_000_000_000 + i * gap_ns,
+                    0,
+                    100.0,
+                    1.0,
+                    "V",
+                    String[],
+                    "C",
+                    i,
+                ) for i in 0:n
+            ]
+            function paced_span(path; kwargs...)
+                ch = replay_source(path; pace = "recorded", kwargs...)
+                take!(ch)
+                t0 = time()
+                n = 1
+                for _ in ch
+                    n += 1
+                end
+                return n, time() - t0
+            end
+            bsink = open_raw_sink(dir, "b")
+            write_batch!(bsink, spaced(25, 20_000_000))
+            close_sink!(bsink)
+            n, span = paced_span(bsink.path)
+            @test n == 26
+            @test 0.45 <= span <= 1.0               # 25 gaps of 20 ms
+            @test_throws ArgumentError replay_source(bsink.path; clock = "recv")
+            # Absolute schedule: 400 gaps of 2.5 ms take 1 s. Sleeping each gap
+            # on its own adds one timer overshoot per gap and runs ~50 % long.
+            dsink = open_raw_sink(dir, "d")
+            write_batch!(dsink, spaced(400, 2_500_000))
+            close_sink!(dsink)
+            n, span = paced_span(dsink.path; clock = "exchange")
+            @test n == 401
+            @test 0.95 <= span <= 1.2
         end
     end
 
@@ -697,6 +773,14 @@ hostname = "$(gethostname())"
                 @test isfile(joinpath(cfg.processed_dir, "AAPL", "2026-07-29.csv"))
                 @test !isfile(joinpath(cfg.processed_dir, "AAPL", "2026-07-30.csv"))
                 @test hits[] == 3                       # two pages, then the refusal
+                # The sidecar of a run that died says so, and pins its environment.
+                meta = TOML.parsefile(
+                    only(filter(endswith(".meta.toml"), readdir(cfg.raw_dir; join = true))),
+                )
+                @test meta["session"]["status"] == "failed"
+                manifest = meta["provenance"]["manifest"]
+                @test !isempty(manifest)
+                @test isfile(joinpath(cfg.raw_dir, manifest))
                 # No zero-byte stub left behind by the day that wrote nothing.
                 @test all(
                     f -> filesize(f) > 0,
@@ -1050,6 +1134,38 @@ hostname = "$(gethostname())"
                 @test result.ticks == 3
                 @test nconn[] == 1                 # close guard, not reconnect exhaustion
                 @test time() - t0 < 20.0           # well before linger end and deadline
+            finally
+                close(ws)
+                close(rest)
+            end
+        end
+    end
+
+    @testset "live E2E: the session deadline stops a healthy connection" begin
+        mktempdir() do dir
+            ws_port, rest_port = freeport(9152), freeport(9172)
+            # One batch, then the connection idles but stays up, and the market
+            # stays open for an hour: neither a disconnect nor the close guard
+            # ends this session, so only the deadline can, well inside the
+            # 30 s linger.
+            plan = MockPlan([[mock_trade("AAPL", i) for i in 1:3]]; linger_s = 30.0)
+            ws, nconn = start_mock_ws(plan; port = ws_port)
+            rest = start_mock_rest(; port = rest_port)
+            try
+                cfg = load_config(
+                    mock_config_toml(
+                        dir;
+                        ws_port,
+                        rest_port,
+                        max_session_hours = 2.0 / 3600,
+                    ),
+                )
+                p = AlpacaProvider(cfg, MOCK_KEY, MOCK_SECRET)
+                t0 = time()
+                result = run_stream(cfg; provider = p)
+                @test result.ticks == 3
+                @test nconn[] == 1                 # stopped, not reconnected
+                @test time() - t0 < 15.0
             finally
                 close(ws)
                 close(rest)

@@ -221,6 +221,7 @@ function mock_config_toml(
     feed = "iex",
     start_date = "2026-07-29",
     end_date = "2026-07-29",
+    max_session_hours = 0.05,
 )
     path = joinpath(dir, "config.toml")
     write(
@@ -247,7 +248,7 @@ flush_max_ticks = 100
 processed_format = "csv"
 
 [limits]
-max_session_hours = 0.05
+max_session_hours = $max_session_hours
 max_raw_file_mb = 64
 channel_capacity = 10000
 
