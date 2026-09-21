@@ -21,6 +21,7 @@ UnicodePlots = "b8865327-cd53-5732-bb35-84acbb429228"
 [compat]
 AllocCheck = "0.2"
 Aqua = "0.8"
+CSV = "1.0.0"
 CairoMakie = "0.15.13"
 ExplicitImports = "1.15"
 JET = "0.12"
