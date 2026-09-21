@@ -179,7 +179,15 @@ function _cfg_strings(
     default::Vector{String},
 )
     v = get(tbl, key, default)
-    (v isa AbstractVector && all(x -> x isa AbstractString, v)) ||
+    # An explicit loop: `all` over a vector of unknown element type infers as
+    # a three-valued result, which JET rejects in a boolean context.
+    strings = v isa AbstractVector
+    if strings
+        for x in v
+            strings &= x isa AbstractString
+        end
+    end
+    strings ||
         throw(ArgumentError("$table.$key must be an array of strings, got $(repr(v))"))
     return String[String(x) for x in v]
 end
