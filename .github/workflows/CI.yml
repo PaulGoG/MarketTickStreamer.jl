@@ -47,6 +47,8 @@ jobs:
           coverage: ${{ matrix.coverage }}
       - uses: julia-actions/julia-processcoverage@v1
         if: matrix.coverage
+        with:
+          directories: src,ext
       - uses: codecov/codecov-action@v7
         if: matrix.coverage
         with:
@@ -62,7 +64,7 @@ jobs:
         with:
           version: "1"
       - run: |
-          julia -e 'using Pkg; Pkg.add("JuliaFormatter"); using JuliaFormatter;
+          julia -e 'using Pkg; Pkg.add(name = "JuliaFormatter", version = "2"); using JuliaFormatter;
                     format(".", verbose = false) || error("Formatting check failed: run JuliaFormatter over the repository.")'
   docs:
     name: Documentation
