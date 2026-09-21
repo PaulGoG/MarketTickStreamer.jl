@@ -46,8 +46,16 @@ end
 # Spot trades around the clock, every day, on the UTC calendar. A crypto venue
 # has no local trading day to speak of, and UTC is the convention its own
 # timestamps and daily data dumps use.
-provider_spec(::Val{:binance}) =
-    ProviderSpec(["trade", "aggTrade"], ["aggTrade"], tz"UTC", false, 1_000, (0.0, 24.0))
+provider_spec(::Val{:binance}) = ProviderSpec(
+    ["trade", "aggTrade"],
+    ["aggTrade"],
+    tz"UTC",
+    false,
+    1_000,
+    (0.0, 24.0),
+    "quote asset",
+    "base asset",
+)
 
 make_provider(::Val{:binance}, cfg::Config, ::AbstractString, ::AbstractString) =
     BinanceProvider(cfg)

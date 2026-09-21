@@ -1069,6 +1069,22 @@ hostname = "$(gethostname())"
         # HH:MM domain ticks
         vals, labels = M._hhmm_ticks(9.5, 16.0)
         @test labels[1] == "10:00" && labels[end] == "16:00"
+        # a whole day is labelled every four hours, which fits a half-width panel
+        @test M._hhmm_ticks(0.0, 24.0)[2] ==
+              ["00:00", "04:00", "08:00", "12:00", "16:00", "20:00", "24:00"]
+        # Pooled waiting times: a closure between days is not a waiting time,
+        # midnight on a venue that never closes is.
+        day(d, ts) = (d, DataFrame(time_ns = Int64.(ts) .* 1_000_000_000))
+        days = [
+            day(Date(2026, 9, 18), [10, 11, 13]),
+            day(Date(2026, 9, 19), [20, 24]),
+            day(Date(2026, 9, 21), [50, 51]),          # the 20th is missing
+        ]
+        gaps, excluded = M._pooled_gaps(days; continuous = false)
+        @test gaps == [1.0, 2.0, 4.0, 1.0] && excluded == 2
+        gaps, excluded = M._pooled_gaps(days; continuous = true)
+        @test gaps == [1.0, 2.0, 7.0, 4.0, 1.0] && excluded == 1
+        @test M._pooled_gaps(days[1:1]; continuous = true) == ([1.0, 2.0], 0)
         # thinning preserves ends; decimation preserves extrema
         xs = collect(1.0:10_000.0)
         tx, ty = M._thin(xs, xs; cap = 500)
@@ -1701,6 +1717,13 @@ using UnicodePlots: UnicodePlots
         @test_throws ArgumentError overview_figure("AAPL", days; session = (0.0, 25.0))
         @test provider_spec("alpaca").regular_session == (9.5, 16.0)
         @test provider_spec("binance").regular_session == (0.0, 24.0)
+        @test provider_spec("alpaca").size_unit == "shares"
+        @test provider_spec("binance").price_unit == "quote asset"
+        @test session_figure(
+            trades;
+            price_unit = "quote asset",
+            size_unit = "base asset",
+        ) isa CairoMakie.Figure
         # Files land under their canonical names, with no partial left behind.
         mktempdir() do dir
             sink = open_raw_sink(dir, "fig")

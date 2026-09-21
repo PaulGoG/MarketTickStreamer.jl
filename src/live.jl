@@ -24,7 +24,7 @@ abstract type AbstractProvider end
 
 """
     ProviderSpec(feeds, backfill_feeds, tz, needs_credentials, max_page_limit,
-                 regular_session)
+                 regular_session, price_unit, size_unit)
 
 What the configuration layer must know about a provider *before* any provider
 object exists: which feed names it accepts, the calendar its tape is filed
@@ -44,6 +44,10 @@ page of the tape.
 for a venue that never closes. The multi-day figures lay their days out on
 it; nothing in acquisition depends on it, since session railings come from
 the venue's own clock.
+
+`price_unit` and `size_unit` are what the venue's prices and sizes are
+denominated in, as the figure axes should name them: dollars and shares on a
+US equity tape, quote asset and base asset on a crypto pair.
 """
 struct ProviderSpec
     feeds::Vector{String}
@@ -52,6 +56,8 @@ struct ProviderSpec
     needs_credentials::Bool
     max_page_limit::Int
     regular_session::Tuple{Float64,Float64}
+    price_unit::String
+    size_unit::String
 end
 
 """Provider names this build knows how to construct."""

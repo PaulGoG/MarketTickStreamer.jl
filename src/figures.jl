@@ -16,7 +16,8 @@ function tick_theme end
 
 """
     session_figure(trades; tz = tz"America/New_York",
-                   non_price = NON_PRICE_CONDITIONS) -> Figure
+                   non_price = NON_PRICE_CONDITIONS,
+                   price_unit = "USD", size_unit = "shares") -> Figure
 
 Build the 2×2 diagnostic figure for one symbol's single-day ticks:
 
@@ -30,6 +31,8 @@ Build the 2×2 diagnostic figure for one symbol's single-day ticks:
 
 `trades` must be non-empty and single-symbol (as produced by the grouping in
 [`save_session_figures`](@ref)); they are sorted internally by exchange time.
+`price_unit` and `size_unit` name the units on the price and size axes; the
+provider knows them ([`ProviderSpec`](@ref)).
 
 Implemented by the CairoMakie extension: `using CairoMakie` first.
 """
@@ -38,7 +41,8 @@ function session_figure end
 """
     overview_figure(symbol, days; tz = tz"America/New_York",
                     non_price = NON_PRICE_CONDITIONS,
-                    session = (9.5, 16.0)) -> Figure
+                    session = (9.5, 16.0),
+                    price_unit = "USD", size_unit = "shares") -> Figure
 
 Multi-day diagnostic figure for one symbol from per-day processed tables
 (`days` is a vector of `(date, DataFrame)` pairs, sorted internally by date):
@@ -48,22 +52,27 @@ Multi-day diagnostic figure for one symbol from per-day processed tables
   prints that [`price_forming`](@ref) admits under `non_price`,
 - day × session-minute activity heatmap,
 - pooled **intra-session** inter-arrival CCDF (overnight gaps excluded by
-  construction — they would contaminate the waiting-time tail),
+  construction — they would contaminate the waiting-time tail; with a 24-hour
+  `session` midnight is not a boundary, and the wait across it is kept
+  whenever the next calendar day is present),
 - pooled trade-size CCDF with fitted tail exponent.
 
 `session` is the venue's regular session as exchange-local hours
 `(open, close)`, `0 <= open < close <= 24`; it sets the width of a day on the
 concatenated axis and the span of the activity heatmap. The default is the US
-equity session; a venue that never closes takes `(0.0, 24.0)`.
+equity session; a venue that never closes takes `(0.0, 24.0)`. `price_unit`
+and `size_unit` name the units on the price and size axes. All three are
+properties of the venue and come with its [`ProviderSpec`](@ref).
 
 Implemented by the CairoMakie extension: `using CairoMakie` first.
 """
 function overview_figure end
 
 """
-    save_session_figures(raw_paths, out_dir = joinpath(PROJECT_ROOT, "plots");
+    save_session_figures(raw_paths, out_dir;
                          formats = ("pdf", "png"), tz = tz"America/New_York",
-                         min_trades = 10) -> Vector{String}
+                         min_trades = 10,
+                         price_unit = "USD", size_unit = "shares") -> Vector{String}
 
 Render one diagnostic figure per (symbol, trading day) found in the raw
 NDJSON `raw_paths`, saved as `out_dir/SYMBOL_YYYY-MM-DD.pdf|png` (safesave —
@@ -77,10 +86,11 @@ Implemented by the CairoMakie extension: `using CairoMakie` first.
 function save_session_figures end
 
 """
-    save_overview_figures(processed_dir, out_dir = joinpath(PROJECT_ROOT, "plots");
+    save_overview_figures(processed_dir, out_dir;
                           symbols = nothing, from = nothing, to = nothing,
                           formats = ("pdf", "png"), tz = tz"America/New_York",
-                          session = (9.5, 16.0), min_days = 2) -> Vector{String}
+                          session = (9.5, 16.0), min_days = 2,
+                          price_unit = "USD", size_unit = "shares") -> Vector{String}
 
 Render one multi-day [`overview_figure`](@ref) per symbol from the processed
 tree (`processed_dir/SYMBOL/YYYY-MM-DD.csv|.arrow`; safesave `_#N` backups

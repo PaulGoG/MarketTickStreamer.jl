@@ -21,6 +21,7 @@ using CairoMakie:
     Theme,
     heatmap!,
     lines!,
+    linkxaxes!,
     save,
     stairs!,
     text!,
@@ -34,7 +35,6 @@ using MarketTickStreamer:
     MarketTickStreamer,
     NON_PRICE_CONDITIONS,
     NS_PER_SEC,
-    PROJECT_ROOT,
     Trade,
     deduplicate_trades,
     price_forming,
@@ -45,6 +45,7 @@ using MarketTickStreamer:
     _decimate_minmax,
     _hhmm_ticks,
     _local_hour,
+    _pooled_gaps,
     _read_processed,
     _row_price_forming,
     _safesave,
@@ -152,6 +153,8 @@ function MarketTickStreamer.session_figure(
     trades::Vector{Trade};
     tz::TimeZone = tz"America/New_York",
     non_price::AbstractDict = NON_PRICE_CONDITIONS,
+    price_unit::AbstractString = "USD",
+    size_unit::AbstractString = "shares",
 )
     isempty(trades) && throw(ArgumentError("no trades to plot"))
     allequal(t.symbol for t in trades) || throw(
@@ -180,7 +183,7 @@ function MarketTickStreamer.session_figure(
     ax1 = Axis(
         fig[1, 1];
         xlabel = "Exchange time [HH:MM]",
-        ylabel = "Price [USD]",
+        ylabel = "Price [$price_unit]",
         xticks = time_ticks,
     )
     lines!(ax1, _decimate_minmax(hours[shown], prices)...; color)
@@ -214,6 +217,9 @@ function MarketTickStreamer.session_figure(
         xticks = time_ticks,
     )
     stairs!(ax2, (lo:hi) ./ 60, counts ./ divisor; step = :center, color)
+    # The price path may stop where the price-forming prints do (a name whose
+    # extended hours are all odd lots); both panels still show the same day.
+    linkxaxes!(ax1, ax2)
 
     dts = diff([t.time_ns for t in ts]) ./ NS_PER_SEC
     x3, y3 = _ccdf(dts)
@@ -246,7 +252,7 @@ function MarketTickStreamer.session_figure(
     x4, y4 = _ccdf([t.size for t in ts])
     ax4 = Axis(
         fig[2, 2];
-        xlabel = "Trade size [shares]",
+        xlabel = "Trade size [$size_unit]",
         ylabel = L"P(S > s)",
         xscale = log10,
         yscale = log10,
@@ -267,6 +273,8 @@ function MarketTickStreamer.overview_figure(
     tz::TimeZone = tz"America/New_York",
     non_price::AbstractDict = NON_PRICE_CONDITIONS,
     session::Tuple{<:Real,<:Real} = (9.5, 16.0),
+    price_unit::AbstractString = "USD",
+    size_unit::AbstractString = "shares",
 )
     isempty(days) && throw(ArgumentError("no days to plot"))
     session_open, session_close = Float64.(session)
@@ -286,7 +294,7 @@ function MarketTickStreamer.overview_figure(
     ax1 = Axis(
         fig[1, 1];
         xlabel = "Trading day",
-        ylabel = "Price [USD]",
+        ylabel = "Price [$price_unit]",
         xticks = (
             [(i - 0.5) * slot for i in 1:nd],
             [Dates.format(d, dateformat"mm-dd") for (d, _) in days],
@@ -374,14 +382,18 @@ function MarketTickStreamer.overview_figure(
     )
 
     # 3 — pooled intra-session waiting-time CCDF
-    dts = Float64[]
-    for (_, df) in days
-        append!(dts, diff(sort(df.time_ns)) ./ NS_PER_SEC)
-    end
+    continuous = session_len == 24
+    dts, excluded = _pooled_gaps(days; continuous)
+    pooling_note =
+        excluded == 0 ? "$nd contiguous days pooled" :
+        "$nd sessions pooled; $excluded between-session " *
+        (excluded == 1 ? "gap" : "gaps") *
+        " excluded"
     x3, y3 = _ccdf(dts)
     ax3 = Axis(
         fig[2, 1];
-        xlabel = L"Intra-session inter-arrival $\Delta t$ [s]",
+        xlabel = continuous ? L"Inter-arrival $\Delta t$ [s]" :
+                 L"Intra-session inter-arrival $\Delta t$ [s]",
         ylabel = L"P(\Delta t > x)",
         xscale = log10,
         yscale = log10,
@@ -394,7 +406,7 @@ function MarketTickStreamer.overview_figure(
             ax3,
             0.04,
             0.05;
-            text = "$nd sessions pooled; $(nd - 1) overnight gaps excluded",
+            text = pooling_note,
             space = :relative,
             align = (:left, :bottom),
             color,
@@ -410,7 +422,7 @@ function MarketTickStreamer.overview_figure(
     x4, y4 = _ccdf(sizes)
     ax4 = Axis(
         fig[2, 2];
-        xlabel = "Trade size [shares]",
+        xlabel = "Trade size [$size_unit]",
         ylabel = L"P(S > s)",
         xscale = log10,
         yscale = log10,
@@ -427,10 +439,12 @@ end
 
 function MarketTickStreamer.save_session_figures(
     raw_paths::AbstractVector{<:AbstractString},
-    out_dir::AbstractString = joinpath(PROJECT_ROOT, "plots");
+    out_dir::AbstractString;
     formats = ("pdf", "png"),
     tz::TimeZone = tz"America/New_York",
     min_trades::Integer = 10,
+    price_unit::AbstractString = "USD",
+    size_unit::AbstractString = "shares",
 )
     trades = deduplicate_trades(read_raw(raw_paths))
     isempty(trades) && return String[]
@@ -448,7 +462,7 @@ function MarketTickStreamer.save_session_figures(
                 @info "skipping sparse group" symbol = sym date n = length(g)
                 continue
             end
-            fig = MarketTickStreamer.session_figure(g; tz)
+            fig = MarketTickStreamer.session_figure(g; tz, price_unit, size_unit)
             for fmt in formats
                 path = _safesave(joinpath(out_dir, "$(sym)_$(date).$(fmt)")) do tmp
                     fmt == "png" ? save(tmp, fig; px_per_unit = 4) : save(tmp, fig)
@@ -465,7 +479,7 @@ MarketTickStreamer.save_session_figures(path::AbstractString, args...; kwargs...
 
 function MarketTickStreamer.save_overview_figures(
     processed_dir::AbstractString,
-    out_dir::AbstractString = joinpath(PROJECT_ROOT, "plots");
+    out_dir::AbstractString;
     symbols = nothing,
     from::Union{Nothing,Date} = nothing,
     to::Union{Nothing,Date} = nothing,
@@ -473,6 +487,8 @@ function MarketTickStreamer.save_overview_figures(
     tz::TimeZone = tz"America/New_York",
     session::Tuple{<:Real,<:Real} = (9.5, 16.0),
     min_days::Integer = 2,
+    price_unit::AbstractString = "USD",
+    size_unit::AbstractString = "shares",
 )
     isdir(processed_dir) || throw(ArgumentError("no processed directory at $processed_dir"))
     mkpath(out_dir)
@@ -491,7 +507,14 @@ function MarketTickStreamer.save_overview_figures(
                 push!(days, (d, _read_processed(joinpath(processed_dir, sym, f))))
             end
             length(days) < min_days && continue
-            fig = MarketTickStreamer.overview_figure(sym, days; tz, session)
+            fig = MarketTickStreamer.overview_figure(
+                sym,
+                days;
+                tz,
+                session,
+                price_unit,
+                size_unit,
+            )
             span = "$(days[1][1])_$(days[end][1])"
             for fmt in formats
                 path = _safesave(joinpath(out_dir, "$(sym)_$(span).$(fmt)")) do tmp

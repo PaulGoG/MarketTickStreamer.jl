@@ -14,7 +14,9 @@ _hhmm(h::Real) = (m = round(Int, 60h); @sprintf("%02d:%02d", m ÷ 60, m % 60))
 # HH:MM ticks over an exchange-local hour span (domain time format).
 function _hhmm_ticks(lo::Real, hi::Real)
     span = hi - lo
-    step = span > 8 ? 2.0 : span > 3.5 ? 1.0 : span > 1.5 ? 0.5 : span > 0.7 ? 0.25 : 1 / 12
+    step =
+        span > 16 ? 4.0 :
+        span > 8 ? 2.0 : span > 3.5 ? 1.0 : span > 1.5 ? 0.5 : span > 0.7 ? 0.25 : 1 / 12
     first = ceil(lo / step) * step
     vals = collect(first:step:hi)
     return (vals, _hhmm.(vals))
@@ -137,4 +139,31 @@ function _row_price_forming(tape, conditions, non_price::AbstractDict)
     excluded = get(non_price, string(tape), nothing)
     excluded === nothing && return true
     return !any(c -> c in excluded, eachsplit(string(conditions), '|'))
+end
+
+"""
+    _pooled_gaps(days; continuous) -> (gaps, excluded)
+
+Waiting times [s] pooled over per-day processed tables `(date, DataFrame)`,
+sorted by date, and the number of between-day gaps left out.
+
+Within a day every gap counts. Between two days the gap spans a closure and
+is not a waiting time of the arrival process, so it is dropped. On a venue
+that never closes (`continuous = true`) midnight is not a boundary: the wait
+across it is kept whenever the next calendar day is present, and only gaps
+across missing days are dropped.
+"""
+function _pooled_gaps(days::AbstractVector{<:Tuple{Date,DataFrame}}; continuous::Bool)
+    gaps = Float64[]
+    bridged = 0
+    for (i, (date, df)) in enumerate(days)
+        t = sort(df.time_ns)
+        append!(gaps, diff(t) ./ NS_PER_SEC)
+        (continuous && i < length(days) && !isempty(t)) || continue
+        next_date, next_df = days[i+1]
+        (next_date == date + Day(1) && !isempty(next_df.time_ns)) || continue
+        push!(gaps, (minimum(next_df.time_ns) - t[end]) / NS_PER_SEC)
+        bridged += 1
+    end
+    return gaps, max(length(days) - 1, 0) - bridged
 end

@@ -46,6 +46,8 @@ provider_spec(::Val{:alpaca}) = ProviderSpec(
     true,
     10_000,
     (9.5, 16.0),
+    "USD",
+    "shares",
 )
 
 make_provider(::Val{:alpaca}, cfg::Config, key::AbstractString, secret::AbstractString) =

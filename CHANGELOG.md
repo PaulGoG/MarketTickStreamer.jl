@@ -81,11 +81,19 @@ Notable changes to MarketTickStreamer. The format follows
   dependency, the Computer Modern faces come from Makie's
   `theme_latexfonts()`. The scripts have their own environment
   (`scripts/Project.toml`) with both plotting packages.
-- `ProviderSpec` has a sixth field, `regular_session`, the venue's session in
-  exchange-local hours. `overview_figure` and `save_overview_figures` take it
-  as `session`, and `scripts/visualize.jl` passes the provider's time zone and
-  session, so a Binance capture is drawn on the UTC day instead of the New
-  York clock and the US equity session.
+- `ProviderSpec` carries what the figures need to know about a venue:
+  `regular_session` (exchange-local hours), `price_unit` and `size_unit`.
+  `overview_figure` takes `session`, all four figure functions take the two
+  units, and `scripts/visualize.jl` passes them with the provider's time zone.
+  A Binance capture is now drawn on the UTC day, labelled every four hours,
+  with prices in the quote asset and sizes in the base asset, and the wait
+  across midnight counts as a waiting time when the next day is present; it
+  was drawn on the New York clock and the US equity session, in dollars and
+  shares, with "overnight gaps excluded".
+- `save_session_figures` and `save_overview_figures` take `out_dir` as a
+  required argument. The default pointed into the package directory, which is
+  read-only for an installed package.
+- The price and activity panels of `session_figure` share their time range.
 - `load_config` checks every key for type and documented bounds and rejects
   unknown tables and keys, so a misspelt key no longer falls back to its
   default. A configuration that loaded before may now be rejected.

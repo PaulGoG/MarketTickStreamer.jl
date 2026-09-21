@@ -50,10 +50,13 @@ function main()
             i += 1
         end
     end
-    # The exchange calendar and the regular session belong to the provider.
+    # The exchange calendar, the regular session and the units belong to the
+    # provider.
     cfg = load_config(cfg_path)
     tz = cfg.exchange_tz
-    session = provider_spec(cfg.provider).regular_session
+    spec = provider_spec(cfg.provider)
+    session = spec.regular_session
+    (; price_unit, size_unit) = spec
     if overview
         written = save_overview_figures(
             cfg.processed_dir,
@@ -64,6 +67,8 @@ function main()
             formats,
             tz,
             session,
+            price_unit,
+            size_unit,
         )
         println("Wrote $(length(written)) overview figure file(s):")
         foreach(f -> println("  ", f), written)
@@ -83,7 +88,7 @@ function main()
     show(session_report(files); allrows = true, allcols = true)
     println()
 
-    written = save_session_figures(files, out_dir; formats, tz)
+    written = save_session_figures(files, out_dir; formats, tz, price_unit, size_unit)
     println("Wrote $(length(written)) figure file(s):")
     for f in written
         println("  ", f)
