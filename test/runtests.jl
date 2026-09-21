@@ -577,13 +577,31 @@ end
         @test !price_forming(mk("A", ["B"]))
         @test price_forming(mk("C", ["B"]))
         @test !price_forming(mk("C", ["I"]))
+        # Its UTP counterpart is "W", which CTA does not define.
+        @test !price_forming(mk("C", ["W"]))
+        @test !price_forming(mk("C", ["T", "W"]))
+        @test price_forming(mk("A", ["W"]))
+        # Prices fixed earlier or elsewhere never set the last sale on any tape.
+        for tape in ("A", "B", "C"), code in ("4", "P", "Z")
+            @test !price_forming(mk(tape, ["@", code]))
+        end
+        # Extended hours alone does not disqualify, nor do the auction prints.
+        @test price_forming(mk("C", ["@", "T"]))
+        @test price_forming(mk("A", [" ", "F", "T"]))
+        @test all(
+            price_forming(mk(tape, [c])) for tape in ("A", "C") for
+            c in ("O", "5", "6", "X", "L")
+        )
+        @test NON_PRICE_CONDITIONS["A"] == NON_PRICE_CONDITIONS["B"]
+        @test setdiff(NON_PRICE_CONDITIONS["C"], NON_PRICE_CONDITIONS["A"]) == ["G", "W"]
+        @test setdiff(NON_PRICE_CONDITIONS["A"], NON_PRICE_CONDITIONS["C"]) == ["B"]
         # A tape with no list gives no basis to exclude, so the print is kept.
         @test price_forming(mk("Z", ["I"]))
 
-        trades = [mk("A", ["@"]), mk("A", ["I"]), mk("C", ["@"])]
+        trades = [mk("A", ["@"]), mk("A", ["I"]), mk("C", ["@"]), mk("C", ["4", "W"])]
         @test length(filter_price_forming(trades)) == 2
         @test filter_price_forming(trades; non_price = Dict("A" => ["@"])) ==
-              [trades[2], trades[3]]
+              [trades[2], trades[3], trades[4]]
         @test filter_price_forming(Trade[]) == Trade[]
 
         # The session report counts what survives, per symbol.
@@ -593,12 +611,12 @@ end
             close_sink!(sink)
             rep = session_report([sink.path])
             @test "n_price_forming" in names(rep)
-            @test rep.n_trades[1] == 3
+            @test rep.n_trades[1] == 4
             @test rep.n_price_forming[1] == 2
         end
 
         # Config-driven, so the set used lands in the session sidecar.
-        @test load_config().non_price_conditions["A"] == NON_PRICE_CONDITIONS["A"]
+        @test load_config().non_price_conditions == NON_PRICE_CONDITIONS
         mktempdir() do dir
             p = joinpath(dir, "q.toml")
             base = "[stream]\nsymbols = [\"A\"]\n"

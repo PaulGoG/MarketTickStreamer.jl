@@ -126,7 +126,7 @@ what the choice costs on your own data. One AAPL session, 1 225 831 prints:
 
 ```
 every execution          n=  1225830  mean=  0.0470 s  median=  0.0007 s  p99=  0.6231 s  max=   30.080 s
-price-forming only       n=   420968  mean=  0.1368 s  median=  0.0006 s  p99=  1.3651 s  max=  116.269 s
+price-forming only       n=   408793  mean=  0.1409 s  median=  0.0005 s  p99=  1.4756 s  max=  116.269 s
 ```
 
 A median of 0.7 ms against a mean of 47 ms is the distribution announcing
@@ -163,6 +163,21 @@ loaded prints, and [`session_report`](@ref) reports `n_trades` beside
 `n_price_forming` so the size of the distinction is measured per capture
 rather than assumed. The gap is dominated by odd lots and grows with share
 price, so it varies strongly across a basket.
+
+The default population, [`NON_PRICE_CONDITIONS`](@ref), follows the tape
+plans' own sale-condition matrices: a code is excluded when the plan does not
+let it update the consolidated last sale, or lets it only when it is the sole
+qualifying trade of the day. That takes out odd lots, average-price prints
+(`B` on tapes A and B, `W` on tape C), prices fixed earlier or elsewhere
+(`P`, `4`), late reports (`Z`, `U`), contingent trades and non-regular
+settlement. Extended-hours prints (`T`) stay in, because at tick resolution
+they are the price path of their session. Average-price and derivatively
+priced prints are few — about 3 % of what otherwise passes on a liquid
+Nasdaq name — but they are the ones that land percents away from the market:
+on one AAPL session they moved the day's price-forming minimum from 316.00 to
+304.35. The lists are configuration
+(`[quality.non_price_conditions]`), so the population a session was reported
+under is recorded in its sidecar.
 
 State which of the two populations a result used. After the fact, a price
 series does not reveal it.

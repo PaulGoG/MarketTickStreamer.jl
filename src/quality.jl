@@ -13,31 +13,46 @@ _tick_key(t::Trade) = (t.symbol, t.time_ns, t.id, t.price, t.size, t.exchange)::
 """
     NON_PRICE_CONDITIONS
 
-Sale-condition codes that never update a bar's open or close price, keyed by
+Sale-condition codes that disqualify a print from setting a price, keyed by
 tape: `"A"` and `"B"` are CTA-processed, `"C"` is UTP-processed, `"O"` is the
-OTC tape. The same character means different things on different tapes, which
-is why the lists are not shared.
+OTC tape. The same character means different things on different tapes — the
+average price trade is `B` on CTA and `W` on UTP, where `B` is a bunched
+trade — which is why the lists are not shared.
 
-Taken from Alpaca's published lists for its own normalization of the tapes
-(verified 2026-09-13), not transcribed from the CTA and UTP plan
-specifications: the plans define raw codes, and every vendor normalizes them.
-The authoritative decoder for the codes themselves is the provider's own
-[`condition_map`](@ref).
+The lists for `A`, `B` and `C` are derived from the plans' own sale-condition
+matrices (CTS Pillar output specification 2.11b, UTP data feed services
+specification 4.1): a code is listed when its *consolidated update-last* entry
+is "no", or "no unless it is the only qualifying trade of the day". That
+covers prints that carry no current price by construction — averages (`B`,
+`W`), prices fixed earlier or elsewhere (`P`, `4`), late reports (`Z`, `G`,
+`U`), non-regular settlement (`C`, `R`, `N`), contingent trades (`V`, `7`),
+price variation (`H`), market-center official open and close (`Q`, `M`) — and
+odd lots (`I`). On 40 symbol-days captured with this package the stale-price
+classes among them (`W`, `4`, `P`, `Z`) sit one to two orders of magnitude
+further from the last regular print than regular prints do; odd lots do not,
+and are listed because the plans bar them. The provider delivers the plans'
+codes unchanged, and its [`condition_map`](@ref) returns their glossary.
 
-Two things this is deliberately not. It is not the plans' "last-sale
-eligible" flag, and it is not a per-field eligibility table — the plans track
-high/low, open/close, volume and last-sale eligibility separately, and a
-print may update some and not others. It answers one question, the one a
-price path needs answered: may this print set a price.
+Two deliberate departures from the matrices. `T` (extended hours) is not
+listed although the plans keep it from the consolidated last, which is a
+regular-session statistic: at tick resolution an extended-hours print is the
+price path of its session. `9` (corrected consolidated close) is listed
+although the plans let it update the last: at tick resolution it is a
+correction message rather than an execution, though for a daily bar it is
+precisely the official close.
 
-Note `"9"` (corrected consolidated close): excluded here because at tick
-resolution it is a correction message rather than an execution, though for a
-daily bar it is precisely the official close.
+The `O` list is the provider's published one and has not been checked against
+a specification.
+
+This is not a per-field eligibility table — the plans track high/low,
+open, last and volume eligibility separately, and a print may update some and
+not others. It answers one question, the one a price path needs answered: may
+this print set a price.
 """
 const NON_PRICE_CONDITIONS = Dict{String,Vector{String}}(
-    "A" => ["B", "C", "H", "I", "M", "Q", "R", "U", "V", "7", "9"],
-    "B" => ["B", "C", "H", "I", "M", "Q", "R", "U", "V", "7", "9"],
-    "C" => ["C", "H", "I", "M", "Q", "R", "U", "V", "7", "9"],
+    "A" => ["B", "C", "H", "I", "M", "N", "P", "Q", "R", "U", "V", "Z", "4", "7", "9"],
+    "B" => ["B", "C", "H", "I", "M", "N", "P", "Q", "R", "U", "V", "Z", "4", "7", "9"],
+    "C" => ["C", "G", "H", "I", "M", "N", "P", "Q", "R", "U", "V", "W", "Z", "4", "7", "9"],
     "O" => ["C", "I", "N", "R", "U", "V"],
 )
 

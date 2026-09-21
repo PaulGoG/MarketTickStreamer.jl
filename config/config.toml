@@ -53,9 +53,9 @@ resume = true                    # skip (symbol, day) pairs already present in p
 # Sale-condition codes excluded from the price-forming population, by tape
 # ("A"/"B": CTA, "C": UTP, "O": OTC).
 [quality.non_price_conditions]
-A = ["B", "C", "H", "I", "M", "Q", "R", "U", "V", "7", "9"]
-B = ["B", "C", "H", "I", "M", "Q", "R", "U", "V", "7", "9"]
-C = ["C", "H", "I", "M", "Q", "R", "U", "V", "7", "9"]
+A = ["B", "C", "H", "I", "M", "N", "P", "Q", "R", "U", "V", "Z", "4", "7", "9"]
+B = ["B", "C", "H", "I", "M", "N", "P", "Q", "R", "U", "V", "Z", "4", "7", "9"]
+C = ["C", "G", "H", "I", "M", "N", "P", "Q", "R", "U", "V", "W", "Z", "4", "7", "9"]
 O = ["C", "I", "N", "R", "U", "V"]
 
 [monitor]

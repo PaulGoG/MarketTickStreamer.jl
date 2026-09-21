@@ -138,7 +138,7 @@ consumers are developed offline (see `docs/src/architecture.md`).
 | Live monitoring dashboard (attach-mode, UnicodePlots) | working, tested |
 | Paced replay (absolute schedule; receive or exchange clock) | working, tested |
 | Quotes (`q`) / bars (`b`) normalization | working, tested — parsed to `Quote`/`Bar` with `on_quote`/`on_bar`; not subscribed or persisted by default |
-| Sale-condition eligibility (`price_forming`, per-tape lists, `n_price_forming`) | working, tested — capture is never filtered; the choice is made at analysis time |
+| Sale-condition eligibility (`price_forming`, per-tape lists from the CTA and UTP sale-condition matrices, `n_price_forming`) | working, tested — capture is never filtered; the choice is made at analysis time |
 | Resampling onto activity clocks (`tick_bars`, `volume_bars`, `dollar_bars`) | working, tested |
 | Real-time analysis consumers | interface contract documented; two worked examples under `examples/`, both executed by the suite |
 | Credential validation (paper account): clock REST, historical SIP REST, WS auth on `iex` and `delayed_sip` | verified 2026-08-01 |

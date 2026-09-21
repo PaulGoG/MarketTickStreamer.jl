@@ -33,6 +33,24 @@ Notable changes to MarketTickStreamer. The format follows
   `10⁻¹` and one at 0.5 read `1`. Intermediate ticks now carry their mantissa.
 
 ### Changed
+- **Breaking: the price-forming population is redefined.**
+  `NON_PRICE_CONDITIONS` now follows the sale-condition matrices of the tape
+  plans (CTS Pillar output specification 2.11b, UTP data feed services
+  specification 4.1): a code is excluded when the plan does not let it update
+  the consolidated last sale, or lets it only as the sole qualifying trade of
+  the day. Tapes A and B gain `N`, `P`, `Z`, `4`; tape C gains `G`, `N`, `P`,
+  `W`, `Z`, `4`. `T` stays in and `9` stays out, both on purpose, and the
+  docstring says why. The previous lists were the provider's bar-exclusion
+  lists, which on tape C omit `W`, the UTP average-price trade, although they
+  exclude its CTA counterpart `B`. On 40 symbol-days captured with this
+  package the newly excluded classes lie one to two orders of magnitude
+  further from the last regular print than regular prints do (tape C, 90th
+  percentile: 15.7 bp for `4`+`W`, 21.8 bp for `P`, 41.3 bp for `4`, against
+  0.63 bp). One AAPL session loses 12 175 of 420 969 price-forming prints
+  (2.9 %), and its price-forming minimum moves from 304.35 to 316.00.
+  **Statistics computed on the earlier population are not comparable with
+  those computed on this one.** The earlier lists remain available through
+  `[quality.non_price_conditions]` and the `non_price` keyword.
 - **Breaking: `Bar` has a closing instant.** A new third field `close_ns`
   follows `time_ns`. For `tick_bars`, `volume_bars` and `dollar_bars` it is
   the timestamp of the print that completed the bar, so
@@ -49,12 +67,6 @@ Notable changes to MarketTickStreamer. The format follows
   canonical path never holds a half-written file, and a failed write leaves
   it untouched. Files named ` #N` by earlier versions are left alone and are
   still ignored by the readers.
-- **Breaking: `Bar` has a closing instant.** A new third field `close_ns`
-  follows `time_ns`. For `tick_bars`, `volume_bars` and `dollar_bars` it is
-  the timestamp of the print that completed the bar, so
-  `close_ns - time_ns` is the time the market took to transact the bar's
-  fixed quantity; for a streamed one-minute bar it is `time_ns` plus 60 s.
-  Positional construction of `Bar` takes eleven arguments.
 - `load_config` checks every key for type and documented bounds and rejects
   unknown tables and keys, so a misspelt key no longer falls back to its
   default. A configuration that loaded before may now be rejected.

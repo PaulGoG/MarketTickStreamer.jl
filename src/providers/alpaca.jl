@@ -111,12 +111,12 @@ Fetch the provider's own sale-condition decoder from
 description for one `tape` (`"A"`, `"B"`, `"C"`). `ticktype` is `"trade"` or
 `"quote"`.
 
-The same character carries different meanings on different tapes, and every
-vendor normalizes the raw CTA and UTP codes differently, so the glossary is
-fetched from the provider that produced the data rather than transcribed into
-this package. What *is* held here is the much smaller
-[`NON_PRICE_CONDITIONS`](@ref) judgement about which codes disqualify a print
-from a price path.
+The same character carries different meanings on different tapes, and a
+vendor is free to re-map the raw CTA and UTP codes — this one delivers them
+unchanged — so the glossary is fetched from the provider that produced the
+data rather than transcribed into this package. What *is* held here is the
+much smaller [`NON_PRICE_CONDITIONS`](@ref) table of the codes that disqualify
+a print from a price path.
 
 Requires network access; call it once and cache the result.
 """
