@@ -8,9 +8,8 @@ instantiated; from an existing REPL, `include` it for the same effect. The
 first instantiation resolves and precompiles and is therefore slow;
 afterwards it is a no-op.
 
-Every script under `scripts/` performs these same two calls on start-up via
-`scripts/startup.jl`, so running an entry point directly needs no
-preparation. This file exists for interactive work.
+Every script under `scripts/` includes this file as its first statement, so
+running an entry point directly needs no preparation.
 """
 
 using Pkg

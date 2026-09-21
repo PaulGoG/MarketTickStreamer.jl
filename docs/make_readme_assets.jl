@@ -16,9 +16,7 @@ that asset and says so rather than failing. Committed PNG/GIF are kept small
 deliberately: they are documentation, not data.
 """
 
-using Pkg
-Pkg.activate(@__DIR__; io = devnull)
-Pkg.instantiate(; io = devnull)
+include(joinpath(@__DIR__, "activate.jl"))
 
 using MarketTickStreamer
 using CairoMakie

@@ -9,7 +9,7 @@
 # the processed tree (price on trading time, activity heatmap,
 # intra-session waiting-time and size CCDFs).
 
-include(joinpath(@__DIR__, "startup.jl"))
+include(joinpath(@__DIR__, "..", "activate.jl"))
 using MarketTickStreamer
 
 function main()

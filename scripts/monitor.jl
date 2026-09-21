@@ -7,7 +7,7 @@
 # --full ingests the existing files first (session totals; one full read);
 # the default attaches at the current end of file.
 
-include(joinpath(@__DIR__, "startup.jl"))
+include(joinpath(@__DIR__, "..", "activate.jl"))
 using MarketTickStreamer
 
 function main()
