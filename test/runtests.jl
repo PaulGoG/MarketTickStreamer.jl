@@ -998,6 +998,14 @@ hostname = "$(gethostname())"
         v, l = M._log_ticks(1e-7, 10.0)
         @test "1" in l && "10" in l                          # 10^0 and 10^1 collapse
         @test any(x -> occursin("10^{-6}", string(x)), l)
+        # intermediates carry their own mantissa, never the rounded decade
+        v, l = M._log_ticks(3e-6, 2e-4)
+        @test allunique(string.(l))
+        @test any(x -> occursin("2\\times10^{-5}", string(x)), l)
+        @test M._pow10_label(5, 0) == "5" && M._pow10_label(2, 1) == "20"
+        @test M._pow10_label(2, -1) == "0.2" && M._pow10_label(1, 1) == "10"
+        v, l = M._log_ticks(1.3e-4, 1.0)                     # four decades: decades only
+        @test length(v) == 4 && allunique(string.(l))
         # thinning preserves ends; decimation preserves extrema
         xs = collect(1.0:10_000.0)
         tx, ty = M._thin(xs, xs; cap = 500)
@@ -1005,12 +1013,24 @@ hostname = "$(gethostname())"
         dx, dy = M._decimate_minmax(xs, sin.(xs); nbins = 50)
         @test length(dx) <= 100
         @test maximum(dy) ≈ maximum(sin.(xs)) atol = 1e-3
-        # tail fit recovers a known power law
+        # Hill estimator on the quantiles of a Pareto law with alpha = 2.5
         n = 5000
-        p = collect(n:-1:1) ./ n
-        x = p .^ (-1 / 2.5)                                  # exact alpha = 2.5
-        fit = M._tail_fit(sort(x), sort(p; rev = true))
-        @test fit !== nothing && isapprox(fit.α, 2.5; atol = 0.1)
+        x = sort!([((i - 0.5) / n)^(-1 / 2.5) for i in 1:n])
+        fit = M._tail_fit(x)
+        @test fit !== nothing
+        @test isapprox(fit.α, 2.5; rtol = 0.02)
+        @test fit.σ ≈ fit.α / sqrt(500)                      # k = top 10 %
+        @test M._tail_fit(x[1:40]) === nothing               # too few samples
+        @test M._tail_fit(fill(100.0, 500)) === nothing      # degenerate tail
+        # annotations: value and uncertainty share their decimals
+        @test M._value_pm(1.4294, 0.0041) == ("1.429", "0.004")
+        @test M._value_pm(1.8676, 0.0684) == ("1.87", "0.07")
+        @test M._value_pm(1.4, 0.2) == ("1.4", "0.2")
+        @test M._si_seconds(4.6e-4) == "460 μs"
+        @test M._si_seconds(2.5) == "2.5 s"
+        # one exponent per axis: the rate is rescaled, not the tick labels
+        @test M._rate_scale(2.2e4)[1] == 1e3
+        @test M._rate_scale(800)[1] == 1.0
         # figure smoke tests (layout only; no file I/O)
         trades = [sample_trade(i) for i in 1:200]
         @test session_figure(trades) isa M.CairoMakie.Figure
