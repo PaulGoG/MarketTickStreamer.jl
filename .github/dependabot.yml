@@ -6,9 +6,15 @@ updates:
       - "/bench"
       - "/docs"
       - "/examples"
+      - "/scripts"
       - "/test"
     schedule:
       interval: "weekly"
+    ignore:
+      # HTTP.jl stays on 1.x on purpose: 2.x is a rewrite on a new transport,
+      # and the migration is planned, not incidental (docs: architecture, §6).
+      - dependency-name: "HTTP"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
