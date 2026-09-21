@@ -7,6 +7,9 @@ Notable changes to MarketTickStreamer. The format follows
 ## [Unreleased]
 
 ### Fixed
+- A processed CSV whose `conditions` or `exchange` column held only numeric
+  codes read back with an integer column. The string columns are declared on
+  read.
 - A Binance backfill with `backfill.page_limit` above 1000 kept only the first
   page of each day. The server clamps an over-limit request to 1000 rows
   without an error, and the adapter ends its walk on a short page. The shipped
@@ -152,6 +155,21 @@ Notable changes to MarketTickStreamer. The format follows
   under the New York calendar before.
 - `tee` drops an output its consumer closed and keeps feeding the others,
   and its fan-out task is monitored.
+- `replay_source` streams a corpus. Given processed day files it loads one
+  trading day at a time, merges that day's symbols on the replay clock and
+  emits them before opening the next, on one pacing schedule across the days;
+  raw session files are still read whole. Six AAPL days (5.6 M prints) replay
+  at about 1 M prints/s with the resident set flat at 1.2 GiB.
+  `processed_files(dir, symbol; from, to)` lists a symbol's day files in date
+  order, without safesave backups.
+- Arrow output is smaller. The `symbol`, `exchange`, `conditions` and `tape`
+  columns are dictionary-encoded, which takes a liquid US equity day
+  (1.2 M prints) from 65 to 44 bytes per print at unchanged read cost, and
+  `storage.processed_compression` (`"zstd"`, `"lz4"`; `compression` in
+  `compact_raw`) compresses the record batches: 8 bytes per print with
+  `"zstd"`, read in 64 ms where the memory-mapped uncompressed file takes
+  under 1 ms. Uncompressed stays the default. Files written earlier read as
+  before.
 - `observed_round_lot`, and a `round_lot` column in `session_report`: the
   venue's round lot read off the tape as one share more than the largest
   print still flagged an odd lot.

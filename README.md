@@ -157,7 +157,7 @@ consumers are developed offline (see `docs/src/architecture.md`).
 | Diagnostic figures (price, activity, Δt & size CCDFs; HH:MM axes, decade log ticks, tail-exponent annotations) | working, inspected |
 | Multi-day overview figures (trading-time price, activity heatmap, intra-session waiting-time CCDF) | working, inspected |
 | Live monitoring dashboard (attach-mode; text, plots with UnicodePlots loaded) | working, tested |
-| Paced replay (absolute schedule; receive or exchange clock) | working, tested |
+| Paced replay (absolute schedule; receive or exchange clock; a session from raw files, a corpus streamed day by day from the processed tree) | working, tested |
 | Quotes (`q`) / bars (`b`) normalization | working, tested — parsed to `Quote`/`Bar` with `on_quote`/`on_bar`; not subscribed or persisted by default |
 | Sale-condition eligibility (`price_forming`, per-tape lists from the CTA and UTP sale-condition matrices, `n_price_forming`) | working, tested — capture is never filtered; the choice is made at analysis time |
 | Resampling onto activity clocks (`tick_bars`, `volume_bars`, `dollar_bars`) | working, tested |

@@ -38,6 +38,7 @@ using MarketTickStreamer:
     Trade,
     deduplicate_trades,
     price_forming,
+    processed_files,
     read_raw,
     trading_date,
     _ccdf,
@@ -497,15 +498,10 @@ function MarketTickStreamer.save_overview_figures(
         for sym in
             sort(filter(s -> isdir(joinpath(processed_dir, s)), readdir(processed_dir)))
             symbols === nothing || sym in symbols || continue
-            days = Tuple{Date,DataFrame}[]
-            for f in sort(readdir(joinpath(processed_dir, sym)))
-                m = match(r"^(\d{4}-\d{2}-\d{2})\.(csv|arrow)$", f)   # base files only
-                m === nothing && continue
-                d = Date(something(m[1]))
-                from !== nothing && d < from && continue
-                to !== nothing && d > to && continue
-                push!(days, (d, _read_processed(joinpath(processed_dir, sym, f))))
-            end
+            days = Tuple{Date,DataFrame}[
+                (Date(first(splitext(basename(f)))), _read_processed(f)) for
+                f in processed_files(processed_dir, sym; from, to)
+            ]
             length(days) < min_days && continue
             fig = MarketTickStreamer.overview_figure(
                 sym,

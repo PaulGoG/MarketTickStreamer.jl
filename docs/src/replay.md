@@ -36,6 +36,25 @@ end
 them, which is the mode for throughput work; `speed` compresses recorded
 time, so `speed = 60.0` replays an hour of tape in a minute.
 
+A session is replayed from its raw files, which are read whole. A corpus is
+replayed from the processed tree, and streamed: the files of one trading day
+— one per symbol — are loaded, merged on the clock and emitted before the
+next day is opened, so a symbol-year replays in the memory of its busiest day.
+
+```julia
+files = processed_files("data/processed", "AAPL"; from = Date(2026, 5, 1))
+for trade in replay_source(files; pace = "max")
+    # ... an estimator run over months of tape
+end
+```
+
+Six AAPL days, 5.6 million prints, go through at about a million prints per
+second with the resident set flat at 1.2 GiB from the first day to the last.
+Recorded pace keeps one schedule across the days, closures included, so
+replaying a week at `speed = 1` takes a week. If a later day cannot be read,
+the channel closes with that error and the consumer's loop rethrows it, after
+every earlier print has been delivered.
+
 ## What a `Trade` means
 
 | Field | Type | Meaning |

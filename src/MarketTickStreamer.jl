@@ -64,7 +64,7 @@ export deduplicate_trades, session_report, free_disk_gb, check_live_heap, covera
 export NON_PRICE_CONDITIONS, price_forming, filter_price_forming, observed_round_lot
 export tick_bars, volume_bars, dollar_bars
 export monitor_raw
-export replay_source
+export replay_source, processed_files
 export RestPolicy
 export AbstractProvider,
     LiveSession, FatalStreamError, live_source, stop!, schedule_close_stop!, tee

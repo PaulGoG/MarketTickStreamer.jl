@@ -404,6 +404,91 @@ sample_trade(i; sym = "AAPL") = Trade(
         end
     end
 
+    @testset "replay: processed day files are streamed, one schedule across days" begin
+        day_ns = 86_400 * 1_000_000_000
+        t0 = 1_753_886_600_000_000_000                       # 2025-07-30 14:43:20 UTC
+        mk(i, sym, day; conds = ["@"]) = Trade(
+            sym,
+            t0 + day * day_ns + i * 1_000_000,
+            0,
+            100.0 + i,
+            1.0 * i,
+            "V",
+            conds,
+            "C",
+            i,
+        )
+        trades = [
+            [
+                mk(i, "AAPL", d; conds = isodd(i) ? ["@", "I"] : String[]) for d in 0:2
+                for i in 1:2:9
+            ]
+            [mk(i, "MSFT", d; conds = ["4"]) for d in 0:1 for i in 2:2:8]
+        ]
+        expected = sort(trades; by = t -> t.time_ns)
+        mktempdir() do dir
+            sink = open_raw_sink(dir, "corpus")
+            write_batch!(sink, trades)
+            close_sink!(sink)
+            for format in ("csv", "arrow")
+                out = joinpath(dir, format)
+                compact_raw([sink.path], out; format, tz = tz"UTC")
+                aapl = processed_files(out, "AAPL")
+                @test basename.(aapl) ==
+                      ["2025-07-30.$format", "2025-07-31.$format", "2025-08-01.$format"]
+                @test length(processed_files(out, "AAPL"; from = Date(2025, 7, 31))) == 2
+                @test length(processed_files(out, "AAPL"; to = Date(2025, 7, 30))) == 1
+                @test_throws ArgumentError processed_files(out, "NVDA")
+                # One symbol: the days in order, every field intact — including
+                # an empty condition list and an all-numeric one.
+                got = collect(replay_source(aapl; pace = "max"))
+                @test got == filter(t -> t.symbol == "AAPL", expected)
+                # Two symbols: merged on the clock within each day.
+                both = [aapl; processed_files(out, "MSFT")]
+                @test collect(replay_source(both; pace = "max")) == expected
+                @test collect(replay_source(reverse(both); pace = "max")) == expected
+            end
+            out = joinpath(dir, "arrow")
+            files = processed_files(out, "AAPL")
+            # Backups are not replayed, raw and processed do not mix, the
+            # receive clock needs receive timestamps.
+            @test_throws ArgumentError replay_source([files[1], sink.path]; pace = "max")
+            @test_throws ArgumentError replay_source(
+                [joinpath(out, "AAPL", "2025-07-30_#1.arrow")];
+                pace = "max",
+            )
+            @test_throws ArgumentError replay_source([
+                joinpath(out, "AAPL", "2025-01-01.arrow"),
+            ])
+            @test_throws Exception collect(
+                replay_source(files; pace = "max", clock = "recv"),
+            )
+            # Streaming: a day is opened only when the one before is spent. With
+            # the second day unreadable the first still arrives in full, and
+            # the failure reaches the consumer afterwards.
+            broken = joinpath(dir, "broken", "AAPL")
+            mkpath(broken)
+            cp(files[1], joinpath(broken, basename(files[1])))
+            write(joinpath(broken, basename(files[2])), "not an arrow file")
+            ch = replay_source(
+                processed_files(dirname(broken), "AAPL");
+                pace = "max",
+                capacity = 1,
+            )
+            first_day = [take!(ch) for _ in 1:5]
+            @test first_day == filter(t -> t.symbol == "AAPL", expected)[1:5]
+            @test_throws Exception take!(ch)
+            # One schedule across days: 86 400 s between sessions replayed at
+            # 1e6x is 0.0864 s, not zero and not per-day re-anchored.
+            two = processed_files(out, "AAPL"; to = Date(2025, 7, 31))
+            t_start = time()
+            n = length(collect(replay_source(two; pace = "recorded", speed = 1.0e6)))
+            elapsed = time() - t_start
+            @test n == 10
+            @test 0.08 <= elapsed < 1.0
+        end
+    end
+
     @testset "quality: dedup + session report" begin
         base = rfc3339_to_ns("2026-07-30T14:30:00Z")
         mk(i; sym = "AAPL", dt = 1_000_000_000, recv_off = 2_000_000) = Trade(

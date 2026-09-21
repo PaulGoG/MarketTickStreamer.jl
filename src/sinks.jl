@@ -253,10 +253,103 @@ function _write_group(
     end
 end
 
+# CSV type detection would read a column holding only numeric condition codes
+# ("4", "7") as integers, and an exchange column of "1"s likewise; the string
+# columns are therefore declared.
+const PROCESSED_STRING_COLUMNS =
+    Dict(:symbol => String, :exchange => String, :conditions => String, :tape => String)
+
 # One processed per-day file (CSV or Arrow) → DataFrame; the inverse of
-# `_write_group`.
+# `_write_group`. An empty condition list reads back as `missing` from CSV and
+# as "" from Arrow.
 _read_processed(path::AbstractString) =
-    endswith(path, ".arrow") ? DataFrame(Arrow.Table(path)) : CSV.read(path, DataFrame)
+    endswith(path, ".arrow") ? DataFrame(Arrow.Table(path)) :
+    CSV.read(path, DataFrame; types = PROCESSED_STRING_COLUMNS)
+
+# The prints of one processed file, in file order (ascending `time_ns`).
+function _trades_from_processed(path::AbstractString)
+    df = _read_processed(path)
+    return _columns_to_trades(
+        df.symbol,
+        df.time_ns,
+        df.recv_ns,
+        df.price,
+        df.size,
+        df.exchange,
+        df.conditions,
+        df.tape,
+        df.id,
+    )
+end
+
+# Function barrier: the column types are only known at run time. Condition
+# lists are shared between the prints that carry the same one — a day holds a
+# few dozen distinct lists over a million prints.
+function _columns_to_trades(
+    symbol,
+    time_ns,
+    recv_ns,
+    price,
+    size,
+    exchange,
+    conds,
+    tape,
+    id,
+)
+    lists = Dict{String,Vector{String}}()
+    trades = Vector{Trade}(undef, length(time_ns))
+    for i in eachindex(time_ns)
+        c = conds[i]
+        key = ismissing(c) ? "" : String(c)
+        list = get!(() -> isempty(key) ? String[] : String.(split(key, '|')), lists, key)
+        trades[i] = Trade(
+            String(symbol[i]),
+            Int64(time_ns[i]),
+            Int64(recv_ns[i]),
+            Float64(price[i]),
+            Float64(size[i]),
+            String(exchange[i]),
+            list,
+            String(tape[i]),
+            Int64(id[i]),
+        )
+    end
+    return trades
+end
+
+const PROCESSED_FILE = r"^(\d{4}-\d{2}-\d{2})\.(csv|arrow)$"
+
+"""
+    processed_files(processed_dir, symbol; from = nothing, to = nothing)
+        -> Vector{String}
+
+The per-day files of `symbol` in a processed tree
+(`processed_dir/SYMBOL/YYYY-MM-DD.csv|.arrow`), in date order, optionally
+restricted to `[from, to]`. Safesave backups (`_#N`) and partial files are not
+listed: the base file of a day is the newest and the only one a reader should
+open. Throws an `ArgumentError` when the symbol has no directory.
+
+    replay_source(processed_files(cfg.processed_dir, "AAPL"; from = Date(2026, 5, 1)))
+"""
+function processed_files(
+    processed_dir::AbstractString,
+    symbol::AbstractString;
+    from::Union{Nothing,Date} = nothing,
+    to::Union{Nothing,Date} = nothing,
+)
+    dir = joinpath(processed_dir, symbol)
+    isdir(dir) || throw(ArgumentError("no processed data for $symbol under $processed_dir"))
+    files = String[]
+    for f in sort(readdir(dir))
+        m = match(PROCESSED_FILE, f)
+        m === nothing && continue
+        d = Date(something(m[1]))
+        (from === nothing || d >= from) &&
+            (to === nothing || d <= to) &&
+            push!(files, joinpath(dir, f))
+    end
+    return files
+end
 
 """
     SPILL_HEADROOM
