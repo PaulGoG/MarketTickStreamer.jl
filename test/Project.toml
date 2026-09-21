@@ -25,6 +25,7 @@ CairoMakie = "0.15.13"
 ExplicitImports = "1.15"
 JET = "0.12"
 OnlineStats = "1.7"
+TimeZones = "1.22.2"
 UnicodePlots = "3.8.4"
 julia = "1.12"
 
