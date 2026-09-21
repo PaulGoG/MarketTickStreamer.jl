@@ -28,6 +28,9 @@ Notable changes to MarketTickStreamer. The format follows
   corrupt line and compaction continued.
 - `docs/make_readme_assets.jl` relied on CairoMakie being installed in the
   global environment.
+- Log axes of up to four decades outside the plain-decimal range labelled
+  their 2× and 5× ticks with the rounded decade, so a tick at 0.2 read
+  `10⁻¹` and one at 0.5 read `1`. Intermediate ticks now carry their mantissa.
 
 ### Changed
 - `load_config` checks every key for type and documented bounds and rejects
@@ -38,6 +41,18 @@ Notable changes to MarketTickStreamer. The format follows
 - The test suite has its own environment (`test/Project.toml`); scripts
   activate through `activate.jl`, and `scripts/startup.jl` is removed.
 - `ProviderSpec` has a fifth field, `max_page_limit`.
+- The tail exponent annotated on size distributions is the Hill estimator
+  over the top decile, with its asymptotic standard error. It was a
+  least-squares slope of the log-log survival function, whose standard error
+  is not meaningful because the points of a cumulative curve are correlated.
+  Annotated values change.
+- `session_figure` and `overview_figure` draw the price path from
+  price-forming prints and annotate their share; activity and the
+  distributions still count every print. Both take `non_price`.
+- Figures follow one layout standard: 26 pt labels over 22 pt ticks, 3-wide
+  data lines, 1600 × 1100 canvas, a single exponent per axis, survival
+  functions anchored on a labelled decade, a logarithmic activity color scale,
+  and overview panels aligned on one grid.
 
 ### Added
 - `observed_round_lot`, and a `round_lot` column in `session_report`: the

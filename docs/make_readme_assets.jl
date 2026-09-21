@@ -1,7 +1,7 @@
 """
 Render the images the README and the manual show, into `docs/src/assets/`.
 
-    julia --project=docs docs/make_readme_assets.jl <raw .jsonl> ...
+    julia docs/make_readme_assets.jl <raw .jsonl> ...
 
 Both assets come from the package's own code applied to a real capture, so
 what a reader sees is what the tool produces rather than a mock-up:
@@ -27,6 +27,7 @@ const ASSETS = joinpath(@__DIR__, "src", "assets")
 const OKABE_BLUE = "#0072B2"
 const OKABE_VERMILION = "#D55E00"
 const OKABE_GREY = (:grey, 0.55)
+const GIF_WIDTH = 760       # px; frames are rendered larger and scaled down
 
 # ---------------------------------------------------------------- static
 
@@ -74,7 +75,13 @@ function replay_gif(raw_paths; n_frames::Int = 96, fps::Int = 12)
         push!(trades, t)
     end
     isempty(trades) && error("replay produced no ticks")
+    # The path is drawn from price-forming prints, as in `session_figure`; the
+    # counter still counts every print replayed.
     sort!(trades; by = t -> t.time_ns)
+    seen = cumsum(ones(Int, length(trades)))
+    keep = [price_forming(t) for t in trades]
+    any(keep) || fill!(keep, true)
+    trades, seen = trades[keep], seen[keep]
     sym = trades[1].symbol
     tz = M.tz"America/New_York"
     hours = [M._local_hour(t.time_ns; tz) for t in trades]
@@ -83,9 +90,12 @@ function replay_gif(raw_paths; n_frames::Int = 96, fps::Int = 12)
     cuts = round.(Int, range(max(2, n ÷ n_frames), n; length = n_frames))
 
     mktempdir() do tmp
-        with_theme(merge(Theme(fontsize = 13, figure_padding = 10), tick_theme())) do
+        # Frames are rendered at the standard canvas and type sizes and scaled
+        # down when the GIF is assembled, so the proportions are those of the
+        # static figures.
+        with_theme(tick_theme()) do
             for (k, c) in enumerate(cuts)
-                fig = Figure(size = (760, 380))
+                fig = Figure(size = (1200, 600))
                 ax = Axis(
                     fig[1, 1];
                     xlabel = "Exchange time [HH:MM]",
@@ -100,17 +110,22 @@ function replay_gif(raw_paths; n_frames::Int = 96, fps::Int = 12)
                     ax,
                     M._decimate_minmax(hours[1:c], prices[1:c])...;
                     color = OKABE_BLUE,
-                    linewidth = 1.4,
                 )
-                vlines!(ax, [hours[c]]; color = OKABE_VERMILION, linewidth = 1.0)
+                vlines!(
+                    ax,
+                    [hours[c]];
+                    color = OKABE_VERMILION,
+                    linewidth = 1.5,
+                    linestyle = :dash,
+                )
                 text!(
                     ax,
                     0.015,
                     0.97;
-                    text = @sprintf("%s   %s prints", sym, _grp(c)),
+                    text = @sprintf("%s   %s prints", sym, _grp(seen[c])),
                     space = :relative,
                     align = (:left, :top),
-                    fontsize = 12,
+                    fontsize = M.ANNOTATION_FONTSIZE,
                 )
                 text!(
                     ax,
@@ -119,7 +134,7 @@ function replay_gif(raw_paths; n_frames::Int = 96, fps::Int = 12)
                     text = "replayed from a recording",
                     space = :relative,
                     align = (:right, :bottom),
-                    fontsize = 10,
+                    fontsize = M.ANNOTATION_FONTSIZE,
                     color = OKABE_GREY,
                 )
                 save(joinpath(tmp, @sprintf("f%04d.png", k)), fig; px_per_unit = 1)
@@ -127,11 +142,20 @@ function replay_gif(raw_paths; n_frames::Int = 96, fps::Int = 12)
         end
         out = joinpath(ASSETS, "replay.gif")
         pal = joinpath(tmp, "pal.png")
-        run(pipeline(`ffmpeg -y -v error -i $(joinpath(tmp, "f%04d.png"))
-                      -vf palettegen=max_colors=64 $pal`))
-        run(pipeline(`ffmpeg -y -v error -framerate $fps
+        run(
+            pipeline(
+                `ffmpeg -y -v error -i $(joinpath(tmp, "f%04d.png"))
+                      -vf scale=$(GIF_WIDTH):-1:flags=lanczos,palettegen=max_colors=64 $pal`,
+            ),
+        )
+        run(
+            pipeline(
+                `ffmpeg -y -v error -framerate $fps
                       -i $(joinpath(tmp, "f%04d.png")) -i $pal
-                      -lavfi paletteuse=dither=bayer:bayer_scale=3 -loop 0 $out`))
+                      -lavfi "[0:v]scale=$(GIF_WIDTH):-1:flags=lanczos[s];[s][1:v]paletteuse=dither=bayer:bayer_scale=3"
+                      -loop 0 $out`,
+            ),
+        )
         @printf(
             "replay.gif              %.0f kB  (%d frames at %d fps)\n",
             filesize(out) / 1024,
