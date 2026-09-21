@@ -417,6 +417,22 @@ end
         @test b.open == 100.0 && b.high == 101.0 && b.low == 99.0 && b.close == 100.5
         @test b.volume == 1000.0 && b.trade_count == 42 && b.vwap == 100.25
         @test b.recv_ns == 9
+        # A streamed bar is one minute wide and stamped with its opening instant.
+        @test b.close_ns - b.time_ns == 60 * 1_000_000_000
+        later = Bar(
+            b.symbol,
+            b.time_ns,
+            b.close_ns + 1,
+            b.recv_ns,
+            b.open,
+            b.high,
+            b.low,
+            b.close,
+            b.volume,
+            b.trade_count,
+            b.vwap,
+        )
+        @test later != b && hash(later) != hash(b)
 
         # Value semantics, as for Trade: equal content compares equal.
         @test q == MarketTickStreamer.parse_alpaca_quote(wire(mock_quote("AAPL", 1)), 7)
@@ -473,6 +489,9 @@ end
         @test b[1].high == 11.0 && b[1].low == 10.0
         @test b[1].trade_count == 2 && b[1].volume == 2.0
         @test b[1].time_ns == 1                       # bar opens at its first print
+        @test b[1].close_ns == 2                      # and closes at the print completing it
+        @test b[2].time_ns == 3 && b[2].close_ns == 4
+        @test all(b[i].close_ns <= b[i+1].time_ns for i in 1:(length(b)-1))
         @test b[1].vwap == 10.5
         @test b[2].open == 9.0 && b[2].close == 12.0
         @test b[2].low == 9.0 && b[2].high == 12.0
@@ -482,6 +501,8 @@ end
         @test length(tick_bars(ts, 3)) == 1
         @test length(tick_bars(ts, 3; keep_partial = true)) == 2
         @test tick_bars(ts, 3; keep_partial = true)[2].trade_count == 1
+        partial = tick_bars(ts, 3; keep_partial = true)[2]
+        @test partial.time_ns == partial.close_ns == 4    # a one-print bar has no duration
 
         # Volume clock: 3 + 3 closes the first bar, the remaining 3 is partial.
         vs = [mk(1, 10.0, 3.0), mk(2, 10.0, 3.0), mk(3, 10.0, 3.0)]

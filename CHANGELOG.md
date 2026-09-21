@@ -33,6 +33,12 @@ Notable changes to MarketTickStreamer. The format follows
   `10⁻¹` and one at 0.5 read `1`. Intermediate ticks now carry their mantissa.
 
 ### Changed
+- **Breaking: `Bar` has a closing instant.** A new third field `close_ns`
+  follows `time_ns`. For `tick_bars`, `volume_bars` and `dollar_bars` it is
+  the timestamp of the print that completed the bar, so
+  `close_ns - time_ns` is the time the market took to transact the bar's
+  fixed quantity; for a streamed one-minute bar it is `time_ns` plus 60 s.
+  Positional construction of `Bar` takes eleven arguments.
 - `load_config` checks every key for type and documented bounds and rejects
   unknown tables and keys, so a misspelt key no longer falls back to its
   default. A configuration that loaded before may now be rejected.

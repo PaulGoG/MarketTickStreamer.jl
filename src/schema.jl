@@ -126,8 +126,17 @@ Base.hash(q::Quote, h::UInt) = hash(
 """
     Bar
 
-One normalized aggregate bar. `time_ns` is the bar's opening instant, not its
-close, so a bar and the prints inside it share a time origin.
+One normalized aggregate bar: `time_ns` is the opening instant and `close_ns`
+the closing one, both in nanoseconds since the Unix epoch on the exchange
+clock, so a bar and the prints inside it share a time origin.
+
+For an activity bar ([`tick_bars`](@ref), [`volume_bars`](@ref),
+[`dollar_bars`](@ref)) `time_ns` is the timestamp of its first print and
+`close_ns` that of the print that completed it. The duration
+`close_ns - time_ns` is then a random variable — the time the market needed to
+transact a fixed amount of activity — and is the observable a waiting-time
+study reads off an activity clock. For a venue-computed bar `close_ns` is the
+end of the venue's aggregation window.
 
 Like [`Quote`](@ref), bars are parsed but not subscribed to by default. They
 are a convenience the venue computes; anything a bar reports can be derived
@@ -137,6 +146,7 @@ whereas the venue's aggregation rules are not fully observable.
 struct Bar
     symbol::String
     time_ns::Int64
+    close_ns::Int64
     recv_ns::Int64
     open::Float64
     high::Float64
@@ -150,6 +160,7 @@ end
 Base.:(==)(a::Bar, b::Bar) =
     a.symbol == b.symbol &&
     a.time_ns == b.time_ns &&
+    a.close_ns == b.close_ns &&
     a.recv_ns == b.recv_ns &&
     a.open == b.open &&
     a.high == b.high &&
@@ -163,6 +174,7 @@ Base.hash(b::Bar, h::UInt) = hash(
     (
         b.symbol,
         b.time_ns,
+        b.close_ns,
         b.recv_ns,
         b.open,
         b.high,

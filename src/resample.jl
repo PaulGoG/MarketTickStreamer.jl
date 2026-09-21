@@ -10,7 +10,9 @@
 # Clark 1973, doi:10.2307/1913889; Ané & Geman 2000, doi:10.1111/0022-1082.00286).
 #
 # Bars are derived objects: they carry `recv_ns = 0`, the same marker the raw
-# layer uses for records that never crossed the wire.
+# layer uses for records that never crossed the wire. Each bar records both
+# ends of its interval, `time_ns` of its first print and `close_ns` of its
+# last, since on an activity clock the duration is data.
 
 function _activity_bars(
     trades::AbstractVector{Trade},
@@ -62,6 +64,7 @@ function _activity_bars(
                 Bar(
                     sym,
                     first_print.time_ns,
+                    ordered[j-1].time_ns,
                     0,
                     first_print.price,
                     high,
@@ -95,9 +98,10 @@ as a subordinated process running on transaction time, and Ané and Geman (2000)
 sampled this way are close to normal where calendar-time returns are heavy-tailed.
 
 Prints are ordered by exchange timestamp, not arrival. The print that
-completes a bar belongs to it. A trailing incomplete bar is dropped unless
-`keep_partial`, since its threshold — and therefore its comparability to the
-others — is not met.
+completes a bar belongs to it. Its timestamp is the bar's `close_ns`, so
+consecutive bars satisfy `bars[i].close_ns <= bars[i+1].time_ns`. A trailing
+incomplete bar is dropped unless `keep_partial`, since its threshold — and
+therefore its comparability to the others — is not met.
 
     tick_bars(trades, 500)                      # one bar per 500 prints
     tick_bars(filter_price_forming(trades), 500)  # price-forming prints only

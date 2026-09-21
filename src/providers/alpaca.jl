@@ -177,11 +177,16 @@ end
 # Bar frames reuse `c` for the CLOSING PRICE, not for conditions as trade and
 # quote frames do. Mixing the two up is silent and produces plausible numbers,
 # so the field is read explicitly here and nowhere else.
+# The `b` channel carries one-minute bars stamped with the minute's opening
+# instant, so the closing instant is that plus 60 s; daily and updated bars
+# arrive on other channels and are not parsed here.
 function parse_alpaca_bar(msg, recv_ns::Int64; symbol::AbstractString = "")
     sym = isempty(symbol) ? String(msg.S) : String(symbol)
+    open_ns = rfc3339_to_ns(String(msg.t))
     return Bar(
         sym,
-        rfc3339_to_ns(String(msg.t)),
+        open_ns,
+        open_ns + 60 * NS_PER_SEC,
         recv_ns,
         Float64(msg.o),
         Float64(msg.h),

@@ -196,6 +196,19 @@ high-priced name. And the bars carry `recv_ns = 0`, the same marker the raw
 layer uses for records that never crossed the wire, because a derived bar has
 no receipt time.
 
+A [`Bar`](@ref) records both ends of its interval: `time_ns` is the timestamp
+of its first print and `close_ns` that of the print that completed it. On an
+activity clock the amount transacted per bar is fixed and the duration is
+what varies, so `close_ns - time_ns` is itself a waiting time — that of a
+fixed quantity of activity rather than of a single print:
+
+```julia
+durations_s = [(b.close_ns - b.time_ns) / 1e9 for b in bars]
+```
+
+Consecutive bars never overlap, `bars[i].close_ns <= bars[i+1].time_ns`, and
+the gap between them is the wait for the next bar's first print.
+
 ## Working from the file layer instead
 
 For methods that need the whole record rather than a stream — tail exponents,
