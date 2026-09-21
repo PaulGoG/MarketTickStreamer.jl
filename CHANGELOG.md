@@ -6,6 +6,39 @@ Notable changes to MarketTickStreamer. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- A Binance backfill with `backfill.page_limit` above 1000 kept only the first
+  page of each day. The server clamps an over-limit request to 1000 rows
+  without an error, and the adapter ends its walk on a short page. The shipped
+  configuration had `page_limit = 10000`. The limit is now bounded per
+  provider (`ProviderSpec.max_page_limit`), in the configuration and in both
+  adapters. **Binance days backfilled with a larger limit are truncated and
+  should be downloaded again.**
+- `limits.max_session_hours` did not stop a connection that never dropped: it
+  was tested only between reconnections. A guard task now enforces it.
+- Recorded-pace replay of a backfilled capture ran at full speed, because it
+  paced on `recv_ns`, which is 0 for backfilled records. Replay also slept
+  each gap separately, so timer overshoot accumulated (1.65 s for a nominal
+  1.00 s at 2.5 ms gaps). Pacing now follows an absolute schedule on a
+  selectable clock: `replay_source(...; clock)` and `replay.clock`, one of
+  `"auto"`, `"recv"`, `"exchange"`.
+- A backfill that died on an error finalized its sidecar as `completed`. It is
+  now `failed`.
+- An interrupt raised while a raw line was being parsed was counted as a
+  corrupt line and compaction continued.
+- `docs/make_readme_assets.jl` relied on CairoMakie being installed in the
+  global environment.
+
+### Changed
+- `load_config` checks every key for type and documented bounds and rejects
+  unknown tables and keys, so a misspelt key no longer falls back to its
+  default. A configuration that loaded before may now be rejected.
+- No `Manifest.toml` is tracked. Each session writes a copy of the manifest it
+  ran with next to its sidecar (`provenance.manifest`).
+- The test suite has its own environment (`test/Project.toml`); scripts
+  activate through `activate.jl`, and `scripts/startup.jl` is removed.
+- `ProviderSpec` has a fifth field, `max_page_limit`.
+
 ### Added
 - `observed_round_lot`, and a `round_lot` column in `session_report`: the
   venue's round lot read off the tape as one share more than the largest

@@ -98,6 +98,7 @@ cutoffs — no threshold is hardcoded elsewhere in the pipeline.
 | --- | --- |
 | `pace` | `"recorded"` honors the original inter-arrival times; `"max"` emits as fast as the consumer takes them. |
 | `speed` | Time-compression factor when pacing is honored; `60.0` replays an hour in a minute. |
+| `clock` | Timestamp that orders and paces the replay: `"recv"` (local receipt), `"exchange"` (the venue's own), or `"auto"` — receipt time when every record has it, exchange time otherwise. A backfilled recording has no receipt clock. |
 
 ## `[backfill]`
 
@@ -105,7 +106,7 @@ cutoffs — no threshold is hardcoded elsewhere in the pipeline.
 | --- | --- |
 | `start_date`, `end_date` | Inclusive exchange dates (America/New_York). Either an ISO date `"YYYY-MM-DD"` or a sentinel: `"today"`, or `"today-<N>d"` for N calendar days back. |
 | `feed` | Historical feed, `"iex"` or `"sip"`. Free accounts have full SIP history back to 2016, minus the trailing 15 minutes. |
-| `page_limit` | Rows per REST page; the provider maximum is 10000. |
+| `page_limit` | Rows per REST page, from 1 to the provider maximum (Alpaca 10000, Binance 1000), which is also the default. A larger value is rejected: Binance clamps it without an error, and a clamped page reads as the end of the tape. |
 | `rate_limit_sleep_s` | Pause between pages. The free tier allows 200 requests per minute. |
 | `resume` | Skip `(symbol, day)` pairs already present under `processed/`, so an aborted download resumes instead of restarting. |
 

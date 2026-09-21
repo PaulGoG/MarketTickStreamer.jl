@@ -83,8 +83,10 @@ path — no data is lost on interrupt (tested).
 
 - **Reconnection**: jittered exponential backoff
   (`base·2^attempt`, capped), attempt counter reset after any connection
-  that delivered data; bounded by `reconnect_max_retries` and the hard
-  session deadline `limits.max_session_hours`.
+  that delivered data; bounded by `reconnect_max_retries`.
+- **Session deadline**: `limits.max_session_hours` is enforced by a guard
+  task, so it also ends a connection that never drops; the reconnect loop
+  alone would only test it between connections.
 - **Fatal vs retryable**: Alpaca error codes 401–411 (bad auth, connection
   limit, bad subscription) abort immediately — retrying them is a ban risk,
   not resilience. The fatal signal is carried out of the WebSocket handler
@@ -124,7 +126,11 @@ path — no data is lost on interrupt (tested).
   commit + dirty flag, versions, hostname, pid, hardware fingerprint —
   CPU model/cores, memory, thread and BLAS-thread counts, `versioninfo` —
   and the full config snapshot) and
-  finalizes it at exit (`completed` / `interrupted`, counts). Startup
+  finalizes it at exit (`completed` / `interrupted` / `failed`, counts). A
+  copy of the resolved `Manifest.toml` is written beside it as
+  `<session>.manifest.toml` and named under `provenance.manifest`: no manifest
+  is tracked in the repository, so this copy is what pins the dependency
+  versions a session ran with. Startup
   reconciliation relabels sidecars of dead processes `aborted` and reports
   zero-byte raw stubs — provenance survives SIGKILL and power loss, which
   graceful-path handling alone cannot (threaded Ctrl-C delivery is

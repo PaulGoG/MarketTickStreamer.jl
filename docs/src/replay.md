@@ -60,7 +60,17 @@ layer produces objects that compare equal.
 
 ## Guarantees
 
-**Ordering.** Replay emits in ascending `recv_ns`, sorted on load. The live
+**Ordering.** Replay emits in ascending order of its clock, sorted on load:
+`recv_ns` when every record carries one, `time_ns` otherwise (`clock = "auto"`;
+either can be forced). Backfilled records have `recv_ns = 0`, so a backfilled
+recording replays on exchange time.
+
+**Pacing.** Each emission is scheduled against the absolute time elapsed since
+the first record, not slept gap by gap. `sleep` overshoots by about a
+millisecond, so per-gap sleeping stretches a session whose gaps are of that
+order — 65 % on gaps of 2.5 ms — whereas on an absolute schedule the error
+stays within one overshoot however long the replay runs. Gaps below a
+millisecond are emitted back to back, in order. The live
 source emits in arrival order, which is *not* the same as ascending
 `time_ns`: a consolidated tape interleaves venues, and late prints are
 normal. Any method that needs monotone exchange time must sort or reject
