@@ -14,23 +14,13 @@ jobs:
   test:
     name: Tests — Julia ${{ matrix.version }}
     runs-on: ubuntu-latest
-    # Linux only, deliberately: this is a data-acquisition package targeting
-    # Linux hosts, and `[compat]` makes no claim about other platforms.
-    # Widening the matrix means first running the suite there — the mock
-    # server, the PID-file lock and the raw-layer path handling are the parts
-    # that would need it.
+    # Linux only: `[compat]` makes no claim about other platforms, and the mock
+    # server, the PID-file lock and the raw-layer path handling are untested
+    # elsewhere.
     #
-    # Every leg blocks the workflow except "pre", which watches the next
-    # prerelease. Coverage runs once: it disables package images and roughly
-    # doubles the precompile time.
-    #
-    # The committed manifests are resolved on 1.13 and pin its standard-library
-    # membership, which moves between Julia versions — Zstd_jll is a standard
-    # library on 1.13 and a registered package on 1.12, so a 1.13 manifest
-    # cannot be built on the compat floor. Legs on any other version therefore
-    # resolve their own environment, which is what the `julia` compat bound
-    # claims anyway; the blocking "1" leg is the one that validates the
-    # manifests as committed.
+    # No manifest is tracked, so every leg resolves its own environment from
+    # `[compat]`. Every leg blocks the workflow except "pre". Coverage runs
+    # once: it disables package images and roughly doubles the precompile time.
     continue-on-error: ${{ matrix.experimental }}
     strategy:
       fail-fast: false
@@ -39,24 +29,18 @@ jobs:
           - version: "1"
             coverage: true
             experimental: false
-            resolve: false
           - version: "1.12"
             coverage: false
             experimental: false
-            resolve: true
           - version: "pre"
             coverage: false
             experimental: true
-            resolve: true
     steps:
       - uses: actions/checkout@v7
       - uses: julia-actions/setup-julia@v3
         with:
           version: ${{ matrix.version }}
       - uses: julia-actions/cache@v3
-      - name: Resolve a fresh environment for this Julia version
-        if: matrix.resolve
-        run: rm -f Manifest.toml
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
         with:
