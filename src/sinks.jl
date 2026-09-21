@@ -197,7 +197,9 @@ function read_raw(paths::AbstractVector{<:AbstractString})
             isempty(strip(line)) && continue
             try
                 push!(trades, json_to_trade(line))
-            catch
+            catch e
+                # An interrupt landing mid-parse is not a corrupt line.
+                e isa InterruptException && rethrow()
                 nbad += 1
             end
         end
@@ -360,7 +362,8 @@ function _compact_spill(
             isempty(strip(line)) && continue
             t = try
                 json_to_trade(line)
-            catch
+            catch e
+                e isa InterruptException && rethrow()
                 nbad += 1
                 continue
             end
