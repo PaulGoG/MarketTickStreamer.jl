@@ -227,6 +227,23 @@ function stop!(s::LiveSession)
     return nothing
 end
 
+# Guard task: gracefully stop the session once the wall clock passes `stop_ns`
+# (ns since epoch). Shared by the market-close railing and the session
+# deadline. Returns the task; it exits early if the session stops first.
+function _stop_at!(s::LiveSession, stop_ns::Int64, message::AbstractString)
+    return Threads.@spawn begin
+        while !s.stop[]
+            remaining = (stop_ns - now_ns()) / 1e9
+            remaining <= 0 && break
+            sleep(min(remaining, 5.0))
+        end
+        if !s.stop[]
+            @info message
+            stop!(s)
+        end
+    end
+end
+
 """
     schedule_close_stop!(s::LiveSession, close_ns; grace_s = 5.0) -> Task
 
@@ -236,17 +253,11 @@ wall clock passes `close_ns` (ns since epoch, e.g. the market's
 on a silent overnight connection until the session deadline.
 """
 function schedule_close_stop!(s::LiveSession, close_ns::Int64; grace_s::Real = 5.0)
-    return Threads.@spawn begin
-        while !s.stop[]
-            remaining = (close_ns - now_ns()) / 1e9 + grace_s
-            remaining <= 0 && break
-            sleep(min(remaining, 5.0))
-        end
-        if !s.stop[]
-            @info "market close reached — stopping session"
-            stop!(s)
-        end
-    end
+    return _stop_at!(
+        s,
+        close_ns + round(Int64, grace_s * NS_PER_SEC),
+        "market close reached — stopping session",
+    )
 end
 
 """
@@ -333,6 +344,14 @@ function live_source(p::AbstractProvider, cfg::Config; on_quote = nothing, on_ba
         Ref((; ticks = 0, frames = 0, reconnects = 0)),
     )
     deadline = time() + cfg.max_session_hours * 3600
+    # The reconnect loop below only tests the deadline between connections; a
+    # healthy connection never returns to it, so a guard task enforces the
+    # limit while the stream is up.
+    _stop_at!(
+        session,
+        now_ns() + round(Int64, cfg.max_session_hours * 3600 * NS_PER_SEC),
+        "session deadline reached — stopping session",
+    )
     Threads.@spawn begin
         attempt = 0
         try
