@@ -8,7 +8,7 @@ using MarketTickStreamer
 makedocs(
     doctest = true,
     sitename = "MarketTickStreamer",
-    authors = "Paul-Adrian Gogîță <gogitapaul@yahoo.ro>",
+    authors = "Paul-Adrian Gogîță",
     repo = Documenter.Remotes.GitHub("PaulGoG", "MarketTickStreamer.jl"),
     format = Documenter.HTML(
         prettyurls = get(ENV, "CI", nothing) == "true",

@@ -1,7 +1,7 @@
 name = "MarketTickStreamer"
 uuid = "57360e3f-416d-4026-814a-7f453c6dc1fa"
 version = "0.3.0-DEV"
-authors = ["Paul-Adrian Gogîță <gogitapaul@yahoo.ro>"]
+authors = ["Paul-Adrian Gogîță"]
 
 [deps]
 Arrow = "69666777-d1a9-59fb-9406-91d4454c9d45"
