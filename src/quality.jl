@@ -112,8 +112,8 @@ carries the flag.
 
 Worth reporting per capture because the round lot is neither 100 shares nor
 constant. Under the SEC Market Data Infrastructure rules it is tiered by
-share price — 100 shares at or below \$250, 40 up to \$1,000, 10 up to
-\$10,000, 1 above — and reassigned semiannually per symbol from that symbol's
+share price — 100 shares at or below 250 USD, 40 up to 1000 USD, 10 up to
+10 000 USD, 1 above — and reassigned semiannually per symbol from that symbol's
 average close over an evaluation month, effective the first business day of
 May and of November.
 
