@@ -30,6 +30,7 @@ function main()
         files;
         pace = cfg.replay_pace,
         speed = cfg.replay_speed,
+        clock = cfg.replay_clock,
         capacity = cfg.channel_capacity,
     )
     n = 0
