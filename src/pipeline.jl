@@ -201,6 +201,35 @@ function _hardware_provenance()
     )
 end
 
+# Manifest of the active environment, by the file names Pkg itself looks for,
+# most specific first. `nothing` when the process runs without a project or
+# the environment was never resolved.
+function _active_manifest()
+    project = Base.active_project()
+    project === nothing && return nothing
+    dir = dirname(project)
+    v = "v$(VERSION.major).$(VERSION.minor)"
+    for name in
+        ("JuliaManifest-$v.toml", "Manifest-$v.toml", "JuliaManifest.toml", "Manifest.toml")
+        path = joinpath(dir, name)
+        isfile(path) && return path
+    end
+    return nothing
+end
+
+# Copy the resolved manifest next to the sidecar as `<sid>.manifest.toml` and
+# return its base name ("" when there is none). No manifest is tracked in the
+# repository, so this copy is what pins the exact dependency versions a
+# session ran with.
+function _snapshot_manifest(raw_dir::AbstractString, sid::AbstractString)
+    src = _active_manifest()
+    src === nothing && return ""
+    mkpath(raw_dir)
+    dst = _safepath(joinpath(raw_dir, "$(sid).manifest.toml"))
+    cp(src, dst)
+    return basename(dst)
+end
+
 """
     write_session_meta(cfg, sid; status, ticks, raw_files, started_utc,
                        finished_utc = nothing) -> String
@@ -208,9 +237,11 @@ end
 Persist a provenance sidecar `<raw_dir>/<sid>.meta.toml` next to the
 session's raw files: session summary (id, status, pid, span, tick count,
 file list), provenance (git commit + dirty flag, Julia and package
-versions, hostname), a hardware fingerprint (CPU model and logical core
-count, total memory, Julia and BLAS thread counts, full `versioninfo`
-output), and the full effective configuration snapshot. The crash-only
+versions, hostname, and the base name of a copy of the resolved
+`Manifest.toml` written alongside as `<sid>.manifest.toml`), a hardware
+fingerprint (CPU model and logical core count, total memory, Julia and
+BLAS thread counts, full `versioninfo` output), and the full effective
+configuration snapshot. The crash-only
 lifecycle is [`start_session_meta`](@ref) → [`finalize_session_meta`](@ref),
 reconciled at startup by [`reconcile_sessions!`](@ref).
 """
@@ -241,6 +272,7 @@ function write_session_meta(
             "package_version" =>
                 string(something(pkgversion(MarketTickStreamer), "unknown")),
             "hostname" => gethostname(),
+            "manifest" => _snapshot_manifest(cfg.raw_dir, sid),
         ),
         "hardware" => _hardware_provenance(),
         "config" => Dict{String,Any}(
@@ -264,8 +296,8 @@ start_session_meta(cfg::Config, sid::AbstractString; started_utc::DateTime) =
 """
     finalize_session_meta(path, status; ticks, raw_files) -> String
 
-Rewrite the running sidecar with the final status (`"completed"` /
-`"interrupted"`), tick count, file list, and finish timestamp. The sidecar
+Rewrite the running sidecar with the final status (`"completed"`,
+`"interrupted"` or `"failed"`), tick count, file list, and finish timestamp. The sidecar
 is a mutable status record by design — the safesave rule protects data
 products, not status metadata.
 """
@@ -470,7 +502,9 @@ with raw data that resume could not see, and the rerun started from nothing.
 An interrupted day is not compacted and is therefore downloaded again; its
 partial raw file is left on disk rather than deleted, and compaction
 deduplicates if it is ever folded in. Ctrl-C finalizes the provenance sidecar
-as `interrupted` and returns the days that did complete.
+as `interrupted` and returns the days that did complete. Any other error
+finalizes it as `failed` and propagates; the days compacted before the error
+remain valid and a rerun resumes after them.
 """
 function run_backfill(cfg::Config; provider::Union{AbstractProvider,Nothing} = nothing)
     sid = "backfill_" * session_id(cfg; feed = cfg.backfill_feed)
@@ -555,9 +589,15 @@ function run_backfill(cfg::Config; provider::Union{AbstractProvider,Nothing} = n
             next!(prog)
         end
     catch e
-        e isa InterruptException || rethrow()
-        status = "interrupted"
-        @info "interrupt — completed days are compacted; a rerun resumes" sid
+        if e isa InterruptException
+            status = "interrupted"
+            @info "interrupt — completed days are compacted; a rerun resumes" sid
+        else
+            # The `finally` below finalizes the sidecar; without this the
+            # provenance of a crashed run would read "completed".
+            status = "failed"
+            rethrow()
+        end
     finally
         meta_path === nothing || finalize_session_meta(
             meta_path,
