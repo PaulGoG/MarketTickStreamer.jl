@@ -1,4 +1,5 @@
-# Session visualization (CairoMakie), publication-grade per project standards.
+# Session visualization (CairoMakie package extension), publication-grade per
+# project standards.
 #
 # Two figure families, identical styling:
 #   session_figure   — one symbol, one trading day (price, activity, Δt/size CCDFs)
@@ -8,61 +9,55 @@
 # Inter-arrival and size distributions are drawn as survival functions on
 # log-log axes — heavy tails are invisible in linear histograms.
 
-"""
-    tick_theme() -> Theme
+module MarketTickStreamerMakieExt
 
-Publication defaults: Computer Modern fonts, 26 pt labels over 22 pt ticks,
-boxed axes with 1.5-wide spines, inward ticks, no minor ticks, faint dashed
-grey grid, 3-wide data lines, frameless horizontal legends.
-"""
-tick_theme() = Theme(
-    fonts = (; regular = texfont(:text), bold = texfont(:bold), italic = texfont(:italic)),
-    fontsize = 26,
-    figure_padding = 10,
-    linewidth = 3,
-    markersize = 14,
-    Axis = (
-        spinewidth = 1.5,
-        xticklabelsize = 22,
-        yticklabelsize = 22,
-        xgridstyle = :dash,
-        ygridstyle = :dash,
-        xgridcolor = (:grey, 0.12),
-        ygridcolor = (:grey, 0.12),
-        xminorticksvisible = false,
-        yminorticksvisible = false,
-        xtickalign = 1,
-        ytickalign = 1,
-        rightspinevisible = true,
-        topspinevisible = true,
-    ),
-    Scatter = (strokewidth = 1.5,),
-    Legend = (framevisible = false, orientation = :horizontal, titlefont = :bold),
-)
+using CairoMakie:
+    CairoMakie,
+    @L_str,
+    Axis,
+    Colorbar,
+    Figure,
+    Makie,
+    Theme,
+    heatmap!,
+    lines!,
+    save,
+    stairs!,
+    text!,
+    theme_latexfonts,
+    vlines!,
+    with_theme,
+    ylims!
+using DataFrames: DataFrame, nrow
+using Dates: Dates, @dateformat_str
+using MarketTickStreamer:
+    MarketTickStreamer,
+    NON_PRICE_CONDITIONS,
+    NS_PER_SEC,
+    PROJECT_ROOT,
+    Trade,
+    deduplicate_trades,
+    price_forming,
+    read_raw,
+    trading_date,
+    _ccdf,
+    _count_note,
+    _decimate_minmax,
+    _hhmm_ticks,
+    _local_hour,
+    _read_processed,
+    _row_price_forming,
+    _safesave,
+    _si_seconds,
+    _tail_fit,
+    _thin,
+    _value_pm
+using Printf: @sprintf
+using Statistics: median
+using TimeZones: @tz_str, Date, TimeZone
 
 # In-axis annotations sit at 0.8 of the label size.
 const ANNOTATION_FONTSIZE = 21
-
-const SESSION_OPEN_H = 9.5      # regular US equity session, exchange-local
-const SESSION_CLOSE_H = 16.0
-const SESSION_LEN_H = SESSION_CLOSE_H - SESSION_OPEN_H
-
-# Exchange-local hour-of-day (fractional) of a ns epoch timestamp.
-function _local_hour(ns::Int64; tz::TimeZone)
-    zdt = astimezone(ZonedDateTime(ns_to_datetime(ns), tz"UTC"), tz)
-    return Dates.value(Dates.Time(DateTime(zdt))) / 3.6e12
-end
-
-_hhmm(h::Real) = (m = round(Int, 60h); @sprintf("%02d:%02d", m ÷ 60, m % 60))
-
-# HH:MM ticks over an exchange-local hour span (domain time format).
-function _hhmm_ticks(lo::Real, hi::Real)
-    span = hi - lo
-    step = span > 8 ? 2.0 : span > 3.5 ? 1.0 : span > 1.5 ? 0.5 : span > 0.7 ? 0.25 : 1 / 12
-    first = ceil(lo / step) * step
-    vals = collect(first:step:hi)
-    return (vals, _hhmm.(vals))
-end
 
 # m×10^k as a tick label, with the collapse rules: 10^0 → 1 and 10^1 → 10
 # always, and a mantissa folds into a plain decimal next to them
@@ -100,111 +95,6 @@ function _survival_yaxis!(ax, pmin::Real)
     return nothing
 end
 
-# Survival function P(X > x) over positive samples, ready for log-log axes.
-function _ccdf(xs::Vector{Float64})
-    pos = sort!(filter(>(0.0), xs))
-    n = length(pos)
-    return pos, collect(n:-1:1) ./ n
-end
-
-# Deterministic point thinning that preserves the tail: uniform stride over
-# the body plus the last `tail` points, so million-tick CCDFs stay
-# vector-light without visible change.
-function _thin(
-    xs::Vector{Float64},
-    ys::Vector{Float64};
-    cap::Integer = 3000,
-    tail::Integer = 300,
-)
-    n = length(xs)
-    n <= cap && return xs, ys
-    stride = cld(n, cap - tail)
-    idx = sort!(unique(vcat(1:stride:n, (n-tail+1):n)))
-    return xs[idx], ys[idx]
-end
-
-# Min-max decimation per x-bin: preserves envelopes (spikes survive) while
-# bounding a day's price path to ~2 * nbins points.
-function _decimate_minmax(x::Vector{Float64}, y::Vector{Float64}; nbins::Integer = 400)
-    length(x) <= 2nbins && return x, y
-    lo, hi = extrema(x)
-    edges = range(lo, hi; length = nbins + 1)
-    xo = Float64[]
-    yo = Float64[]
-    i = 1
-    for b in 1:nbins
-        r = searchsortedlast(x, edges[b+1])
-        r < i && continue
-        seg = i:r
-        jmin = seg[argmin(@view y[seg])]
-        jmax = seg[argmax(@view y[seg])]
-        for j in sort!([jmin, jmax])
-            push!(xo, x[j])
-            push!(yo, y[j])
-        end
-        i = r + 1
-    end
-    return xo, yo
-end
-
-"""
-    _tail_fit(x; frac = 0.1) -> Union{Nothing,NamedTuple}
-
-Hill estimator of the tail exponent `α` in `P(X > x) ∝ x^(-α)` from the `k`
-largest of the ascending-sorted positive samples `x`, with `k` the top `frac`
-of the sample and at least 30:
-
-    α̂ = k / Σᵢ ln(x₍ₙ₋ᵢ₊₁₎ / x₍ₙ₋ₖ₎),    σ = α̂ / √k.
-
-This is the maximum-likelihood estimator of a Pareto tail above the threshold
-`x₍ₙ₋ₖ₎` ([Hill 1975](https://doi.org/10.1214/aos/1176343247)). A
-least-squares line through the log-log survival function is not a substitute:
-its points are cumulative and therefore strongly correlated, so the slope is
-biased and its regression standard error is too small by a large factor
-([Clauset, Shalizi & Newman 2009](https://doi.org/10.1137/070710111)).
-
-The threshold is a fixed fraction rather than a fitted `x_min`, and trade sizes
-are discrete with mass at round numbers, so the value is a diagnostic of tail
-weight, not a measurement of a power law. Returns `nothing` for fewer than 50
-samples, for a tail spanning less than a factor of two, or when the tail is
-degenerate.
-"""
-function _tail_fit(x::Vector{Float64}; frac::Real = 0.1)
-    n = length(x)
-    n < 50 && return nothing
-    k = min(n - 1, max(30, round(Int, frac * n)))
-    threshold = x[n-k]
-    (threshold > 0 && x[n] >= 2threshold) || return nothing
-    s = sum(log(x[i] / threshold) for i in (n-k+1):n)
-    s > 0 || return nothing
-    α = k / s
-    return (α = α, σ = α / sqrt(k))
-end
-
-# Value and uncertainty to the same number of decimals, set by the leading
-# digit of the uncertainty and capped at three: 1.429 ± 0.004, 1.87 ± 0.07.
-function _value_pm(value::Real, σ::Real)
-    decimals = clamp(-floor(Int, log10(σ)), 0, 3)
-    return _fixed(value, decimals), _fixed(σ, decimals)
-end
-
-# Fixed-point rendering with exactly `decimals` digits after the point;
-# `round` alone drops trailing zeros ("1.4" for 1.40).
-function _fixed(v::Real, decimals::Integer)
-    decimals == 0 && return string(round(Int, v))
-    str = string(round(Float64(v); digits = decimals))
-    i = something(findfirst('.', str), length(str))
-    return str * "0"^(decimals - (length(str) - i))
-end
-
-# A duration in the SI-prefixed unit that keeps it between 1 and 1000.
-function _si_seconds(x::Real)
-    for (scale, unit) in ((1.0, "s"), (1e-3, "ms"), (1e-6, "μs"))
-        x >= scale && return @sprintf("%.3g %s", x / scale, unit)
-    end
-    return @sprintf("%.3g ns", x / 1e-9)
-end
-
 # Counts per minute, rescaled by a power of 1000 so that one axis never mixes
 # exponents in its tick labels. Returns the divisor and the axis label.
 function _rate_scale(peak::Real)
@@ -230,27 +120,35 @@ function _annotate_tail!(ax, x, color)
     return nothing
 end
 
-# Space-grouped thousands for in-axis count annotations.
-_count_note(n::Integer) = replace(string(n), r"(?<=\d)(?=(\d{3})+$)" => " ")
+# `theme_latexfonts` carries the Computer Modern regular/bold/italic faces.
+MarketTickStreamer.tick_theme() = merge(
+    Theme(
+        fontsize = 26,
+        figure_padding = 10,
+        linewidth = 3,
+        markersize = 14,
+        Axis = (
+            spinewidth = 1.5,
+            xticklabelsize = 22,
+            yticklabelsize = 22,
+            xgridstyle = :dash,
+            ygridstyle = :dash,
+            xgridcolor = (:grey, 0.12),
+            ygridcolor = (:grey, 0.12),
+            xminorticksvisible = false,
+            yminorticksvisible = false,
+            xtickalign = 1,
+            ytickalign = 1,
+            rightspinevisible = true,
+            topspinevisible = true,
+        ),
+        Scatter = (strokewidth = 1.5,),
+        Legend = (framevisible = false, orientation = :horizontal, titlefont = :bold),
+    ),
+    theme_latexfonts(),
+)
 
-"""
-    session_figure(trades; tz = tz"America/New_York",
-                   non_price = NON_PRICE_CONDITIONS) -> Figure
-
-Build the 2×2 diagnostic figure for one symbol's single-day ticks:
-
-- price path over exchange-local time (`HH:MM` axis, min–max decimated),
-  drawn from the prints that [`price_forming`](@ref) admits under `non_price`,
-  with the admitted share annotated,
-- activity (trades per minute, every print),
-- inter-arrival time survival function `P(Δt > x)` (log-log, decade ticks)
-  with the median annotated,
-- trade-size survival function `P(S > s)` with a Hill tail exponent.
-
-`trades` must be non-empty and single-symbol (as produced by the grouping in
-[`save_session_figures`](@ref)); they are sorted internally by exchange time.
-"""
-function session_figure(
+function MarketTickStreamer.session_figure(
     trades::Vector{Trade};
     tz::TimeZone = tz"America/New_York",
     non_price::AbstractDict = NON_PRICE_CONDITIONS,
@@ -330,11 +228,14 @@ function session_figure(
         ax3.xticks = _log_ticks(extrema(x3)...)
         _survival_yaxis!(ax3, y3[end])
         lines!(ax3, _thin(x3, y3)...; color)
+        # Evaluated outside the string macro, where the import checker can
+        # see `median` and `_si_seconds` being used.
+        median_gap = _si_seconds(median(x3))
         text!(
             ax3,
             0.04,
             0.05;
-            text = L"Median $\Delta t$ = %$(_si_seconds(median(x3)))",
+            text = L"Median $\Delta t$ = %$(median_gap)",
             space = :relative,
             align = (:left, :bottom),
             color,
@@ -360,47 +261,22 @@ function session_figure(
     return fig
 end
 
-# `price_forming` for one row of a processed table, where the condition list
-# is stored joined by '|' and an empty list reads back as `missing` from CSV.
-function _row_price_forming(tape, conditions, non_price::AbstractDict)
-    (ismissing(tape) || ismissing(conditions)) && return true
-    # `string`, not `String`: CSV type detection reads an all-numeric column
-    # of codes ("4", "7") back as integers.
-    excluded = get(non_price, string(tape), nothing)
-    excluded === nothing && return true
-    return !any(c -> c in excluded, eachsplit(string(conditions), '|'))
-end
-
-# One processed per-day file (CSV or Arrow) → DataFrame.
-_read_processed(path::AbstractString) =
-    endswith(path, ".arrow") ? DataFrame(Arrow.Table(path)) : CSV.read(path, DataFrame)
-
-"""
-    overview_figure(symbol, days; tz = tz"America/New_York",
-                    non_price = NON_PRICE_CONDITIONS) -> Figure
-
-Multi-day diagnostic figure for one symbol from per-day processed tables
-(`days` is a vector of `(date, DataFrame)` pairs, sorted internally by date):
-
-- price path on a concatenated *trading-time* axis (overnight gaps removed,
-  session boundaries dashed, days labeled at their centers), drawn from the
-  prints that [`price_forming`](@ref) admits under `non_price`,
-- day × session-minute activity heatmap,
-- pooled **intra-session** inter-arrival CCDF (overnight gaps excluded by
-  construction — they would contaminate the waiting-time tail),
-- pooled trade-size CCDF with fitted tail exponent.
-"""
-function overview_figure(
+function MarketTickStreamer.overview_figure(
     symbol::AbstractString,
     days::Vector{<:Tuple{Date,DataFrame}};
     tz::TimeZone = tz"America/New_York",
     non_price::AbstractDict = NON_PRICE_CONDITIONS,
+    session::Tuple{<:Real,<:Real} = (9.5, 16.0),
 )
     isempty(days) && throw(ArgumentError("no days to plot"))
+    session_open, session_close = Float64.(session)
+    0 <= session_open < session_close <= 24 ||
+        throw(ArgumentError("session must satisfy 0 <= open < close <= 24, got $session"))
+    session_len = session_close - session_open
     days = sort(days; by = first)
     nd = length(days)
     color = Makie.wong_colors()[1]
-    slot = SESSION_LEN_H + 0.25              # session length + inter-day spacing
+    slot = session_len + 0.25                # session length + inter-day spacing
 
     # One grid, the colorbar in a column of its own, so the panels of both rows
     # share their edges.
@@ -430,7 +306,7 @@ function overview_figure(
         shown = any(forming) ? forming : trues(nrow(df))
         h = [_local_hour(ns; tz) for ns in df.time_ns[shown]]
         px = Float64.(df.price[shown])
-        x = (i - 1) * slot .+ clamp.(h .- SESSION_OPEN_H, -0.1, SESSION_LEN_H + 0.2)
+        x = (i - 1) * slot .+ clamp.(h .- session_open, -0.1, session_len + 0.2)
         lines!(ax1, _decimate_minmax(x, px)...; color)
         plo, phi = min(plo, minimum(px)), max(phi, maximum(px))
         i > 1 && vlines!(
@@ -458,20 +334,20 @@ function overview_figure(
     )
 
     # 2 — day × minute activity heatmap
-    nmin = round(Int, 60 * SESSION_LEN_H)
+    nmin = round(Int, 60 * session_len)
     act = zeros(Float64, nmin + 1, nd)
     for (i, (_, df)) in enumerate(days)
         for ns in df.time_ns
-            m = round(Int, 60 * (_local_hour(ns; tz) - SESSION_OPEN_H))
+            m = round(Int, 60 * (_local_hour(ns; tz) - session_open))
             0 <= m <= nmin && (act[m+1, i] += 1)
         end
     end
-    hm_hours = SESSION_OPEN_H .+ (0:nmin) ./ 60
+    hm_hours = session_open .+ (0:nmin) ./ 60
     ax2 = Axis(
         fig[1, 2];
         xlabel = "Exchange time [HH:MM]",
         ylabel = "Trading day",
-        xticks = _hhmm_ticks(SESSION_OPEN_H, SESSION_CLOSE_H),
+        xticks = _hhmm_ticks(session_open, session_close),
         yticks = (1:nd, [Dates.format(d, dateformat"mm-dd") for (d, _) in days]),
     )
     # Activity spans decades between the opening auction and midday, so the
@@ -549,19 +425,7 @@ function overview_figure(
     return fig
 end
 
-"""
-    save_session_figures(raw_paths, out_dir = joinpath(PROJECT_ROOT, "plots");
-                         formats = ("pdf", "png"), tz = tz"America/New_York",
-                         min_trades = 10) -> Vector{String}
-
-Render one diagnostic figure per (symbol, trading day) found in the raw
-NDJSON `raw_paths`, saved as `out_dir/SYMBOL_YYYY-MM-DD.pdf|png` (safesave —
-the new figure takes the canonical name, a displaced one is kept as `_#N`).
-Groups with fewer than `min_trades` ticks are skipped with an `@info`
-(distribution panels are meaningless). PNG output is written at
-`px_per_unit = 4`. Returns the files written.
-"""
-function save_session_figures(
+function MarketTickStreamer.save_session_figures(
     raw_paths::AbstractVector{<:AbstractString},
     out_dir::AbstractString = joinpath(PROJECT_ROOT, "plots");
     formats = ("pdf", "png"),
@@ -576,7 +440,7 @@ function save_session_figures(
         push!(get!(() -> Trade[], groups, (t.symbol, trading_date(t.time_ns; tz))), t)
     end
     written = String[]
-    with_theme(tick_theme()) do
+    with_theme(MarketTickStreamer.tick_theme()) do
         for key in sort!(collect(keys(groups)))
             sym, date = key
             g = groups[key]
@@ -584,7 +448,7 @@ function save_session_figures(
                 @info "skipping sparse group" symbol = sym date n = length(g)
                 continue
             end
-            fig = session_figure(g; tz)
+            fig = MarketTickStreamer.session_figure(g; tz)
             for fmt in formats
                 path = _safesave(joinpath(out_dir, "$(sym)_$(date).$(fmt)")) do tmp
                     fmt == "png" ? save(tmp, fig; px_per_unit = 4) : save(tmp, fig)
@@ -596,23 +460,10 @@ function save_session_figures(
     return written
 end
 
-save_session_figures(path::AbstractString, args...; kwargs...) =
-    save_session_figures([path], args...; kwargs...)
+MarketTickStreamer.save_session_figures(path::AbstractString, args...; kwargs...) =
+    MarketTickStreamer.save_session_figures([path], args...; kwargs...)
 
-"""
-    save_overview_figures(processed_dir, out_dir = joinpath(PROJECT_ROOT, "plots");
-                          symbols = nothing, from = nothing, to = nothing,
-                          formats = ("pdf", "png"), tz = tz"America/New_York",
-                          min_days = 2) -> Vector{String}
-
-Render one multi-day [`overview_figure`](@ref) per symbol from the processed
-tree (`processed_dir/SYMBOL/YYYY-MM-DD.csv|.arrow`; safesave `_#N` backups
-and `.partial` files are ignored — the base file per day is authoritative
-and always the newest). `symbols`, `from`, and `to` restrict the sweep.
-Output: `out_dir/SYMBOL_<from>_<to>.pdf|png` (safesave). Days are loaded one
-symbol at a time, so memory stays bounded by one symbol's span.
-"""
-function save_overview_figures(
+function MarketTickStreamer.save_overview_figures(
     processed_dir::AbstractString,
     out_dir::AbstractString = joinpath(PROJECT_ROOT, "plots");
     symbols = nothing,
@@ -620,12 +471,13 @@ function save_overview_figures(
     to::Union{Nothing,Date} = nothing,
     formats = ("pdf", "png"),
     tz::TimeZone = tz"America/New_York",
+    session::Tuple{<:Real,<:Real} = (9.5, 16.0),
     min_days::Integer = 2,
 )
     isdir(processed_dir) || throw(ArgumentError("no processed directory at $processed_dir"))
     mkpath(out_dir)
     written = String[]
-    with_theme(tick_theme()) do
+    with_theme(MarketTickStreamer.tick_theme()) do
         for sym in
             sort(filter(s -> isdir(joinpath(processed_dir, s)), readdir(processed_dir)))
             symbols === nothing || sym in symbols || continue
@@ -639,7 +491,7 @@ function save_overview_figures(
                 push!(days, (d, _read_processed(joinpath(processed_dir, sym, f))))
             end
             length(days) < min_days && continue
-            fig = overview_figure(sym, days; tz)
+            fig = MarketTickStreamer.overview_figure(sym, days; tz, session)
             span = "$(days[1][1])_$(days[end][1])"
             for fmt in formats
                 path = _safesave(joinpath(out_dir, "$(sym)_$(span).$(fmt)")) do tmp
@@ -651,3 +503,5 @@ function save_overview_figures(
     end
     return written
 end
+
+end # module

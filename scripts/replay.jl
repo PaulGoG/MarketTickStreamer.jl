@@ -6,7 +6,7 @@
 # the template for attaching real-time analysis consumers: swap the printing
 # loop for any function of `Channel{Trade}`.
 
-include(joinpath(@__DIR__, "..", "activate.jl"))
+include(joinpath(@__DIR__, "activate.jl"))
 using MarketTickStreamer
 using Printf
 

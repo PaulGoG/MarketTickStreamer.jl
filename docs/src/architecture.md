@@ -167,6 +167,8 @@ path — no data is lost on interrupt (tested).
 | `DotEnv.jl` 1.0 (`load!`) | Registered, stable, zero-issue scope. |
 | Custom ns timestamps over `NanoDates.jl` | One regex + integer math, zero deps on the hot path; NanoDates remains an option as a display layer. |
 | Hand-rolled backoff | `Base.retry`/Retry.jl don't fit a stateful reconnect loop with attempt-reset semantics. |
+| Plotting as package extensions | CairoMakie and UnicodePlots are weak dependencies. A consumer that feeds an estimator from `Channel{Trade}` should not install or precompile a plotting stack to do it; the figures load with `using CairoMakie`, the monitor's plots with `using UnicodePlots`. |
+| No `MathTeXEngine.jl` dependency | The Computer Modern faces come from Makie's `theme_latexfonts()`, which wraps the same fonts. |
 
 ## 7. Testing strategy
 
@@ -180,6 +182,12 @@ rolling/never-reopen, corrupt-line recovery, safesave compaction, `tee`
 fan-out, and replay pacing.
 
 ## 8. Visualization
+
+The figures are implemented in `ext/MarketTickStreamerMakieExt.jl`, a package
+extension triggered by CairoMakie; the package declares and documents the
+functions (`src/figures.jl`) and keeps the plotting-free numerics
+(`src/diagnostics.jl`): survival functions, tail-preserving thinning, min–max
+decimation, the Hill estimator.
 
 Two figure families with identical styling (Computer Modern, boxed axes,
 no titles, `HH:MM` exchange-time axes, decade log ticks with 2×/5×
@@ -208,9 +216,10 @@ tree with symbol/date filters).
 
 `monitor.jl` implements attach-mode monitoring: a separate read-only
 process tails the session's raw NDJSON part files (incremental offsets,
-torn-line carries, roll-aware) and renders an in-terminal dashboard
-(UnicodePlots — headless-safe): tick totals and rate history, tape-head
-timestamp and lag, per-symbol counts. Attaching from outside the producer
+torn-line carries, roll-aware) and renders an in-terminal dashboard: tick
+totals and rate, tape-head timestamp and lag, per-symbol counts. The
+dashboard is text; with UnicodePlots loaded a second package extension adds a
+rate-history plot and draws the counts as a bar chart (headless-safe). Attaching from outside the producer
 was chosen over an in-process panel because it cannot interfere with the
 capture, its logging, or its progress output (a §9 requirement of the
 project standards), it works identically for live capture and backfill,

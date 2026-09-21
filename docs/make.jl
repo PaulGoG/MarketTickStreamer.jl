@@ -18,7 +18,10 @@ makedocs(
         "Architecture" => "architecture.md",
         "Usage & Configuration" => "usage.md",
         "Replay & Analysis Interfaces" => "replay.md",
-        "API Reference" => "api.md",
+        "API Reference" => [
+            "Acquisition and storage" => "api.md",
+            "Analysis interfaces" => "api_analysis.md",
+        ],
     ],
 )
 

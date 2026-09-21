@@ -22,9 +22,11 @@ the paper endpoint, as the shipped configuration does.
 
 ## Entry points
 
-Every script activates and instantiates the environment itself, so a fresh
-clone needs no preparation, and each accepts an alternative config path as
-its first argument.
+Every script activates and instantiates the scripts environment itself
+(`scripts/Project.toml`: the package by path, plus CairoMakie and UnicodePlots
+for the figures and the dashboard plots), so a fresh clone needs no
+preparation, and each accepts an alternative config path as its first
+argument.
 
 ```bash
 julia --threads=auto scripts/stream.jl   # live capture
@@ -37,13 +39,16 @@ julia scripts/monitor.jl                 # read-only dashboard for a running ses
 
 From the REPL the same operations are [`run_stream`](@ref),
 [`run_backfill`](@ref), [`compact_raw`](@ref) and [`replay_source`](@ref).
+The figure functions need `using CairoMakie` beside the package, and
+[`monitor_raw`](@ref) draws its plots once `using UnicodePlots` has run; the
+package itself depends on neither.
 
 ## `[provider]`
 
 | Key | Meaning |
 | --- | --- |
-| `name` | Provider adapter. One of: `"alpaca"`. |
-| `feed` | Live feed. One of `"iex"` (real-time, single venue, 30 symbols on the free tier), `"delayed_sip"` (consolidated tape, 15 minutes late, free), `"sip"` (real-time consolidated, paid). |
+| `name` | Provider adapter. One of: `"alpaca"` (US equities, credentialed), `"binance"` (crypto spot, public). |
+| `feed` | Live feed. Binance: `"trade"` or `"aggTrade"`. Alpaca: one of `"iex"` (real-time, single venue, 30 symbols on the free tier), `"delayed_sip"` (consolidated tape, 15 minutes late, free), `"sip"` (real-time consolidated, paid). |
 
 On the free tier `delayed_sip` is the scientifically stronger choice: it is
 the complete consolidated tape, and a fixed 15-minute offset is irrelevant

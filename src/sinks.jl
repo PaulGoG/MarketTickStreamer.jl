@@ -239,6 +239,11 @@ function _write_group(
     end
 end
 
+# One processed per-day file (CSV or Arrow) → DataFrame; the inverse of
+# `_write_group`.
+_read_processed(path::AbstractString) =
+    endswith(path, ".arrow") ? DataFrame(Arrow.Table(path)) : CSV.read(path, DataFrame)
+
 """
     compact_raw(raw_paths, out_dir; format = "csv", dedup = true,
                 mem_fraction = 0.5, tz = tz"America/New_York",

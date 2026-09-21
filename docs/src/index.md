@@ -70,4 +70,5 @@ Three properties shape everything else:
 - [Replay & Analysis Interfaces](replay.md) — how an external analysis
   pipeline consumes live or recorded ticks, and what is guaranteed about
   ordering, completion and backpressure.
-- [API Reference](api.md) — the public functions and types.
+- API reference — the public functions and types:
+  [acquisition and storage](api.md), [analysis interfaces](api_analysis.md).

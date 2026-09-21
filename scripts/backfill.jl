@@ -2,7 +2,7 @@
 #
 #   julia scripts/backfill.jl [path/to/config.toml]
 
-include(joinpath(@__DIR__, "..", "activate.jl"))
+include(joinpath(@__DIR__, "activate.jl"))
 using MarketTickStreamer
 
 function main()

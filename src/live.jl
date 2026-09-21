@@ -23,12 +23,13 @@ those axes, which is what keeps the interface honest.
 abstract type AbstractProvider end
 
 """
-    ProviderSpec(feeds, backfill_feeds, tz, needs_credentials, max_page_limit)
+    ProviderSpec(feeds, backfill_feeds, tz, needs_credentials, max_page_limit,
+                 regular_session)
 
 What the configuration layer must know about a provider *before* any provider
 object exists: which feed names it accepts, the calendar its tape is filed
-under, whether it needs credentials at all, and the largest REST page the
-venue serves.
+under, whether it needs credentials at all, the largest REST page the venue
+serves, and the venue's regular session.
 
 Without this the config layer has to hard-code one vendor's vocabulary, which
 is how `provider.feed` came to be validated against Alpaca's feed names for
@@ -38,6 +39,11 @@ midnight in New York.
 `max_page_limit` exists because a venue may clamp an over-limit request
 instead of rejecting it, and a clamped page is indistinguishable from the last
 page of the tape.
+
+`regular_session` is `(open, close)` in exchange-local hours, `(0.0, 24.0)`
+for a venue that never closes. The multi-day figures lay their days out on
+it; nothing in acquisition depends on it, since session railings come from
+the venue's own clock.
 """
 struct ProviderSpec
     feeds::Vector{String}
@@ -45,6 +51,7 @@ struct ProviderSpec
     tz::TimeZone
     needs_credentials::Bool
     max_page_limit::Int
+    regular_session::Tuple{Float64,Float64}
 end
 
 """Provider names this build knows how to construct."""

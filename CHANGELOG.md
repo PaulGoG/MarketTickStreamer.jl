@@ -67,6 +67,25 @@ Notable changes to MarketTickStreamer. The format follows
   canonical path never holds a half-written file, and a failed write leaves
   it untouched. Files named ` #N` by earlier versions are left alone and are
   still ignored by the readers.
+- **Breaking: plotting is a package extension.** CairoMakie and UnicodePlots
+  are weak dependencies. `session_figure`, `overview_figure`,
+  `save_session_figures`, `save_overview_figures` and `tick_theme` are
+  declared and documented in the package and implemented by
+  `MarketTickStreamerMakieExt`, which loads with `using CairoMakie`; called
+  without it they throw a `MethodError` that names the package to load.
+  `monitor_raw` prints a text dashboard, and draws its rate history and bar
+  chart through `MarketTickStreamerUnicodePlotsExt` once UnicodePlots is
+  loaded. A consumer that only reads the `Channel{Trade}` no longer installs
+  or precompiles a plotting stack: `using MarketTickStreamer` takes 0.9 s
+  where it took 5.9 s (Julia 1.13, precompiled). MathTeXEngine is no longer a
+  dependency, the Computer Modern faces come from Makie's
+  `theme_latexfonts()`. The scripts have their own environment
+  (`scripts/Project.toml`) with both plotting packages.
+- `ProviderSpec` has a sixth field, `regular_session`, the venue's session in
+  exchange-local hours. `overview_figure` and `save_overview_figures` take it
+  as `session`, and `scripts/visualize.jl` passes the provider's time zone and
+  session, so a Binance capture is drawn on the UTC day instead of the New
+  York clock and the US equity session.
 - `load_config` checks every key for type and documented bounds and rejects
   unknown tables and keys, so a misspelt key no longer falls back to its
   default. A configuration that loaded before may now be rejected.

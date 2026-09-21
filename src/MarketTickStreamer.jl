@@ -9,6 +9,12 @@ replay of recorded sessions.
 Everything is driven by `config/config.toml`; credentials come from `.env`.
 Entry points: [`run_stream`](@ref), [`run_backfill`](@ref),
 [`replay_source`](@ref), [`compact_raw`](@ref).
+
+Plotting is optional. The diagnostic figures ([`session_figure`](@ref),
+[`overview_figure`](@ref) and their `save_*` drivers) are implemented by a
+package extension that loads with CairoMakie, and the terminal plots of
+[`monitor_raw`](@ref) by one that loads with UnicodePlots; neither is a
+dependency of the package.
 """
 module MarketTickStreamer
 
@@ -24,23 +30,8 @@ using Statistics: Statistics, median
 using TOML: TOML
 
 using Arrow: Arrow
-using CairoMakie:
-    CairoMakie,
-    Axis,
-    Colorbar,
-    Figure,
-    Makie,
-    Theme,
-    heatmap!,
-    lines!,
-    save,
-    stairs!,
-    text!,
-    vlines!,
-    with_theme,
-    ylims!
 using CSV: CSV
-using DataFrames: DataFrames, DataFrame, nrow
+using DataFrames: DataFrames, DataFrame
 using DotEnv: DotEnv
 using HTTP: HTTP
 using JSON3: JSON3
@@ -53,11 +44,9 @@ using LoggingExtras:
     MinLevelLogger,
     TeeLogger,
     global_logger
-using MathTeXEngine: MathTeXEngine, @L_str, texfont
 using ProgressMeter: ProgressMeter, Progress, next!
 using TimeZones:
     TimeZones, @tz_str, Date, DateTime, TimeZone, UTC, ZonedDateTime, astimezone, now
-using UnicodePlots: barplot, lineplot
 
 export Config, load_config, load_credentials!
 export Trade, Quote, Bar
@@ -105,6 +94,7 @@ include("live.jl")
 include("providers/alpaca.jl")
 include("providers/binance.jl")
 include("pipeline.jl")
-include("visualization.jl")
+include("diagnostics.jl")
+include("figures.jl")
 
 end # module

@@ -9,7 +9,8 @@
 # the processed tree (price on trading time, activity heatmap,
 # intra-session waiting-time and size CCDFs).
 
-include(joinpath(@__DIR__, "..", "activate.jl"))
+include(joinpath(@__DIR__, "activate.jl"))
+using CairoMakie: CairoMakie   # activates the figure extension
 using MarketTickStreamer
 
 function main()
@@ -49,16 +50,26 @@ function main()
             i += 1
         end
     end
+    # The exchange calendar and the regular session belong to the provider.
+    cfg = load_config(cfg_path)
+    tz = cfg.exchange_tz
+    session = provider_spec(cfg.provider).regular_session
     if overview
-        cfg = load_config(cfg_path)
-        written =
-            save_overview_figures(cfg.processed_dir, out_dir; symbols, from, to, formats)
+        written = save_overview_figures(
+            cfg.processed_dir,
+            out_dir;
+            symbols,
+            from,
+            to,
+            formats,
+            tz,
+            session,
+        )
         println("Wrote $(length(written)) overview figure file(s):")
         foreach(f -> println("  ", f), written)
         return
     end
     if isempty(files)
-        cfg = load_config(cfg_path)
         isdir(cfg.raw_dir) && (
             files = filter(
                 f -> endswith(f, ".jsonl"),
@@ -72,7 +83,7 @@ function main()
     show(session_report(files); allrows = true, allcols = true)
     println()
 
-    written = save_session_figures(files, out_dir; formats)
+    written = save_session_figures(files, out_dir; formats, tz)
     println("Wrote $(length(written)) figure file(s):")
     for f in written
         println("  ", f)

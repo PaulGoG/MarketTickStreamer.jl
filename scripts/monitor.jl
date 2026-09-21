@@ -7,8 +7,9 @@
 # --full ingests the existing files first (session totals; one full read);
 # the default attaches at the current end of file.
 
-include(joinpath(@__DIR__, "..", "activate.jl"))
+include(joinpath(@__DIR__, "activate.jl"))
 using MarketTickStreamer
+using UnicodePlots: UnicodePlots   # activates the dashboard plots
 
 function main()
     cfg_path = joinpath(@__DIR__, "..", "config", "config.toml")

@@ -1,8 +1,10 @@
 # Live in-terminal monitoring (attach mode): tail a session's raw NDJSON
-# part files from a separate read-only process and render a UnicodePlots
-# dashboard. Never touches the producer, its logging, or its progress
-# machinery — the monitor can attach to and detach from a running live
-# capture or backfill at any time.
+# part files from a separate read-only process and render a dashboard. Never
+# touches the producer, its logging, or its progress machinery — the monitor
+# can attach to and detach from a running live capture or backfill at any
+# time. The dashboard is text; with UnicodePlots loaded, the package extension
+# MarketTickStreamerUnicodePlotsExt adds the rate history and the per-symbol
+# bar chart.
 
 """
     MonitorState
@@ -129,21 +131,17 @@ function _render(
     end
     stall = time() - st.last_growth
     stall > 3 * refresh_s && println(buf, "! no new data for ", round(Int, stall), " s")
-    if length(rates) >= 2
-        println(
-            buf,
-            lineplot(
-                rates;
-                title = "Ticks/s (window $(round(Int, rate_window_s)) s)",
-                height = 6,
-                width = 54,
-            ),
-        )
-    end
-    if !isempty(st.per_symbol)
-        top = sort(collect(st.per_symbol); by = last, rev = true)
-        top = top[1:min(top_symbols, length(top))]
-        println(buf, barplot(first.(top), last.(top); title = "Ticks by symbol"))
+    top = sort(collect(st.per_symbol); by = last, rev = true)
+    top = top[1:min(top_symbols, length(top))]
+    plots = Base.get_extension(@__MODULE__, :MarketTickStreamerUnicodePlotsExt)
+    if plots === nothing
+        isempty(top) || println(buf, "Ticks by symbol:")
+        for (sym, n) in top
+            println(buf, "  ", rpad(sym, 10), n)
+        end
+    else
+        length(rates) >= 2 && plots.draw_rate_history(buf, rates, rate_window_s)
+        isempty(top) || plots.draw_symbol_counts(buf, first.(top), last.(top))
     end
     print(io, String(take!(buf)))
     return nothing
@@ -158,7 +156,9 @@ Attach a live in-terminal dashboard to the session whose raw NDJSON files
 live under `dir` (most recently active session unless `session` gives an id
 prefix). Tails the part files read-only — safe to run beside a live capture
 or backfill. Renders every `refresh_s`: tick totals and rate, tape-head
-timestamp and lag, a rate history sparkline, and per-symbol counts.
+timestamp and lag, and per-symbol counts. With UnicodePlots loaded
+(`using UnicodePlots`) the counts become a bar chart and a rate-history plot
+is added; without it the dashboard is plain text.
 
 `from_start = true` ingests the whole existing file first (session totals;
 costs one full read of the raw data); the default starts at the current end

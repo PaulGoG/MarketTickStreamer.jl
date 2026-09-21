@@ -24,10 +24,11 @@ real-time analysis methods.
 ```
 .
 ├── Project.toml        # package environment and [compat]
-├── activate.jl         # silent activation; one per environment (test/, docs/, bench/, examples/)
+├── activate.jl         # silent activation; one per environment (scripts/, test/, docs/, bench/, examples/)
 ├── config/config.toml  # every tunable: provider, symbols, storage, limits, replay, backfill
-├── src/                # the package: schema, config, sinks, quality, resample, replay, live, providers/, pipeline, visualization
-├── scripts/            # entry points: stream, backfill, compact, replay, monitor, visualize
+├── src/                # the package: schema, config, sinks, quality, resample, replay, live, providers/, pipeline, diagnostics, figures
+├── ext/                # package extensions: figures (CairoMakie), terminal plots (UnicodePlots)
+├── scripts/            # entry points: stream, backfill, compact, replay, monitor, visualize (own environment)
 ├── examples/           # worked consumers of the Channel{Trade} interface (own environment)
 ├── test/               # offline suite: unit, mock-server end-to-end, static QA (own environment)
 ├── bench/              # BenchmarkTools suite over the acquisition hot paths (own environment)
@@ -47,6 +48,19 @@ a clone:
 ```bash
 julia -i activate.jl        # activates and instantiates, then leaves a REPL
 ```
+
+The package has no plotting dependency. The diagnostic figures are a package
+extension that loads with CairoMakie, and the monitor's terminal plots one
+that loads with UnicodePlots:
+
+```julia
+using MarketTickStreamer, CairoMakie    # session_figure, overview_figure, save_*_figures
+using MarketTickStreamer, UnicodePlots  # monitor_raw draws its rate history and bar chart
+```
+
+Without them everything else works, `monitor_raw` prints a text dashboard, and
+a call to a figure function says which package to load. The scripts have their
+own environment with both installed.
 
 Credentials: `cp .env.example .env`, fill in `ALPACA_API_KEY_ID` /
 `ALPACA_SECRET_KEY` (free keys: https://alpaca.markets; paper-account keys
@@ -135,7 +149,7 @@ consumers are developed offline (see `docs/src/architecture.md`).
 | Session QA report (dupes/gaps/ordering/latency) | working, tested |
 | Diagnostic figures (price, activity, Δt & size CCDFs; HH:MM axes, decade log ticks, tail-exponent annotations) | working, inspected |
 | Multi-day overview figures (trading-time price, activity heatmap, intra-session waiting-time CCDF) | working, inspected |
-| Live monitoring dashboard (attach-mode, UnicodePlots) | working, tested |
+| Live monitoring dashboard (attach-mode; text, plots with UnicodePlots loaded) | working, tested |
 | Paced replay (absolute schedule; receive or exchange clock) | working, tested |
 | Quotes (`q`) / bars (`b`) normalization | working, tested — parsed to `Quote`/`Bar` with `on_quote`/`on_bar`; not subscribed or persisted by default |
 | Sale-condition eligibility (`price_forming`, per-tape lists from the CTA and UTP sale-condition matrices, `n_price_forming`) | working, tested — capture is never filtered; the choice is made at analysis time |
@@ -208,7 +222,7 @@ Citation metadata is in [`CITATION.cff`](CITATION.cff). BibTeX:
 ├── Project.toml            # package manifest (HTTP 1.x pinned; see the architecture page §6)
 ├── .JuliaFormatter.toml    # committed formatting configuration (JuliaFormatter.jl)
 ├── .env.example            # credential template → copy to .env (gitignored)
-├── activate.jl             # silent environment activation; included by every script
+├── activate.jl             # silent activation of the package environment
 ├── config/
 │   └── config.toml         # ALL tunables: provider, symbols, storage, limits, replay
 ├── src/
@@ -224,11 +238,17 @@ Citation metadata is in [`CITATION.cff`](CITATION.cff). BibTeX:
 │   ├── live.jl             # provider-agnostic live source: reconnect, watchdog,
 │   │                       #   market-close guard
 │   ├── pipeline.jl         # session orchestration: run_stream / run_backfill; tee
-│   ├── visualization.jl    # CairoMakie session diagnostics (price, activity, CCDFs)
+│   ├── diagnostics.jl      # plotting-free numerics of the figures: CCDF, decimation, Hill
+│   ├── figures.jl          # figure interface: documented stubs the extension implements
 │   └── providers/
 │       ├── alpaca.jl       # Alpaca adapter: US equities, NY calendar, credentialed
 │       └── binance.jl      # Binance adapter: crypto spot, UTC calendar, public
+├── ext/
+│   ├── MarketTickStreamerMakieExt.jl         # session and overview figures (loads with CairoMakie)
+│   └── MarketTickStreamerUnicodePlotsExt.jl  # monitor rate history and bar chart (loads with UnicodePlots)
 ├── scripts/
+│   ├── Project.toml        # scripts environment: the package by path, CairoMakie, UnicodePlots
+│   ├── activate.jl         # silent activation; included by every script
 │   ├── stream.jl           # live capture session
 │   ├── backfill.jl         # historical trade download
 │   ├── compact.jl          # raw NDJSON → per-symbol per-day CSV/Arrow

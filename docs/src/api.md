@@ -1,7 +1,9 @@
-# API reference
+# API reference: acquisition and storage
 
 The public surface, grouped by pipeline stage. Each group is generated from
-one source file, so everything carrying a docstring appears here.
+one source file, so everything carrying a docstring appears here. The
+analysis side — data quality, activity clocks, replay and the diagnostic
+figures — is on the [next page](api_analysis.md).
 
 ```@docs
 MarketTickStreamer
@@ -64,27 +66,6 @@ Modules = [MarketTickStreamer]
 Pages = ["sinks.jl"]
 ```
 
-## Data quality and resource guards
-
-```@autodocs
-Modules = [MarketTickStreamer]
-Pages = ["quality.jl"]
-```
-
-## Resampling onto activity clocks
-
-```@autodocs
-Modules = [MarketTickStreamer]
-Pages = ["resample.jl"]
-```
-
-## Replay
-
-```@autodocs
-Modules = [MarketTickStreamer]
-Pages = ["replay.jl"]
-```
-
 ## Session orchestration
 
 ```@autodocs
@@ -97,11 +78,4 @@ Pages = ["pipeline.jl"]
 ```@autodocs
 Modules = [MarketTickStreamer]
 Pages = ["monitor.jl"]
-```
-
-## Visualization
-
-```@autodocs
-Modules = [MarketTickStreamer]
-Pages = ["visualization.jl"]
 ```

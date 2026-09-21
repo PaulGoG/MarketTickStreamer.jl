@@ -45,6 +45,7 @@ provider_spec(::Val{:alpaca}) = ProviderSpec(
     tz"America/New_York",
     true,
     10_000,
+    (9.5, 16.0),
 )
 
 make_provider(::Val{:alpaca}, cfg::Config, key::AbstractString, secret::AbstractString) =
