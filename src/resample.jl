@@ -1,14 +1,13 @@
 # Alternative clocks: sampling the flux by activity rather than by the
 # calendar.
 #
-# Market activity is not uniform in time, so calendar-time sampling draws
-# unevenly from the process that generates prices — densely at the open,
-# sparsely at lunch. Sampling instead once per fixed count of prints, of
-# shares, or of traded value subordinates the price process to a clock that
-# runs with the market. Under such a clock, returns are closer to independent
-# and to normality than under wall-clock sampling, which is the empirical
-# result that motivates the whole family (Mandelbrot & Taylor 1967; Clark
-# 1973; Ané & Geman 2000).
+# Market activity is not uniform in time, so calendar-time sampling draws unevenly from the
+# process that generates prices — densely at the open, sparsely at lunch. Sampling instead
+# once per fixed count of prints, of shares, or of traded value subordinates the price
+# process to a clock that runs with the market. Under such a clock, returns are closer to
+# independent and to normality than under wall-clock sampling, which is the empirical result
+# that motivates the whole family (Mandelbrot & Taylor 1967, doi:10.1287/opre.15.6.1057;
+# Clark 1973, doi:10.2307/1913889; Ané & Geman 2000, doi:10.1111/0022-1082.00286).
 #
 # Bars are derived objects: they carry `recv_ns = 0`, the same marker the raw
 # layer uses for records that never crossed the wire.
@@ -89,10 +88,11 @@ non-price-forming records count towards it is decided before the call — pass
 `filter_price_forming(trades)` to exclude them. On a high-priced name that
 choice changes the bar count by a factor of three, so it is not incidental.
 
-Sampling by transaction count is the oldest of these clocks: Mandelbrot and
-Taylor (1967) proposed price changes as a subordinated process running on
-transaction time, and Ané and Geman (2000) showed returns sampled this way
-are close to normal where calendar-time returns are heavy-tailed.
+Sampling by transaction count is the oldest of these clocks: Mandelbrot and Taylor (1967)
+[doi:10.1287/opre.15.6.1057](https://doi.org/10.1287/opre.15.6.1057) proposed price changes
+as a subordinated process running on transaction time, and Ané and Geman (2000)
+[doi:10.1111/0022-1082.00286](https://doi.org/10.1111/0022-1082.00286) showed returns
+sampled this way are close to normal where calendar-time returns are heavy-tailed.
 
 Prints are ordered by exchange timestamp, not arrival. The print that
 completes a bar belongs to it. A trailing incomplete bar is dropped unless
@@ -112,11 +112,11 @@ end
 
 Resample `trades` onto a volume clock: one [`Bar`](@ref) per `volume` shares.
 
-Clark (1973) introduced volume as the directing process for speculative
-prices, giving a finite-variance alternative to the stable-Paretian account
-of heavy tails: the unconditional return distribution is heavy-tailed because
-it mixes over a random volume clock, not because the underlying increments
-are.
+Clark (1973) [doi:10.2307/1913889](https://doi.org/10.2307/1913889) introduced volume as the
+directing process for speculative prices, giving a finite-variance alternative to the
+stable-Paretian account of heavy tails: the unconditional return distribution is
+heavy-tailed because it mixes over a random volume clock, not because the underlying
+increments are.
 
 The caveat is mechanical: a share is not a fixed unit of economic activity
 across time or across instruments. Share prices drift, splits reset the

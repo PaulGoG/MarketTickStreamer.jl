@@ -173,7 +173,9 @@ bars = dollar_bars(filter_price_forming(trades), 5.0e6)   # one bar per $5M trad
 
 The empirical motivation is old and well tested: price changes sampled in
 transaction time are far closer to independent and normal than calendar-time
-changes (Mandelbrot & Taylor 1967; Clark 1973; Ané & Geman 2000). Of the
+changes ([Mandelbrot & Taylor 1967](https://doi.org/10.1287/opre.15.6.1057);
+[Clark 1973](https://doi.org/10.2307/1913889);
+[Ané & Geman 2000](https://doi.org/10.1111/0022-1082.00286)). Of the
 three, the value clock is the one that survives a change of scale — it is
 invariant to splits and roughly invariant to price drift, so a threshold
 chosen on one sample still means something on another.
