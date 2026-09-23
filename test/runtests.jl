@@ -40,6 +40,12 @@ sample_trade(i; sym = "AAPL") = Trade(
     i,
 )
 
+# Example scripts are loaded into fresh modules at run time, so their bindings
+# live in a newer world than this file's: both the lookup and the call go
+# through `invokelatest`, or Julia 1.12 warns about the binding access.
+example_call(mod::Module, name::Symbol, args...; kw...) =
+    Base.invokelatest(Base.invokelatest(getglobal, mod, name), args...; kw...)
+
 @testset "MarketTickStreamer" begin
 
     @testset "static QA (Aqua)" begin
@@ -1032,13 +1038,13 @@ hostname = "$(gethostname())"
 
             mod = Module(:WaitingTimesExample)
             Base.include(mod, joinpath(@__DIR__, "..", "examples", "waiting_times.jl"))
-            w = Base.invokelatest(mod.consume, [sink.path])
+            w = example_call(mod, :consume, [sink.path])
             @test w.n_prints == 10
             @test length(w.gaps) == 9                  # one gap fewer than prints
             @test all(≈(0.001), w.gaps)                # 1 ms apart in exchange time
             @test w.n_nonpositive == 0
 
-            pf = Base.invokelatest(mod.consume, [sink.path]; price_forming_only = true)
+            pf = example_call(mod, :consume, [sink.path]; price_forming_only = true)
             @test pf.n_prints == 8                     # the two odd lots are excluded
             @test length(pf.gaps) == 7
             @test sum(pf.gaps) ≈ 0.009 atol = 1e-9     # gaps still span the session
@@ -1070,7 +1076,7 @@ hostname = "$(gethostname())"
 
             mod = Module(:LiveDiagnosticsExample)
             Base.include(mod, joinpath(@__DIR__, "..", "examples", "live_diagnostics.jl"))
-            d, persisted, seen = Base.invokelatest(mod.consume, [sink.path])
+            d, persisted, seen = example_call(mod, :consume, [sink.path])
             @test persisted == 10                      # persistence is lossless
             @test seen <= persisted                    # the diagnostic tap may drop
             @test OnlineStats.nobs(d.Δt_mean) == seen - 1
@@ -1078,7 +1084,7 @@ hostname = "$(gethostname())"
             @test OnlineStats.value(d.Δt_extrema).max ≈ 0.001
             @test d.n_nonpositive == 0
             # Equal sizes make the VWAP the arithmetic mean of the prices seen.
-            @test Base.invokelatest(mod.vwap, d) ≈ 101.0 + (seen - 1) / 2
+            @test example_call(mod, :vwap, d) ≈ 101.0 + (seen - 1) / 2
             @test OnlineStats.value(d.volume) ≈ 10.0 * seen
 
             # Gaps swept log-uniformly over five decades (100 µs … 10 s), the
@@ -1099,12 +1105,12 @@ hostname = "$(gethostname())"
             s = open_raw_sink(dir, "diagspread")
             write_batch!(s, trades_s)
             close_sink!(s)
-            acc, persisted_s, seen_s = Base.invokelatest(mod.consume, [s.path])
+            acc, persisted_s, seen_s = example_call(mod, :consume, [s.path])
             @test persisted_s == 2000 && seen_s == 2000   # far below the tap capacity
             # The first trade opens the series, so its gap is not observed.
             exact = sort(gaps_s[2:end])
             for τ in (0.5, 0.9, 0.99)
-                got = Base.invokelatest(mod.waiting_quantile, acc, τ)
+                got = example_call(mod, :waiting_quantile, acc, τ)
                 want = exact[max(1, round(Int, τ * length(exact)))]
                 # Bin centres over five decades: accurate to a bin width, not
                 # to the digit. A P² sketch on these gaps misses by 10x+.
@@ -1112,10 +1118,10 @@ hostname = "$(gethostname())"
             end
             # Both calls go through invokelatest: the example's methods are
             # younger than this world, the constructor included.
-            empty_acc = Base.invokelatest(mod.LiveDiagnostics)
-            @test isnan(Base.invokelatest(mod.waiting_quantile, empty_acc, 0.5))
-            @test_throws ArgumentError Base.invokelatest(mod.waiting_quantile, acc, 1.5)
-            @test_throws ArgumentError Base.invokelatest(mod.LiveDiagnostics; n_bins = 2)
+            empty_acc = example_call(mod, :LiveDiagnostics)
+            @test isnan(example_call(mod, :waiting_quantile, empty_acc, 0.5))
+            @test_throws ArgumentError example_call(mod, :waiting_quantile, acc, 1.5)
+            @test_throws ArgumentError example_call(mod, :LiveDiagnostics; n_bins = 2)
 
             # The point of the example: once the histogram has filled its bin
             # budget the footprint stops growing, so a longer stream of the
@@ -1125,7 +1131,7 @@ hostname = "$(gethostname())"
                 sk = open_raw_sink(dir, "diaglong$(n)")
                 write_batch!(sk, tr)
                 close_sink!(sk)
-                a, _, _ = Base.invokelatest(mod.consume, [sk.path])
+                a, _, _ = example_call(mod, :consume, [sk.path])
                 Base.summarysize(a)
             end
             @test foot[1] == foot[2]
