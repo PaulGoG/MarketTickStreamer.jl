@@ -24,7 +24,7 @@ MarketTickStreamer = {path = ".."}
 [compat]
 AllocCheck = "0.2"
 Aqua = "0.8"
-CSV = "0.10"
+CSV = "0.10, 1.1"
 CairoMakie = "0.15.13"
 DataFrames = "1"
 Dates = "1"
