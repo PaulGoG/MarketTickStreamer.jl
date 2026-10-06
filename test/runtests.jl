@@ -208,6 +208,8 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             rejected(base * "[limits]\nmax_session_hours = 0.0\n")
             rejected(base * "[backfill]\nrate_limit_sleep_s = -0.1\n")
             rejected(base * "[replay]\nclock = \"wall\"\n")
+            rejected(base * "[replay]\nmax_gap_s = 0.0\n")
+            rejected(base * "[replay]\nmax_gap_s = nan\n")
             # the page limit is the provider's: Binance clamps an over-limit
             # request without an error, which would truncate every day
             rejected(base * "[backfill]\npage_limit = 10001\n")
@@ -218,6 +220,9 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             c = load_config(p)
             @test c.backfill_page_limit == 10_000
             @test c.replay_clock == "auto"
+            @test c.replay_max_gap_s == Inf
+            write(p, base * "[replay]\nmax_gap_s = 3600\n")
+            @test load_config(p).replay_max_gap_s == 3600.0
             # a TOML date is accepted as well as a date string
             write(p, base * "[backfill]\nstart_date = 2026-08-12\nend_date = 2026-08-12\n")
             @test load_config(p).backfill_start == Date(2026, 8, 12)
@@ -407,6 +412,28 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             n, span = paced_span(dsink.path; clock = "exchange")
             @test n == 401
             @test 0.95 <= span <= 1.2
+            # max_gap_s: two bursts of ten 20 ms gaps, 30 s apart. Replayed
+            # faithfully that is 30.4 s; with the gap capped at 0.1 s, 0.5 s.
+            burst = spaced(10, 20_000_000)
+            later(t) = Trade(
+                t.symbol,
+                t.time_ns + 30_200_000_000,
+                t.recv_ns,
+                t.price,
+                t.size,
+                t.exchange,
+                t.conditions,
+                t.tape,
+                t.id + 100,
+            )
+            gsink = open_raw_sink(dir, "g")
+            write_batch!(gsink, [burst; later.(burst)])
+            close_sink!(gsink)
+            n, span = paced_span(gsink.path; max_gap_s = 0.1)
+            @test n == 22
+            @test 0.45 <= span <= 0.8
+            @test_throws ArgumentError replay_source(gsink.path; max_gap_s = 0)
+            @test_throws ArgumentError replay_source(gsink.path; max_gap_s = NaN)
         end
     end
 
@@ -492,6 +519,17 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             elapsed = time() - t_start
             @test n == 10
             @test 0.08 <= elapsed < 1.0
+            # The cap carries across days: at 1e5x the closure alone would take
+            # 0.864 s, capped at 60 s it takes 0.6 ms.
+            t_start = time()
+            n = length(
+                collect(
+                    replay_source(two; pace = "recorded", speed = 1.0e5, max_gap_s = 60.0),
+                ),
+            )
+            elapsed = time() - t_start
+            @test n == 10
+            @test elapsed < 0.4
         end
     end
 

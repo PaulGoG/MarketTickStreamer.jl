@@ -172,6 +172,9 @@ Notable changes to MarketTickStreamer. The format follows
   at about 1 M prints/s with the resident set flat at 1.2 GiB.
   `processed_files(dir, symbol; from, to)` lists a symbol's day files in date
   order, without safesave backups.
+- `replay_source(...; max_gap_s)` and `replay.max_gap_s` cap every gap on the
+  replay clock, in recorded seconds: closures replay as `max_gap_s` while
+  timing within a session is kept. The default `Inf` replays every gap.
 - Arrow output is smaller. The `symbol`, `exchange`, `conditions` and `tape`
   columns are dictionary-encoded, which takes a liquid US equity day
   (1.2 M prints) from 65 to 44 bytes per print at unchanged read cost, and

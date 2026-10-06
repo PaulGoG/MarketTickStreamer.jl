@@ -46,6 +46,7 @@ struct Config
     # [replay]
     replay_pace::String
     replay_speed::Float64
+    replay_max_gap_s::Float64
     replay_clock::String
     # [backfill]
     backfill_start::Date
@@ -130,7 +131,7 @@ const CONFIG_KEYS = Dict{String,Vector{String}}(
         "spill_headroom",
         "compact_footprint_factor",
     ],
-    "replay" => ["pace", "speed", "clock"],
+    "replay" => ["pace", "speed", "max_gap_s", "clock"],
     "backfill" => [
         "start_date",
         "end_date",
@@ -406,6 +407,9 @@ function load_config(path::AbstractString = _default_config_path())
         throw(ArgumentError("replay.pace must be \"recorded\" or \"max\""))
     replay_speed = _cfg_value(rep, "replay", "speed", Float64, 1.0)
     replay_speed > 0 || throw(ArgumentError("replay.speed must be positive"))
+    replay_max_gap_s = _cfg_value(rep, "replay", "max_gap_s", Float64, Inf)
+    replay_max_gap_s > 0 ||
+        throw(ArgumentError("replay.max_gap_s must be positive, got $replay_max_gap_s"))
     replay_clock = _cfg_value(rep, "replay", "clock", String, "auto")
     replay_clock in ("auto", "recv", "exchange") || throw(
         ArgumentError(
@@ -536,6 +540,7 @@ function load_config(path::AbstractString = _default_config_path())
         compact_footprint_factor,
         pace,
         replay_speed,
+        replay_max_gap_s,
         replay_clock,
         bf_start,
         bf_end,

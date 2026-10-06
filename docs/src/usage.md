@@ -123,6 +123,7 @@ cutoffs — no threshold is hardcoded elsewhere in the pipeline.
 | --- | --- |
 | `pace` | `"recorded"` honors the original inter-arrival times; `"max"` emits as fast as the consumer takes them. |
 | `speed` | Time-compression factor when pacing is honored; `60.0` replays an hour in a minute. |
+| `max_gap_s` | Longest gap replayed, in recorded seconds before `speed` applies; a longer gap — an overnight closure, a weekend — is shortened to it. `inf` (default) replays every gap. |
 | `clock` | Timestamp that orders and paces the replay: `"recv"` (local receipt), `"exchange"` (the venue's own), or `"auto"` — receipt time when every record has it, exchange time otherwise. A backfilled recording has no receipt clock. |
 
 ## `[backfill]`

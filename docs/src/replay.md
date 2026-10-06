@@ -50,9 +50,26 @@ end
 
 Six AAPL days, 5.6 million prints, go through at about a million prints per
 second with the resident set flat at 1.2 GiB from the first day to the last.
+The bound is the busiest date summed over the requested symbols, at about
+100 bytes per print in memory: the busiest AAPL day of a one-year capture,
+2.2 million prints, holds 215 MiB, so two dozen names of that liquidity
+need about 5 GiB. The replay clock is settled on the first day and held
+for the rest: a later day that lacks the receive clock the first one had
+ends the replay with an error rather than switch clocks halfway.
+
 Recorded pace keeps one schedule across the days, closures included, so
-replaying a week at `speed = 1` takes a week. If a later day cannot be read,
-the channel closes with that error and the consumer's loop rethrows it, after
+replaying a week at `speed = 1` takes a week. `max_gap_s` caps every gap on
+the replay clock, in recorded seconds, and leaves the timing within a
+session as it was:
+
+```julia
+# A month of sessions at ten times real time, each closure replayed as 1 s.
+replay_source(files; speed = 10.0, max_gap_s = 10.0)
+```
+
+The cap needs no notion of a market closure, so it serves a venue that
+trades around the clock in the same way. If a later day cannot be read, the
+channel closes with that error and the consumer's loop rethrows it, after
 every earlier print has been delivered.
 
 ## What a `Trade` means

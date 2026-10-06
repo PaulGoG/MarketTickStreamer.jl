@@ -46,6 +46,7 @@ compact_footprint_factor = 4.0   # estimated in-memory footprint per input byte;
 [replay]
 pace = "recorded"                # one of: "recorded" | "max"
 speed = 1.0                      # time-compression factor when pace = "recorded"; > 0
+max_gap_s = inf                  # longest replayed gap on the replay clock [s]; > 0, inf = every gap
 clock = "auto"                   # pacing timestamp; one of: "auto" | "recv" | "exchange"
 
 [backfill]
