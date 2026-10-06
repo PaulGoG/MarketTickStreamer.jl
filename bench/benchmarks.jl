@@ -29,10 +29,9 @@ const DUPED = vcat(TRADES, TRADES[1:1000])
 const STAMP = "2026-07-30T14:30:00.123456789Z"
 const STAMP_NS = rfc3339_to_ns(STAMP)
 const LINE = trade_to_json(TRADES[1])
-# The same content as a `SubString` of a large parent. JSON3 parsing a
-# SubString of a big String was measured at roughly 2000x the per-line cost,
-# which is why `json_to_trade` materializes its argument first; the pair keeps
-# that regression visible.
+# The same content as a `SubString` of a large parent. JSON3 once parsed such
+# a SubString at roughly 2000x the per-line cost; JSON.jl parses both at the
+# same cost, and the pair keeps any return of that regression visible.
 const PARENT = join((trade_to_json(t) for t in TRADES), '\n')
 const SUBLINE = SubString(PARENT, 1, ncodeunits(LINE))
 

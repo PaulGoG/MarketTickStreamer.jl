@@ -13,7 +13,7 @@ Serialize a `Trade` to a single NDJSON line (no trailing newline). Timestamps
 stay Int64 nanoseconds — the round-trip through [`json_to_trade`](@ref) is
 lossless.
 """
-trade_to_json(t::Trade) = JSON3.write((
+trade_to_json(t::Trade) = JSON.json((
     symbol = t.symbol,
     time_ns = t.time_ns,
     recv_ns = t.recv_ns,
@@ -29,27 +29,14 @@ trade_to_json(t::Trade) = JSON3.write((
     json_to_trade(line) -> Trade
 
 Parse one NDJSON line written by [`trade_to_json`](@ref) back into a `Trade`.
+Keys are matched to the fields of `Trade` by name; a line with a missing key,
+a value of the wrong type or a truncated body throws.
 """
-function json_to_trade(line::AbstractString)
-    # String() is identity for String input; for SubStrings of a large parent
-    # (e.g. a bulk-read file split into lines) it avoids a pathological JSON3
-    # slow path measured at ~2000x the per-line cost.
-    # The assertions collapse JSON3's value union to what `trade_to_json`
-    # writes, so each conversion below is a static call rather than a dynamic
-    # dispatch per field per line; a malformed line fails here, loudly.
-    o = JSON3.read(String(line))::JSON3.Object
-    return Trade(
-        String(o.symbol::AbstractString),
-        Int64(o.time_ns::Integer),
-        Int64(o.recv_ns::Integer),
-        Float64(o.price::Real),
-        Float64(o.size::Real),
-        String(o.exchange::AbstractString),
-        String.(o.conditions::JSON3.Array),
-        String(o.tape::AbstractString),
-        Int64(o.id::Integer),
-    )
-end
+# Typed parsing straight into the struct, with no intermediate object: about
+# four times faster than building a generic object and converting each field.
+# SubStrings of a large parent (lines split from a bulk-read file) parse at the
+# same cost as Strings; bench/ keeps the pair as a regression sentinel.
+json_to_trade(line::AbstractString) = JSON.parse(line, Trade)
 
 """
     RawSink

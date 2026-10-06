@@ -14,7 +14,7 @@
 
 using Dates
 using HTTP
-using JSON3
+using JSON
 
 const MOCK_BINANCE_EPOCH = Date(2026, 1, 1)
 const MOCK_BINANCE_DAYS = 5
@@ -79,7 +79,7 @@ function start_mock_binance_rest(
                 mock_binance_row(k, trades_per_day) for
                 k in first_k:min(first_k+limit-1, total)
             ]
-            return HTTP.Response(200, JSON3.write(rows))
+            return HTTP.Response(200, JSON.json(rows))
         end,
     )
     return HTTP.serve!(router, "127.0.0.1", port)
@@ -111,14 +111,14 @@ function start_mock_binance_ws(
         if conns[] > fatal_after
             HTTP.WebSockets.send(
                 ws,
-                JSON3.write((; error = (; code = 2, msg = "Invalid request"))),
+                JSON.json((; error = (; code = 2, msg = "Invalid request"))),
             )
             return nothing
         end
         for f in frames
             HTTP.WebSockets.send(
                 ws,
-                JSON3.write((; stream = "$(lowercase(f.s))@aggTrade", data = f)),
+                JSON.json((; stream = "$(lowercase(f.s))@aggTrade", data = f)),
             )
         end
         linger_s > 0 && sleep(linger_s)
@@ -170,7 +170,7 @@ name = "binance"
 feed = "$feed"
 
 [stream]
-symbols = $(JSON3.write(symbols))
+symbols = $(JSON.json(symbols))
 channels = ["trades"]
 require_market_open = $require_market_open
 stop_at_market_close = $stop_at_market_close

@@ -176,7 +176,7 @@ path — no data is lost on interrupt (tested).
 | Choice | Rationale |
 |---|---|
 | `HTTP.jl` pinned to 1.x (resolved 1.11) | 2.x is a weeks-old breaking rewrite (Reseau.jl backend). For unattended capture, battle-tested wins. Migration path documented: kwarg renames (`readtimeout`→`read_idle_timeout` etc.); our watchdog becomes redundant on 2.x. |
-| `JSON3.jl` over new `JSON.jl` 1.x | JSON.jl 1.x rewrite benches ~10× slower for hot typed materialization; JSON3 is maintenance-mode but stable. Revisit when JSON.jl closes the gap. |
+| `JSON.jl` 1.x (since 0.3.0; JSON3 before) | JSON3 is deprecated in General and caps Parsers at 2, which blocks CSV 1.x. Measured 2026-10-06 against JSON.jl 1.10, on one core: a raw line parses straight into `Trade` four times faster, with no `SubString` penalty, and a 10 000-trade REST page about 80 times faster, the JSON3 cost being quadratic in page length. |
 | No `WebSockets.jl` | Abandoned (last release 2022). `HTTP.WebSockets` is the ecosystem standard. |
 | No `AlpacaMarkets.jl` | REST-only, single maintainer, pins that conflict with a modern stack. Direct HTTP+JSON is ~200 lines and fully under test. |
 | `DotEnv.jl` 1.0 (`load!`) | Registered, stable, zero-issue scope. |

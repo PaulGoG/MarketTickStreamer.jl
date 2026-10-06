@@ -80,7 +80,7 @@ rest_headers(p::AlpacaProvider) =
     ["APCA-API-KEY-ID" => p.key, "APCA-API-SECRET-KEY" => p.secret]
 
 auth_payload(p::AlpacaProvider) =
-    JSON3.write((action = "auth", key = p.key, secret = p.secret))
+    JSON.json((action = "auth", key = p.key, secret = p.secret))
 
 """
     subscribe_payload(p, symbols, channels) -> String
@@ -98,7 +98,7 @@ function subscribe_payload(
     for c in channels
         d[c] = symbols
     end
-    return JSON3.write(d)
+    return JSON.json(d)
 end
 
 """
@@ -110,7 +110,7 @@ with them).
 """
 function market_clock(p::AlpacaProvider)
     resp = _get_with_retry("$(p.trading_base)/v2/clock", rest_headers(p); policy = p.rest)
-    o = JSON3.read(resp.body)::JSON3.Object
+    o = JSON.parse(resp.body)::AbstractDict
     return (;
         is_open = Bool(o.is_open::Bool),
         next_open = String(o.next_open::AbstractString),
@@ -148,7 +148,7 @@ function condition_map(
         query = Dict("tape" => String(tape)),
         policy = p.rest,
     )
-    o = JSON3.read(resp.body)::JSON3.Object
+    o = JSON.parse(resp.body)::AbstractDict
     return Dict{String,String}(String(k) => String(v::AbstractString) for (k, v) in o)
 end
 
@@ -243,9 +243,9 @@ function _each_trades_page(
         # Assertions narrow the JSON value unions to what the documented
         # response shape guarantees; a violation is a protocol error and
         # should fail here rather than downstream.
-        o = JSON3.read(resp.body)::JSON3.Object
+        o = JSON.parse(resp.body)::AbstractDict
         page = get(o, :trades, nothing)   # null/absent when the range has no data
-        if page isa JSON3.Array && !isempty(page)
+        if page isa AbstractVector && !isempty(page)
             trades = Trade[parse_alpaca_trade(msg, 0; symbol) for msg in page]
             total += length(trades)
             f(trades)
@@ -359,7 +359,7 @@ function stream_protocol!(
                 s.stop[] && break
                 last_frame[] = time()
                 bump!(s; frames = 1)
-                for msg in JSON3.read(raw)
+                for msg in JSON.parse(raw)::AbstractVector
                     T = String(get(msg, :T, ""))
                     if T == "t"
                         put!(ch, parse_alpaca_trade(msg, now_ns()))

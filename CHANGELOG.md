@@ -34,6 +34,10 @@ Notable changes to MarketTickStreamer. The format follows
 - Log axes of up to four decades outside the plain-decimal range labelled
   their 2× and 5× ticks with the rounded decade, so a tick at 0.2 read
   `10⁻¹` and one at 0.5 read `1`. Intermediate ticks now carry their mantissa.
+- Parsing an Alpaca REST page cost time quadratic in its length: converting
+  each trade's condition list from a JSON3 array scanned the whole page, so a
+  10 000-trade page (the default `page_limit`) took 1 to 2 s of CPU, about 80
+  times what it takes now.
 
 ### Changed
 - **Breaking: relative paths in a configuration are relative to the
@@ -136,6 +140,12 @@ Notable changes to MarketTickStreamer. The format follows
   data lines, 1600 × 1100 canvas, a single exponent per axis, survival
   functions anchored on a labelled decade, a logarithmic activity color scale,
   and overview panels aligned on one grid.
+- JSON is read and written with JSON.jl 1.x in place of JSON3, which is
+  deprecated in the General registry and held CSV below 1.0 through its
+  Parsers bound. Raw lines parse straight into `Trade`, about four times
+  faster than before, with no penalty for a `SubString` of a large parent.
+  The raw format is unchanged: lines written by earlier versions read back
+  field for field and are written again byte for byte.
 
 ### Added
 - REST timeouts and transport retry. Every request carries a read and a

@@ -557,7 +557,7 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
     end
 
     @testset "schema: quote and bar frames" begin
-        wire(m) = JSON3.read(JSON3.write(m))
+        wire(m) = JSON.parse(JSON.json(m))
         q = MarketTickStreamer.parse_alpaca_quote(wire(mock_quote("AAPL", 1)), 7)
         @test q.symbol == "AAPL"
         @test q.bid_price == 101.0 && q.ask_price == 101.5
@@ -1874,7 +1874,7 @@ hostname = "$(gethostname())"
 
     @testset "binance: frame and REST parsing" begin
         f = mock_binance_frame("BTCUSDT", 4)
-        t = MarketTickStreamer.parse_binance_trade(JSON3.read(JSON3.write(f)), 99)
+        t = MarketTickStreamer.parse_binance_trade(JSON.parse(JSON.json(f)), 99)
         @test t.symbol == "BTCUSDT"
         @test t.recv_ns == 99
         @test t.exchange == "BINANCE" && t.tape == "SPOT"
@@ -1888,7 +1888,7 @@ hostname = "$(gethostname())"
         @test t.conditions == (f.m ? ["sell"] : ["buy"])
         # k = 6 is even, so the mock sets m = false: the buyer crossed.
         @test MarketTickStreamer.parse_binance_trade(
-            JSON3.read(JSON3.write(mock_binance_frame("BTCUSDT", 6))),
+            JSON.parse(JSON.json(mock_binance_frame("BTCUSDT", 6))),
             0,
         ).conditions == ["buy"]
         # No tape entry means nothing to exclude on: every crypto print is
@@ -1906,8 +1906,7 @@ hostname = "$(gethostname())"
             m = false,
             M = true,
         )
-        @test MarketTickStreamer.parse_binance_trade(JSON3.read(JSON3.write(raw)), 0).id ==
-              77
+        @test MarketTickStreamer.parse_binance_trade(JSON.parse(JSON.json(raw)), 0).id == 77
     end
 
     @testset "binance: id-seeded backfill pagination" begin

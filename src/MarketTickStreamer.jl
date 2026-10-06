@@ -35,7 +35,7 @@ using CSV: CSV
 using DataFrames: DataFrames, DataFrame
 using DotEnv: DotEnv
 using HTTP: HTTP
-using JSON3: JSON3
+using JSON: JSON
 using LoggingExtras:
     LoggingExtras,
     ConsoleLogger,

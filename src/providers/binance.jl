@@ -207,7 +207,7 @@ function historical_trades(
     )
     while true
         resp = _get_with_retry(url, Pair{String,String}[]; query, policy = p.rest)
-        rows = JSON3.read(resp.body)::JSON3.Array
+        rows = JSON.parse(resp.body)::AbstractVector
         isempty(rows) && break
         page = Trade[]
         last_id = 0
@@ -259,7 +259,7 @@ function stream_protocol!(
                 s.stop[] && break
                 last_frame[] = time()
                 bump!(s; frames = 1)
-                frame = JSON3.read(raw)::JSON3.Object
+                frame = JSON.parse(raw)::AbstractDict
                 msg = get(frame, :data, frame)          # combined or raw stream
                 e = String(get(msg, :e, ""))
                 if e == "trade" || e == "aggTrade"

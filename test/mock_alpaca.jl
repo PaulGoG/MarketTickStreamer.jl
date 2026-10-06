@@ -8,7 +8,7 @@
 
 using Dates
 using HTTP
-using JSON3
+using JSON
 
 const MOCK_KEY = "testkey"
 const MOCK_SECRET = "testsecret"
@@ -67,7 +67,7 @@ mock_bar(sym, i; t = "2026-07-30T14:3$(i % 10):00Z") = (;
     t = t,
 )
 
-_send(ws, msgs...) = HTTP.WebSockets.send(ws, JSON3.write(collect(msgs)))
+_send(ws, msgs...) = HTTP.WebSockets.send(ws, JSON.json(collect(msgs)))
 
 """
     start_mock_ws(plan; port) -> (server, nconn)
@@ -81,13 +81,13 @@ function start_mock_ws(plan::MockPlan; port::Integer)
         nconn[] += 1
         me = nconn[]
         _send(ws, (; T = "success", msg = "connected"))
-        auth = JSON3.read(HTTP.WebSockets.receive(ws))
+        auth = JSON.parse(HTTP.WebSockets.receive(ws))
         if get(auth, :key, "") != MOCK_KEY
             _send(ws, (; T = "error", code = 402, msg = "auth failed"))
             return
         end
         _send(ws, (; T = "success", msg = "authenticated"))
-        sub = JSON3.read(HTTP.WebSockets.receive(ws))
+        sub = JSON.parse(HTTP.WebSockets.receive(ws))
         _send(ws, (; T = "subscription", trades = get(sub, :trades, [])))
         if me > plan.fatal_after
             _send(ws, (; T = "error", code = plan.fatal_code, msg = "scripted fatal"))
@@ -143,7 +143,7 @@ function start_mock_rest(;
             now = Dates.now(Dates.UTC)
             HTTP.Response(
                 200,
-                JSON3.write((;
+                JSON.json((;
                     is_open = is_open,
                     next_open = fmt(now + Dates.Second(round(Int, open_in_s))),
                     next_close = fmt(now + Dates.Second(round(Int, close_in_s))),
@@ -162,7 +162,7 @@ function start_mock_rest(;
             body =
                 tape == "C" ? Dict("@" => "Regular Sale", "I" => "Odd Lot Trade") :
                 Dict("@" => "Regular Sale", "B" => "Average Price Trade")
-            return HTTP.Response(200, JSON3.write(body))
+            return HTTP.Response(200, JSON.json(body))
         end,
     )
     HTTP.register!(
@@ -197,7 +197,7 @@ function start_mock_rest(;
                 symbol = sym,
                 next_page_token = page2 ? nothing : "page2",
             )
-            return HTTP.Response(200, JSON3.write(body))
+            return HTTP.Response(200, JSON.json(body))
         end,
     )
     return HTTP.serve!(router, "127.0.0.1", port)
@@ -233,7 +233,7 @@ name = "alpaca"
 feed = "$feed"
 
 [stream]
-symbols = $(JSON3.write(symbols))
+symbols = $(JSON.json(symbols))
 channels = ["trades"]
 require_market_open = $require_market_open
 wait_for_open = $wait_for_open
