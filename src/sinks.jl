@@ -25,6 +25,10 @@ trade_to_json(t::Trade) = JSON.json((
     id = t.id,
 ))
 
+# Typed parsing straight into the struct, with no intermediate object: about
+# four times faster than building a generic object and converting each field.
+# SubStrings of a large parent (lines split from a bulk-read file) parse at the
+# same cost as Strings; bench/ keeps the pair as a regression sentinel.
 """
     json_to_trade(line) -> Trade
 
@@ -32,10 +36,6 @@ Parse one NDJSON line written by [`trade_to_json`](@ref) back into a `Trade`.
 Keys are matched to the fields of `Trade` by name; a line with a missing key,
 a value of the wrong type or a truncated body throws.
 """
-# Typed parsing straight into the struct, with no intermediate object: about
-# four times faster than building a generic object and converting each field.
-# SubStrings of a large parent (lines split from a bulk-read file) parse at the
-# same cost as Strings; bench/ keeps the pair as a regression sentinel.
 json_to_trade(line::AbstractString) = JSON.parse(line, Trade)
 
 """
