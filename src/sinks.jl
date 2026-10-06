@@ -247,8 +247,8 @@ const PROCESSED_STRING_COLUMNS =
     Dict(:symbol => String, :exchange => String, :conditions => String, :tape => String)
 
 # One processed per-day file (CSV or Arrow) → DataFrame; the inverse of
-# `_write_group`. An empty condition list reads back as `missing` from CSV and
-# as "" from Arrow.
+# `_write_group`. Empty text reads back as "" from Arrow and from CSV.jl 1.x,
+# which quotes it, but as `missing` from a file CSV.jl 0.10 wrote unquoted.
 _read_processed(path::AbstractString) =
     endswith(path, ".arrow") ? DataFrame(Arrow.Table(path)) :
     CSV.read(path, DataFrame; types = PROCESSED_STRING_COLUMNS)
@@ -269,6 +269,8 @@ function _trades_from_processed(path::AbstractString)
     )
 end
 
+_text(x) = ismissing(x) ? "" : String(x)
+
 # Function barrier: the column types are only known at run time. Condition
 # lists are shared between the prints that carry the same one — a day holds a
 # few dozen distinct lists over a million prints.
@@ -286,8 +288,7 @@ function _columns_to_trades(
     lists = Dict{String,Vector{String}}()
     trades = Vector{Trade}(undef, length(time_ns))
     for i in eachindex(time_ns)
-        c = conds[i]
-        key = ismissing(c) ? "" : String(c)
+        key = _text(conds[i])
         list = get!(() -> isempty(key) ? String[] : String.(split(key, '|')), lists, key)
         trades[i] = Trade(
             String(symbol[i]),
@@ -295,9 +296,9 @@ function _columns_to_trades(
             Int64(recv_ns[i]),
             Float64(price[i]),
             Float64(size[i]),
-            String(exchange[i]),
+            _text(exchange[i]),
             list,
-            String(tape[i]),
+            _text(tape[i]),
             Int64(id[i]),
         )
     end

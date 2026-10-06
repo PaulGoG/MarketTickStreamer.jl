@@ -327,6 +327,35 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
                 format = "arrow",
                 compression = :gzip,
             )
+            # Empty text: CSV.jl 1.x quotes it, and a file CSV.jl 0.10 wrote
+            # left it unquoted, which reads back as `missing`. Both read as "".
+            t1 = Trade(
+                "AAPL",
+                1_753_886_600_000_000_000,
+                0,
+                100.0,
+                1.0,
+                "V",
+                String[],
+                "C",
+                1,
+            )
+            t2 = Trade("AAPL", 1_753_886_600_001_000_000, 0, 100.5, 2.0, "", ["@"], "", 2)
+            p = MarketTickStreamer._write_group(
+                [t1, t2],
+                dir,
+                "EMPTY",
+                Date(2025, 7, 30),
+                "csv",
+            )
+            @test MarketTickStreamer._trades_from_processed(p) == [t1, t2]
+            write(
+                p,
+                "symbol,time_ns,recv_ns,price,size,exchange,conditions,tape,id\n" *
+                "AAPL,1753886600000000000,0,100.0,1.0,V,,C,1\n" *
+                "AAPL,1753886600001000000,0,100.5,2.0,,@,,2\n",
+            )
+            @test MarketTickStreamer._trades_from_processed(p) == [t1, t2]
         end
     end
 

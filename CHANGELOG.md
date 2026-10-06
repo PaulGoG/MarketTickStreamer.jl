@@ -38,6 +38,9 @@ Notable changes to MarketTickStreamer. The format follows
   each trade's condition list from a JSON3 array scanned the whole page, so a
   10 000-trade page (the default `page_limit`) took 1 to 2 s of CPU, about 80
   times what it takes now.
+- A processed CSV with an empty `exchange` or `tape` field could not be read:
+  the writer left empty text unquoted, it read back as `missing`, and only the
+  `conditions` column allowed for that.
 
 ### Changed
 - **Breaking: relative paths in a configuration are relative to the
@@ -146,6 +149,9 @@ Notable changes to MarketTickStreamer. The format follows
   faster than before, with no penalty for a `SubString` of a large parent.
   The raw format is unchanged: lines written by earlier versions read back
   field for field and are written again byte for byte.
+- CSV.jl 1.1 is required (was 0.10). Processed CSV files quote empty text
+  (`""`) where 0.10 left the field empty; files written by earlier versions
+  read back as before.
 
 ### Added
 - REST timeouts and transport retry. Every request carries a read and a
