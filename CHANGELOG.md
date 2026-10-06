@@ -6,6 +6,21 @@ Notable changes to MarketTickStreamer. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-06
+
+The release that settled which prints form a price and made the package
+usable as a dependency. The price-forming population is now derived from the
+CTS and UTDF condition matrices, which excludes two thirds of the prints of a
+high-priced name, and the round lot that defines an odd lot is observed from
+the tape instead of assumed. Configuration paths, logging and shutdown belong
+to a session and its configuration file rather than to the process and the
+package directory, and plotting moved into extensions, so a consumer of the
+trade channel loads in 0.9 s. A corpus replays streamed a day at a time, with
+an optional cap on gaps. Defects found by running at scale are fixed, one of
+them data-losing: a Binance backfill above 1000 rows per page kept only the
+first page of each day. JSON3, deprecated in General, gives way to JSON.jl,
+which in turn opens the way to CSV.jl 1.1.
+
 ### Fixed
 - A processed CSV whose `conditions` or `exchange` column held only numeric
   codes read back with an integer column. The string columns are declared on
@@ -404,6 +419,7 @@ against the historical SIP tape.
 - An offline test suite driven by an in-process mock of the Alpaca REST and
   WebSocket APIs, with Aqua static quality assurance.
 
-[Unreleased]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/releases/tag/v0.1.0
