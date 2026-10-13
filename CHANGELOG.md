@@ -6,6 +6,8 @@ Notable changes to MarketTickStreamer. The format follows
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-13
+
 ### Added
 - `event_bars` collapses the prints that share an exchange timestamp into
   one `Bar` per instant, the matching event, with the fills' open, high,
@@ -478,7 +480,8 @@ against the historical SIP tape.
 - An offline test suite driven by an in-process mock of the Alpaca REST and
   WebSocket APIs, with Aqua static quality assurance.
 
-[Unreleased]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.1.0...v0.2.0
