@@ -66,7 +66,7 @@ export RawSink,
     compact_raw
 export deduplicate_trades, session_report, free_disk_gb, check_live_heap, coverage_report
 export NON_PRICE_CONDITIONS, price_forming, filter_price_forming, observed_round_lot
-export tick_bars, volume_bars, dollar_bars
+export tick_bars, volume_bars, dollar_bars, event_bars
 export monitor_raw
 export replay_source, processed_files
 export corpus_inventory, eachday, read_processed, trades_table, ProcessedDays

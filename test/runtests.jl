@@ -977,6 +977,43 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
         )
     end
 
+    @testset "resampling: matching events" begin
+        mk(id, t, price, size; sym = "BTCUSDT") =
+            Trade(sym, Int64(t), 0, price, size, "BINANCE", ["buy"], "SPOT", id)
+        # A taker order filled against three resting orders is three prints at
+        # one instant; the next two instants hold one and two fills.
+        ts = [
+            mk(1, 100, 10.0, 1.0),
+            mk(2, 100, 10.5, 2.0),
+            mk(3, 100, 11.0, 1.0),
+            mk(4, 250, 9.0, 4.0),
+            mk(5, 400, 9.5, 1.0),
+            mk(6, 400, 9.5, 1.0),
+        ]
+        ev = event_bars(ts)
+        @test length(ev) == 3
+        @test [e.time_ns for e in ev] == [100, 250, 400]
+        @test all(e.time_ns == e.close_ns for e in ev)      # an event has no duration
+        @test ev[1].open == 10.0 && ev[1].close == 11.0
+        @test ev[1].high == 11.0 && ev[1].low == 10.0
+        @test ev[1].volume == 4.0 && ev[1].trade_count == 3
+        @test ev[1].vwap ≈ (10.0 + 21.0 + 11.0) / 4.0
+        @test ev[2].trade_count == 1 && ev[2].vwap == 9.0
+        @test ev[3].trade_count == 2 && ev[3].volume == 2.0
+        @test all(e.recv_ns == 0 for e in ev)
+        # Waiting times between events are the gaps between instants.
+        @test diff([e.time_ns for e in ev]) == [150, 150]
+        # Exchange time decides the events, arrival order the fill sequence
+        # within one: a tie split across the input is still one event.
+        split = [ts[4], ts[1], ts[5], ts[2], ts[6], ts[3]]
+        @test event_bars(split) == ev
+        @test event_bars(Trade[]) == Bar[]
+        @test_throws ArgumentError event_bars([
+            mk(1, 1, 1.0, 1.0),
+            mk(2, 1, 1.0, 1.0; sym = "ETHUSDT"),
+        ])
+    end
+
     @testset "quality: condition-code price eligibility" begin
         mk(tape, conds) = Trade("AAPL", 1, 2, 100.0, 10.0, "V", conds, tape, 1)
         @test price_forming(mk("A", ["@"]))

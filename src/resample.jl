@@ -14,6 +14,23 @@
 # ends of its interval, `time_ns` of its first print and `close_ns` of its
 # last, since on an activity clock the duration is data.
 
+# The symbol of a single-symbol print vector, and the prints on exchange time.
+# A consolidated tape interleaves venues and reports late prints, so arrival
+# order is not chronological order; the sort is stable, leaving equal-stamped
+# prints in arrival order.
+function _one_symbol_ordered(trades::AbstractVector{Trade})
+    sym = trades[1].symbol
+    all(t -> t.symbol == sym, trades) || throw(
+        ArgumentError(
+            "resampling expects prints of one symbol; got $(length(unique(t.symbol for t in trades)))",
+        ),
+    )
+    ordered =
+        issorted(trades; by = t -> t.time_ns) ? trades :
+        sort(trades; by = t -> t.time_ns, alg = MergeSort)
+    return sym, ordered
+end
+
 function _activity_bars(
     trades::AbstractVector{Trade},
     threshold::Real,
@@ -22,18 +39,7 @@ function _activity_bars(
 )
     threshold > 0 || throw(ArgumentError("bar threshold must be positive, got $threshold"))
     isempty(trades) && return Bar[]
-    sym = trades[1].symbol
-    all(t -> t.symbol == sym, trades) || throw(
-        ArgumentError(
-            "resampling expects prints of one symbol; got $(length(unique(t.symbol for t in trades)))",
-        ),
-    )
-    # Bars are built on exchange time. A consolidated tape interleaves venues
-    # and reports late prints, so arrival order is not chronological order;
-    # the sort is stable, leaving equal-stamped prints in arrival order.
-    ordered =
-        issorted(trades; by = t -> t.time_ns) ? trades :
-        sort(trades; by = t -> t.time_ns, alg = MergeSort)
+    sym, ordered = _one_symbol_ordered(trades)
 
     bars = Bar[]
     i, n = 1, length(ordered)
@@ -151,4 +157,76 @@ default for cross-sample work.
 """
 function dollar_bars(trades::AbstractVector{Trade}, value::Real; keep_partial::Bool = false)
     return _activity_bars(trades, value, t -> t.price * t.size; keep_partial)
+end
+
+
+"""
+    event_bars(trades) -> Vector{Bar}
+
+Collapse the prints that share an exchange timestamp into one [`Bar`](@ref)
+per instant: the matching event. A taker order filled against several
+resting orders is reported as one print per fill, all at the matching
+engine's single timestamp, so the print series is not the arrival process
+of orders — on a liquid crypto pair nine prints in ten follow their
+predecessor at a gap of exactly zero. The event series is: its `time_ns`
+are the distinct instants, and the gap `bars[i+1].time_ns - bars[i].close_ns`
+is the waiting time between events.
+
+Each bar spans one instant (`time_ns == close_ns`) and carries the fills'
+`open` (first), `close` (last), `high`, `low`, summed `volume`, their count
+in `trade_count`, and the volume-weighted price in `vwap`. Prints are
+ordered by exchange timestamp with ties kept in arrival order, so `open`
+and `close` follow the fill sequence the venue reported.
+
+Only identical timestamps are merged, so the result is as fine as the
+capture's clock: a capture quantized to milliseconds (a Binance session
+before 0.4.0, see `provenance.timestamp_unit` in its sidecar) merges
+distinct events that fell in one millisecond. On a consolidated equity tape
+identical nanosecond stamps across venues are rare, and an event is nearly
+always one venue's sweep.
+
+    events = event_bars(read_processed(cfg, "BTCUSDT"; from = d, to = d))
+    waits_s = diff([e.time_ns for e in events]) ./ 1e9
+"""
+function event_bars(trades::AbstractVector{Trade})
+    isempty(trades) && return Bar[]
+    sym, ordered = _one_symbol_ordered(trades)
+    bars = Bar[]
+    i, n = 1, length(ordered)
+    while i <= n
+        first_print = ordered[i]
+        stamp = first_print.time_ns
+        high = low = first_print.price
+        volume = 0.0
+        notional = 0.0
+        count = 0
+        j = i
+        while j <= n && ordered[j].time_ns == stamp
+            t = ordered[j]
+            high = max(high, t.price)
+            low = min(low, t.price)
+            volume += t.size
+            notional += t.price * t.size
+            count += 1
+            j += 1
+        end
+        push!(
+            bars,
+            Bar(
+                sym,
+                stamp,
+                stamp,
+                0,
+                first_print.price,
+                high,
+                low,
+                ordered[j-1].price,
+                volume,
+                count,
+                volume > 0 ? notional / volume : NaN,
+            ),
+        )
+        i = j
+    end
+    return bars
 end

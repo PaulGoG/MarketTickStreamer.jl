@@ -6,6 +6,16 @@ Notable changes to MarketTickStreamer. The format follows
 
 ## [Unreleased]
 
+### Added
+- `event_bars` collapses the prints that share an exchange timestamp into
+  one `Bar` per instant, the matching event, with the fills' open, high,
+  low, close, summed volume, count and volume-weighted price. A taker order
+  filled against several resting orders is one print per fill at a single
+  timestamp, so on a liquid crypto pair 88 % of consecutive `trade` prints
+  are a gap of zero and neither Binance feed is the arrival process of
+  orders; the event series is. Measured on BTCUSDT 2026-07-01: 4 166 849
+  prints, 503 061 events.
+
 ## [0.4.0] - 2026-10-13
 
 The release that makes the corpus a thing to be queried and Binance a venue

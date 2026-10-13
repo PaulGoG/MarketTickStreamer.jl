@@ -167,7 +167,7 @@ consumers are developed offline (see `docs/src/architecture.md`).
 | Corpus query path (`corpus_inventory`, `eachday`, `read_processed`: date range, exchange-local time window, price-forming population, memory guard) | working, tested |
 | Quotes (`q`) / bars (`b`) normalization | working, tested — parsed to `Quote`/`Bar` with `on_quote`/`on_bar`; not persisted: trades-only through 1.0 by decision |
 | Sale-condition eligibility (`price_forming`, per-tape lists from the CTA and UTP sale-condition matrices, `n_price_forming`) | working, tested — capture is never filtered; the choice is made at analysis time |
-| Resampling onto activity clocks (`tick_bars`, `volume_bars`, `dollar_bars`) | working, tested |
+| Resampling onto activity clocks (`tick_bars`, `volume_bars`, `dollar_bars`) and onto matching events (`event_bars`: the prints of one instant as one bar) | working, tested |
 | Real-time analysis consumers | interface contract documented; two worked examples under `examples/`, both executed by the suite |
 | Credential validation (paper account): clock REST, historical SIP REST, WS auth on `iex` and `delayed_sip` | verified 2026-08-01 |
 | Live capture validation against real Alpaca feed | verified 2026-08-06: 3 h `delayed_sip` session, 24 symbols, 3.17 M ticks; QA clean (0 duplicates/out-of-order/gaps), print-complete against the historical tape |

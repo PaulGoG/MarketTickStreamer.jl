@@ -260,6 +260,27 @@ durations_s = [(b.close_ns - b.time_ns) / 1e9 for b in bars]
 Consecutive bars never overlap, `bars[i].close_ns <= bars[i+1].time_ns`, and
 the gap between them is the wait for the next bar's first print.
 
+One more clock is the venue's own. A taker order filled against several
+resting orders is reported as one print per fill, every fill at the
+matching engine's single timestamp, so on a liquid pair the print series is
+mostly ties: on BTCUSDT 2026-07-01, 4 166 849 Binance `trade` prints fall on
+503 061 distinct instants, 8.3 fills per instant, and 88 % of consecutive
+prints are a gap of exactly zero. The `aggTrade` feed thins that to
+1 093 532 rows on the same 503 061 instants, so neither feed is the arrival
+process of orders. [`event_bars`](@ref) collapses the prints of one instant
+into one [`Bar`](@ref), and the series of those is:
+
+```julia
+events = event_bars(read_processed(cfg, "BTCUSDT"; from = d, to = d))
+waits_s = diff([e.time_ns for e in events]) ./ 1e9     # between matching events
+```
+
+Each event keeps its fills' open, high, low, close, summed volume, count
+and volume-weighted price, so the fill structure of an event is data rather
+than noise. The result is as fine as the capture's clock; a capture
+quantized to milliseconds merges events that fell in one millisecond, which
+is why the sidecar records the unit.
+
 ## Querying the corpus
 
 For methods that need the record rather than a stream — tail exponents,
