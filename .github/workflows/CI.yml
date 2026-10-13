@@ -13,7 +13,7 @@ permissions:
 jobs:
   test:
     name: Tests — Julia ${{ matrix.version }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Linux only: `[compat]` makes no claim about other platforms, and the mock
     # server, the PID-file lock and the raw-layer path handling are untested
     # elsewhere.
@@ -57,7 +57,7 @@ jobs:
           fail_ci_if_error: false
   format:
     name: Formatting
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: julia-actions/setup-julia@v3
@@ -68,7 +68,7 @@ jobs:
                     format(".", verbose = false) || error("Formatting check failed: run JuliaFormatter over the repository.")'
   docs:
     name: Documentation
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # deploydocs pushes docs/build to gh-pages with the workflow token.
     permissions:
       contents: write
