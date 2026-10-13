@@ -6,6 +6,21 @@ Notable changes to MarketTickStreamer. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-13
+
+The release that makes the corpus a thing to be queried and Binance a venue
+to be captured at scale. The processed tree is read back directly — an
+inventory from file metadata, one trading day at a time with an
+exchange-local window and the price-forming population, or a whole selection
+behind a memory guard — so a downstream pipeline consumes what the package
+produces without going through replay. Binance's daily dump files are a
+backfill source, which brings the `trade` feed, every execution, within
+reach of a backfill for the first time, with the venue's checksums verified
+and its files kept as the record; and the adapter captures at microsecond
+resolution on REST and on the stream, the clock those files carry, with the
+unit of every capture recorded in its sidecar. Quote persistence is settled
+as out of scope through 1.0.
+
 ### Added
 - A query path over the processed tree, for pipelines that consume the
   corpus rather than a stream. `corpus_inventory` lists what the tree holds
@@ -453,7 +468,8 @@ against the historical SIP tape.
 - An offline test suite driven by an in-process mock of the Alpaca REST and
   WebSocket APIs, with Aqua static quality assurance.
 
-[Unreleased]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/releases/tag/v0.1.0
