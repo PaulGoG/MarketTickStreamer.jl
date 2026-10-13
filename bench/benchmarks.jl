@@ -42,6 +42,10 @@ const RAW_FILE = let sink = open_raw_sink(BENCH_DIR, "bench")
     close_sink!(sink)
     sink.path
 end
+# One processed Arrow day of the synthetic tape: the file every query reads.
+const PROCESSED_FILE = with_logger(NullLogger()) do
+    first(compact_raw([RAW_FILE], joinpath(BENCH_DIR, "processed"); format = "arrow"))
+end
 
 suite["schema"] = BenchmarkGroup()
 suite["schema"]["rfc3339_to_ns"] = @benchmarkable rfc3339_to_ns($STAMP)
@@ -81,6 +85,11 @@ suite["replay"]["max_rate_10k"] = @benchmarkable(
     samples = 10,
     evals = 1,
 )
+
+suite["corpus"] = BenchmarkGroup()
+# Materializing one processed day: the cost every query pays per day and file.
+suite["corpus"]["read_processed_arrow_5k"] =
+    @benchmarkable read_processed([$PROCESSED_FILE])
 
 suite["quality"] = BenchmarkGroup()
 suite["quality"]["session_report_10k"] =

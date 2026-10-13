@@ -9,7 +9,7 @@ replay of recorded sessions.
 Everything is driven by a TOML configuration (`config/config.toml` in a clone);
 credentials come from the environment file it names.
 Entry points: [`run_stream`](@ref), [`run_backfill`](@ref),
-[`replay_source`](@ref), [`compact_raw`](@ref).
+[`replay_source`](@ref), [`compact_raw`](@ref), [`read_processed`](@ref).
 
 Plotting is optional. The diagnostic figures ([`session_figure`](@ref),
 [`overview_figure`](@ref) and their `save_*` drivers) are implemented by a
@@ -22,7 +22,8 @@ module MarketTickStreamer
 # Every name entering this namespace is listed: the test suite asserts with
 # ExplicitImports.jl that nothing arrives implicitly, so an import that is no
 # longer used, or a new name used without being imported, fails the suite.
-using Dates: Dates, @dateformat_str, Day, datetime2unix, dayofweek, unix2datetime
+using Dates:
+    Dates, @dateformat_str, Day, Millisecond, datetime2unix, dayofweek, unix2datetime
 using FileWatching: Pidfile
 using InteractiveUtils: InteractiveUtils
 using LinearAlgebra: LinearAlgebra
@@ -65,6 +66,7 @@ export NON_PRICE_CONDITIONS, price_forming, filter_price_forming, observed_round
 export tick_bars, volume_bars, dollar_bars
 export monitor_raw
 export replay_source, processed_files
+export corpus_inventory, eachday, read_processed, trades_table, ProcessedDays
 export RestPolicy
 export AbstractProvider,
     LiveSession, FatalStreamError, live_source, stop!, schedule_close_stop!, tee
@@ -90,6 +92,7 @@ include("sinks.jl")
 include("quality.jl")
 include("resample.jl")
 include("monitor.jl")
+include("corpus.jl")
 include("replay.jl")
 include("live.jl")
 include("providers/alpaca.jl")

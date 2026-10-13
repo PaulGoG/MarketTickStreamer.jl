@@ -71,6 +71,15 @@ instead of dropping or buffering unboundedly.
    Arrow. The write goes to a `.partial` file first and is renamed into
    place, so a reader never sees a half-written day.
 
+The processed layer is read back through three functions. `corpus_inventory`
+lists what the tree holds per symbol from file metadata alone; `eachday`
+iterates a selection one trading day at a time, the symbols of a day merged
+on exchange time, with an exchange-local time-of-day window and the
+price-forming population as options; `read_processed` materializes a
+selection and refuses one that would exceed `limits.read_mem_fraction` of
+the free memory. Every day is loaded in full before its filters apply, so
+the memory bound is the busiest selected date — the bound replay has.
+
 Scale-up path (not yet needed at a-few-symbols IEX volume): swap the raw
 layer to `Arrow.append` on stream-format files and query with DuckDB.jl —
 the `Trade`-channel interface isolates that change to `sinks.jl`.

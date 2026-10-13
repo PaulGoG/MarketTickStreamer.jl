@@ -43,6 +43,7 @@ struct Config
     compact_mem_fraction::Float64
     spill_headroom::Float64
     compact_footprint_factor::Float64
+    read_mem_fraction::Float64
     # [replay]
     replay_pace::String
     replay_speed::Float64
@@ -130,6 +131,7 @@ const CONFIG_KEYS = Dict{String,Vector{String}}(
         "compact_mem_fraction",
         "spill_headroom",
         "compact_footprint_factor",
+        "read_mem_fraction",
     ],
     "replay" => ["pace", "speed", "max_gap_s", "clock"],
     "backfill" => [
@@ -400,6 +402,10 @@ function load_config(path::AbstractString = _default_config_path())
             "limits.compact_footprint_factor must be > 0, got $compact_footprint_factor",
         ),
     )
+    read_mem_fraction = _cfg_value(lim, "limits", "read_mem_fraction", Float64, 0.5)
+    0 < read_mem_fraction <= 1 || throw(
+        ArgumentError("limits.read_mem_fraction must be in (0, 1], got $read_mem_fraction"),
+    )
 
     rep = tbl("replay")
     pace = _cfg_value(rep, "replay", "pace", String, "recorded")
@@ -538,6 +544,7 @@ function load_config(path::AbstractString = _default_config_path())
         compact_mem_fraction,
         spill_headroom,
         compact_footprint_factor,
+        read_mem_fraction,
         pace,
         replay_speed,
         replay_max_gap_s,

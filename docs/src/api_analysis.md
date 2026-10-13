@@ -24,6 +24,16 @@ Modules = [MarketTickStreamer]
 Pages = ["replay.jl"]
 ```
 
+## Corpus access
+
+The processed tree read back: what it holds, one trading day at a time, or a
+guarded whole.
+
+```@autodocs
+Modules = [MarketTickStreamer]
+Pages = ["corpus.jl"]
+```
+
 ## Diagnostic figures
 
 Declared and documented in the package, implemented by a package extension

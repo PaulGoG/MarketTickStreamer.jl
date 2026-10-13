@@ -100,33 +100,16 @@ end
 
 _is_processed(path::AbstractString) = endswith(path, ".arrow") || endswith(path, ".csv")
 
-# Processed day files grouped by the date in their name, in date order. One
-# group holds every symbol of that day.
-function _files_by_date(paths::AbstractVector{<:AbstractString})
-    groups = Dict{Date,Vector{String}}()
-    for p in paths
-        m = match(PROCESSED_FILE, basename(p))
-        m === nothing && throw(
-            ArgumentError(
-                "not a processed day file (YYYY-MM-DD.csv|.arrow): $p — safesave " *
-                "backups and partial files are not replayed",
-            ),
-        )
-        push!(get!(() -> String[], groups, Date(something(m[1]))), String(p))
-    end
-    return [groups[d] for d in sort!(collect(keys(groups)))]
-end
-
 # Stream processed day files: one day in memory at a time, every symbol of
 # the day merged on the replay clock.
 function _replay_processed!(
     ch::Channel{Trade},
-    days::Vector{Vector{String}},
+    days::Vector{Tuple{Date,Vector{String}}},
     clock::AbstractString,
     sch::Union{Nothing,ReplaySchedule},
 )
     resolved = ""
-    for files in days
+    for (_, files) in days
         trades = reduce(vcat, (_trades_from_processed(f) for f in files); init = Trade[])
         isempty(trades) && continue
         if isempty(resolved)
@@ -216,8 +199,7 @@ function replay_source(
     if n_processed > 0
         n_processed == length(paths) ||
             throw(ArgumentError("raw and processed files cannot be replayed together"))
-        days = _files_by_date(paths)
-        foreach(f -> isfile(f) || throw(ArgumentError("no such file: $f")), paths)
+        days = _days_from_files(paths)
         return Channel{Trade}(capacity; spawn = true) do ch
             _replay_processed!(ch, days, clock, new_schedule())
         end

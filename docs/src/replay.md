@@ -260,11 +260,69 @@ durations_s = [(b.close_ns - b.time_ns) / 1e9 for b in bars]
 Consecutive bars never overlap, `bars[i].close_ns <= bars[i+1].time_ns`, and
 the gap between them is the wait for the next bar's first print.
 
-## Working from the file layer instead
+## Querying the corpus
 
-For methods that need the whole record rather than a stream — tail exponents,
-long-memory estimation, anything needing the sample in memory —
-[`read_raw`](@ref) returns a `Vector{Trade}` from raw NDJSON, and
-[`compact_raw`](@ref) writes per-symbol per-day CSV or Arrow that any other
-tool can read. The raw layer is the source of truth; compaction is a
-convenience over it, never a replacement.
+For methods that need the record rather than a stream — tail exponents,
+long-memory estimation, anything that wants the sample in memory — the
+processed tree is read back directly. Three functions cover it, and each
+takes the configuration, which supplies the tree, the provider's calendar
+and the condition lists.
+
+[`corpus_inventory`](@ref) says what the tree holds, from file metadata
+alone, so no print is parsed:
+
+```julia
+julia> corpus_inventory(cfg)
+12×7 DataFrame
+ Row │ symbol  format  n_days  first_date  last_date   n_prints   bytes
+     │ String  String  Int64   Date        Date        Int64      Int64
+─────┼─────────────────────────────────────────────────────────────────────
+   1 │ AAPL    arrow      251  2025-09-12  2026-09-11  187521401  12215708622
+   2 │ BAC     arrow        5  2025-10-15  2026-06-10    1537872     98129642
+   ⋮
+```
+
+The 306 files of that tree, 13 GiB, are inventoried in 0.1 s;
+`scripts/inventory.jl` prints the table for the configured tree.
+
+[`eachday`](@ref) iterates a selection one trading day at a time:
+
+```julia
+for (date, trades) in eachday(cfg, "AAPL"; from = Date(2026, 8, 3), to = Date(2026, 8, 31),
+                              window = :regular, price_forming = true)
+    # ... one regular session of price-forming prints at a time
+end
+```
+
+Each day is the merge of the requested symbols on exchange time. `window`
+keeps `[open, close)` on the exchange-local clock of that date, in
+fractional hours — `(9.5, 16.0)` is the US regular session, `:regular`
+stands for the provider's — and the bounds are resolved per date, so they
+hold across daylight-saving transitions. `price_forming` applies the
+population of the previous section with the lists from the configuration. A
+day loads in full before its filters apply, so the memory bound is the
+busiest selected date, the same bound replay has: a month of AAPL, 17.4
+million prints, iterates at 3.4 million prints per second with the resident
+set flat.
+
+[`read_processed`](@ref) is the same selection in one vector, for methods
+that need the sample whole:
+
+```julia
+trades = read_processed(cfg, "AAPL"; from = Date(2026, 8, 3), to = Date(2026, 8, 31),
+                        window = :regular, price_forming = true)
+```
+
+That month's regular sessions hold 4.7 million price-forming prints and
+read in 13 s, the sale-condition test being the larger part of it. The
+read is guarded: a selection whose prints would exceed
+`limits.read_mem_fraction` of the free memory, at 102 bytes each, is
+refused with an error that names `eachday`. The full AAPL year, 187.5
+million prints and 18 GiB, is refused in 0.6 s, before a row is read.
+[`trades_table`](@ref) gives any vector of prints the columnar form, in the
+schema of the processed files.
+
+The raw layer stays the source of truth: [`read_raw`](@ref) returns a
+session's prints from raw NDJSON, and [`compact_raw`](@ref) writes the
+per-symbol, per-day CSV or Arrow files these functions read. Compaction is
+a convenience over the raw layer, never a replacement.

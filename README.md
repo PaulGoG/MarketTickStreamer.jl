@@ -26,9 +26,9 @@ real-time analysis methods.
 ├── Project.toml        # package environment and [compat]
 ├── activate.jl         # silent activation; one per environment (scripts/, test/, docs/, bench/, examples/)
 ├── config/config.toml  # every tunable: provider, symbols, storage, limits, replay, backfill
-├── src/                # the package: schema, config, sinks, quality, resample, replay, live, providers/, pipeline, diagnostics, figures
+├── src/                # the package: schema, config, sinks, quality, resample, corpus, replay, live, providers/, pipeline, diagnostics, figures
 ├── ext/                # package extensions: figures (CairoMakie), terminal plots (UnicodePlots)
-├── scripts/            # entry points: stream, backfill, compact, replay, monitor, visualize (own environment)
+├── scripts/            # entry points: stream, backfill, compact, inventory, replay, monitor, visualize (own environment)
 ├── examples/           # worked consumers of the Channel{Trade} interface (own environment)
 ├── test/               # offline suite: unit, mock-server end-to-end, static QA (own environment)
 ├── bench/              # BenchmarkTools suite over the acquisition hot paths (own environment)
@@ -94,6 +94,9 @@ julia scripts/backfill.jl
 # compact raw session files into per-symbol per-day CSV/Arrow
 julia scripts/compact.jl data/raw/<session>_part001.jsonl
 
+# inventory of the processed tree: days, span, prints and bytes per symbol
+julia scripts/inventory.jl
+
 # replay a recorded session as a live-like paced stream
 julia scripts/replay.jl data/raw/<session>_part001.jsonl
 
@@ -127,7 +130,8 @@ For interactive work on individual test sets, `julia -i test/activate.jl`
 opens the test environment.
 
 From the REPL, the same entry points are `run_stream(cfg)`,
-`run_backfill(cfg)`, `compact_raw(files, out)`, and
+`run_backfill(cfg)`, `compact_raw(files, out)`,
+`read_processed(cfg, "AAPL"; from, to, window = :regular)`, and
 `replay_source(files)` — the latter returns a `Channel{Trade}`
 indistinguishable from the live source, which is how real-time analysis
 consumers are developed offline (see `docs/src/architecture.md`).
@@ -158,6 +162,7 @@ consumers are developed offline (see `docs/src/architecture.md`).
 | Multi-day overview figures (trading-time price, activity heatmap, intra-session waiting-time CCDF) | working, inspected |
 | Live monitoring dashboard (attach-mode; text, plots with UnicodePlots loaded) | working, tested |
 | Paced replay (absolute schedule; receive or exchange clock; optional cap on gaps; a session from raw files, a corpus streamed day by day from the processed tree) | working, tested |
+| Corpus query path (`corpus_inventory`, `eachday`, `read_processed`: date range, exchange-local time window, price-forming population, memory guard) | working, tested |
 | Quotes (`q`) / bars (`b`) normalization | working, tested — parsed to `Quote`/`Bar` with `on_quote`/`on_bar`; not subscribed or persisted by default |
 | Sale-condition eligibility (`price_forming`, per-tape lists from the CTA and UTP sale-condition matrices, `n_price_forming`) | working, tested — capture is never filtered; the choice is made at analysis time |
 | Resampling onto activity clocks (`tick_bars`, `volume_bars`, `dollar_bars`) | working, tested |
@@ -241,6 +246,7 @@ Citation metadata is in [`CITATION.cff`](CITATION.cff). BibTeX:
 │   │                       #   sale-condition (price-forming) predicates
 │   ├── resample.jl         # tick / volume / dollar bars — activity clocks
 │   ├── monitor.jl          # attach-mode terminal dashboard (tails raw files)
+│   ├── corpus.jl           # corpus query path: inventory, day iteration, guarded reads
 │   ├── replay.jl           # recorded-session replay source (paced or max-rate)
 │   ├── live.jl             # provider-agnostic live source: reconnect, watchdog,
 │   │                       #   market-close guard
@@ -259,6 +265,7 @@ Citation metadata is in [`CITATION.cff`](CITATION.cff). BibTeX:
 │   ├── stream.jl           # live capture session
 │   ├── backfill.jl         # historical trade download
 │   ├── compact.jl          # raw NDJSON → per-symbol per-day CSV/Arrow
+│   ├── inventory.jl        # inventory of the processed tree
 │   ├── replay.jl           # replay a recorded session to the terminal
 │   ├── monitor.jl          # live dashboard for a running session (read-only)
 │   └── visualize.jl        # QA report + per-symbol per-day diagnostic figures

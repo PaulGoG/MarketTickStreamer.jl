@@ -42,6 +42,7 @@ max_open_spill_files = 256       # spill-compaction file handles held open; >= 1
 compact_mem_fraction = 0.5       # in-memory compaction up to this share of free RAM; 0 < x <= 1
 spill_headroom = 1.1             # scratch space required, as a multiple of the input size; >= 1
 compact_footprint_factor = 4.0   # estimated in-memory footprint per input byte; > 0
+read_mem_fraction = 0.5          # materialized corpus read (read_processed) up to this share of free RAM; 0 < x <= 1
 
 [replay]
 pace = "recorded"                # one of: "recorded" | "max"

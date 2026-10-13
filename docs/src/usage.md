@@ -113,6 +113,7 @@ loop indefinitely.
 | `compact_mem_fraction` | Share of the free RAM an in-memory compaction may claim; beyond it the run spills. |
 | `spill_headroom` | Scratch space a spilling compaction requires, as a multiple of the input size. |
 | `compact_footprint_factor` | Estimated in-memory footprint per byte of input, which decides whether a file fits in memory. |
+| `read_mem_fraction` | Share of the free RAM a materialized corpus read (`read_processed`) may claim; beyond it the read refuses and points at `eachday`. |
 
 These are the safety margins. They are the sole source of truth for the
 cutoffs — no threshold is hardcoded elsewhere in the pipeline.

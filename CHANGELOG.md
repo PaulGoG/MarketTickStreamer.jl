@@ -6,6 +6,21 @@ Notable changes to MarketTickStreamer. The format follows
 
 ## [Unreleased]
 
+### Added
+- A query path over the processed tree, for pipelines that consume the
+  corpus rather than a stream. `corpus_inventory` lists what the tree holds
+  per symbol (days, span, prints, bytes) from file metadata alone. `eachday`
+  iterates a selection one trading day at a time, the symbols of a day
+  merged on exchange time, with an exchange-local time-of-day window and the
+  price-forming population as options. `read_processed` materializes a
+  selection and refuses one that would exceed `limits.read_mem_fraction` of
+  the free memory, pointing at `eachday`. All three take a `Config`, which
+  supplies the tree, the calendar, the condition lists and
+  `window = :regular`. `trades_table` turns prints into a `DataFrame` in the
+  processed schema.
+- `scripts/inventory.jl` prints the inventory of the configured tree.
+- `limits.read_mem_fraction`, default 0.5.
+
 ## [0.3.0] - 2026-10-06
 
 The release that settled which prints form a price and made the package

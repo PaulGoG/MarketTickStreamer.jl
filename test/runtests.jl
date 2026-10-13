@@ -210,6 +210,8 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             rejected(base * "[replay]\nclock = \"wall\"\n")
             rejected(base * "[replay]\nmax_gap_s = 0.0\n")
             rejected(base * "[replay]\nmax_gap_s = nan\n")
+            rejected(base * "[limits]\nread_mem_fraction = 0.0\n")
+            rejected(base * "[limits]\nread_mem_fraction = 1.5\n")
             # the page limit is the provider's: Binance clamps an over-limit
             # request without an error, which would truncate every day
             rejected(base * "[backfill]\npage_limit = 10001\n")
@@ -221,6 +223,7 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             @test c.backfill_page_limit == 10_000
             @test c.replay_clock == "auto"
             @test c.replay_max_gap_s == Inf
+            @test c.read_mem_fraction == 0.5
             write(p, base * "[replay]\nmax_gap_s = 3600\n")
             @test load_config(p).replay_max_gap_s == 3600.0
             # a TOML date is accepted as well as a date string
@@ -560,6 +563,216 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             @test n == 10
             @test elapsed < 0.4
         end
+    end
+
+    @testset "corpus: inventory, day iteration, windowed and filtered reads" begin
+        day_ns = 86_400 * 1_000_000_000
+        t0 = 1_753_886_600_000_000_000                       # 2025-07-30 14:43:20 UTC
+        mk(i, sym, day, conds) = Trade(
+            sym,
+            t0 + day * day_ns + i * 1_000_000,
+            0,
+            100.0 + i,
+            1.0 * i,
+            "V",
+            conds,
+            "C",
+            i,
+        )
+        # AAPL: six prints a day for three days, odd i regular sales, even i odd
+        # lots; MSFT: two derivatively priced prints a day for two days.
+        aapl = [mk(i, "AAPL", d, isodd(i) ? ["@"] : ["@", "I"]) for d in 0:2 for i in 1:6]
+        msft = [mk(i, "MSFT", d, ["4"]) for d in 0:1 for i in 7:8]
+        all_trades = sort([aapl; msft]; by = t -> t.time_ns)
+        dates = [Date(2025, 7, 30), Date(2025, 7, 31), Date(2025, 8, 1)]
+        on(day, ts) = filter(t -> trading_date(t.time_ns; tz = tz"UTC") == day, ts)
+        h(ms) = ms / 3_600_000                               # exchange-local hours
+        h_t0 = h(53_000_000)                                 # 14:43:20 as hours
+        mktempdir() do dir
+            sink = open_raw_sink(dir, "corpus")
+            write_batch!(sink, [aapl; msft])
+            close_sink!(sink)
+            for format in ("csv", "arrow")
+                out = joinpath(dir, format)
+                compact_raw([sink.path], out; format, tz = tz"UTC")
+                # Inventory from metadata: counts, span, bytes of the canonical files.
+                inv = corpus_inventory(out)
+                @test names(inv) == [
+                    "symbol",
+                    "format",
+                    "n_days",
+                    "first_date",
+                    "last_date",
+                    "n_prints",
+                    "bytes",
+                ]
+                @test inv.symbol == ["AAPL", "MSFT"]
+                @test inv.format == [format, format]
+                @test inv.n_days == [3, 2]
+                @test inv.first_date == [Date(2025, 7, 30), Date(2025, 7, 30)]
+                @test inv.last_date == [Date(2025, 8, 1), Date(2025, 7, 31)]
+                @test inv.n_prints == [18, 4]
+                @test inv.bytes == [
+                    sum(filesize, processed_files(out, "AAPL")),
+                    sum(filesize, processed_files(out, "MSFT")),
+                ]
+                @test corpus_inventory(out; symbols = "MSFT").n_prints == [4]
+                @test_throws ArgumentError corpus_inventory(out; symbols = ["NVDA"])
+                # One symbol: the days in order, every print, in exchange-time order.
+                it = eachday(out, "AAPL")
+                @test length(it) == 3
+                @test eltype(it) == Tuple{Date,Vector{Trade}}
+                @test occursin("3 days", sprint(show, it))
+                got = collect(it)
+                @test first.(got) == dates
+                @test [last(g) for g in got] == [on(d, aapl) for d in dates]
+                # Two symbols: merged on exchange time within each day; the
+                # third day has AAPL only.
+                both = collect(eachday(out, ["MSFT", "AAPL"]))
+                @test [last(g) for g in both] == [on(d, all_trades) for d in dates]
+                @test length(eachday(out, ["AAPL", "MSFT"]; from = Date(2025, 7, 31))) == 2
+                @test length(eachday(out, "AAPL"; to = Date(2025, 7, 30))) == 1
+                @test read_processed(out, ["AAPL", "MSFT"]) == all_trades
+                @test read_processed(processed_files(out, "AAPL")) == aapl
+                # Window: half-open on the exchange-local clock, here UTC.
+                # [t0, t0 + 4 ms) keeps i = 1, 2, 3 of every day.
+                w = read_processed(
+                    out,
+                    "AAPL";
+                    window = (h_t0, h(53_000_004)),
+                    tz = tz"UTC",
+                )
+                @test length(w) == 9
+                @test all(t -> t.id in 1:3, w)
+                # The open bound is inclusive: a window opening on the first
+                # print keeps it.
+                @test length(
+                    read_processed(
+                        out,
+                        "AAPL";
+                        window = (h(53_000_001), 24.0),
+                        tz = tz"UTC",
+                    ),
+                ) == 18
+                # Nothing before t0: every day is yielded, empty.
+                empty_days =
+                    collect(eachday(out, "AAPL"; window = (0.0, h_t0), tz = tz"UTC"))
+                @test length(empty_days) == 3
+                @test all(isempty ∘ last, empty_days)
+                @test_throws ArgumentError eachday(out, "AAPL"; window = (16.0, 9.5))
+                @test_throws ArgumentError eachday(out, "AAPL"; window = (-1.0, 5.0))
+                @test_throws ArgumentError eachday(out, "AAPL"; window = (0.0, 25.0))
+                # Population: odd lots and derivatively priced prints drop out;
+                # an empty condition table excludes nothing.
+                pf = read_processed(out, ["AAPL", "MSFT"]; price_forming = true)
+                @test length(pf) == 9
+                @test all(t -> t.symbol == "AAPL" && t.conditions == ["@"], pf)
+                @test length(
+                    read_processed(
+                        out,
+                        ["AAPL", "MSFT"];
+                        price_forming = true,
+                        non_price = Dict{String,Vector{String}}(),
+                    ),
+                ) == 22
+                # Memory guard: refused up front without filters, while
+                # accumulating with them; the fraction itself is validated.
+                @test_throws ErrorException read_processed(
+                    out,
+                    "AAPL";
+                    mem_fraction = 1e-15,
+                )
+                @test_throws ErrorException read_processed(
+                    out,
+                    "AAPL";
+                    price_forming = true,
+                    mem_fraction = 1e-15,
+                )
+                @test_throws ArgumentError read_processed(out, "AAPL"; mem_fraction = 0.0)
+                @test_throws ArgumentError read_processed(out, "AAPL"; mem_fraction = 1.5)
+                @test_throws ArgumentError eachday(out, String[])
+                @test_throws ArgumentError eachday(out, "NVDA")
+                @test_throws ArgumentError eachday([sink.path])
+                @test_throws ArgumentError eachday([
+                    joinpath(out, "AAPL", "2025-01-01.$format"),
+                ])
+            end
+            # Backups are neither counted nor read.
+            out = joinpath(dir, "arrow")
+            compact_raw([sink.path], out; format = "arrow", tz = tz"UTC")
+            @test isfile(joinpath(out, "AAPL", "2025-07-30_#1.arrow"))
+            @test corpus_inventory(out).n_days == [3, 2]
+            @test corpus_inventory(out).bytes[1] ==
+                  sum(filesize, processed_files(out, "AAPL"))
+            # An empty tree is an empty table with the same columns; a
+            # missing one is an error.
+            mkdir(joinpath(dir, "empty"))
+            @test size(corpus_inventory(joinpath(dir, "empty"))) == (0, 7)
+            @test_throws ArgumentError corpus_inventory(joinpath(dir, "nowhere"))
+            # The columnar form round-trips through the processed schema.
+            df = trades_table(all_trades)
+            @test names(df) == [
+                "symbol",
+                "time_ns",
+                "recv_ns",
+                "price",
+                "size",
+                "exchange",
+                "conditions",
+                "tape",
+                "id",
+            ]
+            @test df.conditions[1] == "@" && "@|I" in df.conditions && "4" in df.conditions
+            @test MarketTickStreamer._columns_to_trades(
+                df.symbol,
+                df.time_ns,
+                df.recv_ns,
+                df.price,
+                df.size,
+                df.exchange,
+                df.conditions,
+                df.tape,
+                df.id,
+            ) == all_trades
+            @test size(trades_table(Trade[])) == (0, 9)
+            # Configuration form: tree, calendar, condition lists and the
+            # provider's regular session come from the file. 14:43 UTC is
+            # 10:43 New York, inside (9.5, 16.0).
+            p = joinpath(dir, "corpus.toml")
+            write(
+                p,
+                "[stream]\nsymbols = [\"AAPL\", \"MSFT\"]\n[storage]\ndata_dir = \".\"\n",
+            )
+            cfg = load_config(p)
+            @test cfg.processed_dir == joinpath(dir, "processed")
+            compact_raw([sink.path], cfg.processed_dir; format = "csv", tz = tz"UTC")
+            @test corpus_inventory(cfg).symbol == ["AAPL", "MSFT"]
+            @test read_processed(cfg) == all_trades
+            @test length(read_processed(cfg, "AAPL"; window = :regular)) == 18
+            @test length(
+                read_processed(cfg, "AAPL"; window = :regular, price_forming = true),
+            ) == 9
+            @test length(collect(eachday(cfg; window = :regular))) == 3
+            @test_throws ArgumentError read_processed(cfg, "AAPL"; window = :all)
+            write(
+                p,
+                "[stream]\nsymbols = [\"AAPL\"]\n[storage]\ndata_dir = \".\"\n" *
+                "[limits]\nread_mem_fraction = 1e-15\n",
+            )
+            @test_throws ErrorException read_processed(load_config(p))
+        end
+        # The window is resolved on each date's own clock: 09:30 New York is
+        # 14:30 UTC under standard time, 13:30 UTC under daylight time, and a
+        # full local day is 23 h on 2026-03-08 and 25 h on 2026-11-01.
+        ny = tz"America/New_York"
+        @test MarketTickStreamer._window_ns(Date(2026, 3, 6), (9.5, 16.0), ny) ==
+              (rfc3339_to_ns("2026-03-06T14:30:00Z"), rfc3339_to_ns("2026-03-06T21:00:00Z"))
+        @test MarketTickStreamer._window_ns(Date(2026, 3, 9), (9.5, 16.0), ny) ==
+              (rfc3339_to_ns("2026-03-09T13:30:00Z"), rfc3339_to_ns("2026-03-09T20:00:00Z"))
+        lo, hi = MarketTickStreamer._window_ns(Date(2026, 3, 8), (0.0, 24.0), ny)
+        @test hi - lo == 23 * 3_600 * 1_000_000_000
+        lo, hi = MarketTickStreamer._window_ns(Date(2026, 11, 1), (0.0, 24.0), ny)
+        @test hi - lo == 25 * 3_600 * 1_000_000_000
     end
 
     @testset "quality: dedup + session report" begin

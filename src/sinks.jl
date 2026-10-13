@@ -203,6 +203,29 @@ read_raw(path::AbstractString) = read_raw([path])
 # ordinary string vectors.
 const DICTIONARY_COLUMNS = (:symbol, :exchange, :conditions, :tape)
 
+"""
+    trades_table(trades) -> DataFrame
+
+Prints as a `DataFrame` in the processed-file schema, one row per print in
+the order given: `symbol`, `time_ns`, `recv_ns`, `price`, `size`,
+`exchange`, `conditions` (the codes joined with `|`, empty for none), `tape`,
+`id`. The columnar form of a selection, and what [`compact_raw`](@ref)
+writes.
+"""
+function trades_table(trades::AbstractVector{Trade})
+    return DataFrame(
+        symbol = [t.symbol for t in trades],
+        time_ns = [t.time_ns for t in trades],
+        recv_ns = [t.recv_ns for t in trades],
+        price = [t.price for t in trades],
+        size = [t.size for t in trades],
+        exchange = [t.exchange for t in trades],
+        conditions = [join(t.conditions, "|") for t in trades],
+        tape = [t.tape for t in trades],
+        id = [t.id for t in trades],
+    )
+end
+
 # Sort one (symbol, day) group by exchange time and write it to the
 # processed tree with safesave semantics. Returns the path written.
 function _write_group(
@@ -214,17 +237,7 @@ function _write_group(
     compression::Union{Nothing,Symbol} = nothing,
 )
     ts = sort(trades; by = t -> t.time_ns)
-    out = DataFrame(
-        symbol = [t.symbol for t in ts],
-        time_ns = [t.time_ns for t in ts],
-        recv_ns = [t.recv_ns for t in ts],
-        price = [t.price for t in ts],
-        size = [t.size for t in ts],
-        exchange = [t.exchange for t in ts],
-        conditions = [join(t.conditions, "|") for t in ts],
-        tape = [t.tape for t in ts],
-        id = [t.id for t in ts],
-    )
+    out = trades_table(ts)
     dir = joinpath(out_dir, sym)
     mkpath(dir)
     path = joinpath(dir, "$(date).$(format == "csv" ? "csv" : "arrow")")
