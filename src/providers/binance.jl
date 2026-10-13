@@ -22,7 +22,9 @@
 #   * the venue never closes, so there are no market-hours railings and the
 #     calendar is UTC;
 #   * prices and quantities arrive as STRINGS, and timestamps in
-#     MILLISECONDS, against this package's Int64 nanoseconds;
+#     MILLISECONDS by default — this adapter asks for MICROSECONDS (REST
+#     header X-MBX-TIME-UNIT, stream parameter timeUnit) and reads either
+#     unit by magnitude, against this package's Int64 nanoseconds;
 #   * there is no consolidated tape and no sale conditions, but there is an
 #     aggressor side, which is the informative flag a crypto print carries.
 
@@ -84,6 +86,7 @@ provider_spec(::Val{:binance}) = ProviderSpec(
     (0.0, 24.0),
     "quote asset",
     "base asset",
+    "microsecond",
 )
 
 make_provider(::Val{:binance}, cfg::Config, ::AbstractString, ::AbstractString) =
@@ -100,10 +103,13 @@ _stream_name(p::BinanceProvider, sym::AbstractString) = "$(lowercase(sym))@$(p.f
 
 Combined-stream URL for `symbols`. Binance subscribes through the URL rather
 than through a post-connection message, so there is no auth or subscribe
-handshake: the connection *is* the subscription.
+handshake: the connection *is* the subscription. `timeUnit=MICROSECOND` asks
+for microsecond timestamps; frames in either unit are read.
 """
 ws_url(p::BinanceProvider, symbols::Vector{String}) =
-    "$(p.ws_base)/stream?streams=" * join((_stream_name(p, s) for s in symbols), "/")
+    "$(p.ws_base)/stream?streams=" *
+    join((_stream_name(p, s) for s in symbols), "/") *
+    "&timeUnit=MICROSECOND"
 
 """
     market_clock(p::BinanceProvider) -> (; is_open, next_open, next_close)
@@ -120,7 +126,13 @@ market_clock(::BinanceProvider) = (; is_open = true, next_open = "", next_close 
 _num(x::AbstractString) = parse(Float64, x)
 _num(x::Real) = Float64(x)
 
-_ms_to_ns(ms::Integer) = Int64(ms) * 1_000_000
+# The venue's timestamps are milliseconds by default and microseconds on
+# request, and its bulk files carry microseconds since 2025-01-01. The
+# magnitude tells the units apart: 10^14 ms is the year 5138, 10^14 µs was
+# 1973.
+const BINANCE_MICROSECOND_FLOOR = 100_000_000_000_000
+_binance_ns(raw::Integer) =
+    raw < BINANCE_MICROSECOND_FLOOR ? Int64(raw) * 1_000_000 : Int64(raw) * 1_000
 
 # The aggressor side, which is what `m` encodes: `m = true` means the BUYER
 # sat on the book as maker, so the seller crossed the spread and the print is
@@ -137,7 +149,7 @@ function parse_binance_trade(msg, recv_ns::Int64; symbol::AbstractString = "")
     id = haskey(msg, :t) ? msg.t : get(msg, :a, 0)
     return Trade(
         sym,
-        _ms_to_ns(msg.T::Integer),
+        _binance_ns(msg.T::Integer),
         recv_ns,
         _num(msg.p),
         _num(msg.q),
@@ -152,7 +164,7 @@ end
 # without `s`, since the symbol is in the request path.
 parse_binance_agg_rest(row, symbol::AbstractString) = Trade(
     String(symbol),
-    _ms_to_ns(row.T::Integer),
+    _binance_ns(row.T::Integer),
     0,
     _num(row.p),
     _num(row.q),
@@ -161,6 +173,9 @@ parse_binance_agg_rest(row, symbol::AbstractString) = Trade(
     "SPOT",
     Int64(row.a::Integer),
 )
+
+# Microsecond timestamps on request; the venue's default is milliseconds.
+const BINANCE_REST_HEADERS = ["X-MBX-TIME-UNIT" => "MICROSECOND"]
 
 """
     historical_trades(p::BinanceProvider, symbol, start_date, end_date;
@@ -182,6 +197,12 @@ truncate any hour holding more than `page_limit` trades, silently.
 `page_limit` above the venue maximum of 1000 is rejected here, because the
 server would clamp it silently and the short-page termination rule would then
 end the walk after the first page.
+
+Rows are requested at microsecond resolution (`X-MBX-TIME-UNIT:
+MICROSECOND`), the clock of the bulk files, so a REST day and a bulk day
+agree print for print; a server answering in milliseconds is read all the
+same. `startTime` is sent in milliseconds, which the venue accepts in either
+unit.
 
 **`aggTrade` is not the tape.** Binance aggregates executions that filled at
 one price from one taker order into a single row, so an aggregate trade is a
@@ -231,7 +252,7 @@ function historical_trades(
         "limit" => string(page_limit),
     )
     while true
-        resp = _get_with_retry(url, Pair{String,String}[]; query, policy = p.rest)
+        resp = _get_with_retry(url, BINANCE_REST_HEADERS; query, policy = p.rest)
         rows = JSON.parse(resp.body)::AbstractVector
         isempty(rows) && break
         page = Trade[]
@@ -371,12 +392,11 @@ end
 
 # One row of a dump. `cols` is 8 for aggTrades (id, price, quantity, first
 # id, last id, time, buyer-is-maker, best match) and 7 for trades (id, price,
-# quantity, quote quantity, time, buyer-is-maker, best match). The timestamp
-# unit is told by magnitude: 10^14 ms is the year 5138, 10^14 µs was 1973.
+# quantity, quote quantity, time, buyer-is-maker, best match). Timestamps in
+# either unit, see `_binance_ns`.
 function _bulk_trade(fields::AbstractVector{<:AbstractString}, sym::String, cols::Int)
     ts_col, maker_col = cols == 8 ? (6, 7) : (5, 6)
-    raw = parse(Int64, fields[ts_col])
-    ns = raw < 100_000_000_000_000 ? raw * 1_000_000 : raw * 1_000
+    ns = _binance_ns(parse(Int64, fields[ts_col]))
     maker = lowercase(fields[maker_col]) in ("true", "1")
     return Trade(
         sym,
@@ -448,10 +468,10 @@ The trades of `symbol` on UTC `date` from the venue's daily dump
 feeds, no pagination. `feed = "aggTrade"` is the population the REST
 backfill delivers; `feed = "trade"` is every execution, which no public
 REST endpoint can backfill. Prices, quantities, ids and the aggressor side
-map onto `Trade` as the REST rows do; the one difference is resolution. The
-REST API reports milliseconds, the dumps microseconds since 2025-01-01, so
-a day obtained either way holds the same prints, with the dump's timestamps
-the finer of the two.
+map onto `Trade` as the REST rows do, and both sources are read at
+microsecond resolution — the dumps carry it since 2025-01-01, the REST
+rows are requested with it — so a day obtained either way is the same
+prints on the same clock.
 
 The zip and its `.CHECKSUM` are stored under `dest_dir/binance/SYMBOL/` and
 kept: they are the vendor's own record of the day. A stored file whose

@@ -28,10 +28,17 @@ Notable changes to MarketTickStreamer. The format follows
   REST backfill. `bulk_trades` is the provider interface behind it;
   `ProviderSpec.bulk_feeds` declares which feeds a venue publishes this
   way. Timestamps in milliseconds (before 2025-01-01) and microseconds are
-  both read; the dumps carry microsecond timestamps where the REST API
-  reports milliseconds, so a day from the dump is the same prints at finer
-  resolution.
+  both read.
 - `[binance] bulk_base`, `[storage] bulk_subdir`, `[backfill] source`.
+
+### Changed
+- The Binance adapter requests microsecond timestamps on REST
+  (`X-MBX-TIME-UNIT`) and on the stream (`timeUnit`), the clock its bulk
+  files already carry; rows and frames in either unit are read. Captures
+  made before this release are millisecond-quantized: two prints in the same
+  millisecond were a waiting time of zero. Every session sidecar now records
+  `provenance.timestamp_unit` (`"nanosecond"` on the SIP, `"microsecond"`
+  on Binance); a Binance sidecar without the key predates this change.
 
 ## [0.3.0] - 2026-10-06
 

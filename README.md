@@ -142,7 +142,7 @@ consumers are developed offline (see `docs/src/architecture.md`).
 | Component | State |
 |---|---|
 | Live trade streaming (Alpaca IEX/SIP) | working, tested against mock |
-| Binance spot adapter (public, 24/7, UTC calendar, `trade` + `aggTrade`) | working, tested against mock and validated against the live API |
+| Binance spot adapter (public, 24/7, UTC calendar, `trade` + `aggTrade`, microsecond timestamps) | working, tested against mock and validated against the live API |
 | Provider-agnostic config, calendar and trading-day dispatch | working, tested |
 | Reconnection, stale-connection watchdog, graceful shutdown | working, tested |
 | Market-hours railings (wait-for-open, auto-stop at close, incl. half-day early close) | working, tested |
@@ -165,7 +165,7 @@ consumers are developed offline (see `docs/src/architecture.md`).
 | Live monitoring dashboard (attach-mode; text, plots with UnicodePlots loaded) | working, tested |
 | Paced replay (absolute schedule; receive or exchange clock; optional cap on gaps; a session from raw files, a corpus streamed day by day from the processed tree) | working, tested |
 | Corpus query path (`corpus_inventory`, `eachday`, `read_processed`: date range, exchange-local time window, price-forming population, memory guard) | working, tested |
-| Quotes (`q`) / bars (`b`) normalization | working, tested — parsed to `Quote`/`Bar` with `on_quote`/`on_bar`; not subscribed or persisted by default |
+| Quotes (`q`) / bars (`b`) normalization | working, tested — parsed to `Quote`/`Bar` with `on_quote`/`on_bar`; not persisted: trades-only through 1.0 by decision |
 | Sale-condition eligibility (`price_forming`, per-tape lists from the CTA and UTP sale-condition matrices, `n_price_forming`) | working, tested — capture is never filtered; the choice is made at analysis time |
 | Resampling onto activity clocks (`tick_bars`, `volume_bars`, `dollar_bars`) | working, tested |
 | Real-time analysis consumers | interface contract documented; two worked examples under `examples/`, both executed by the suite |

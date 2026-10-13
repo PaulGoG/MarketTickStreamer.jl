@@ -74,7 +74,7 @@ where that file is a read-only template to copy
 | Key | Meaning |
 | --- | --- |
 | `symbols` | Subscription list; at most `limits.max_symbols` entries. |
-| `channels` | Subset of `"trades"`, `"quotes"`, `"bars"`. Trades only by default: quote and bar frames are parsed into [`Quote`](@ref) and [`Bar`](@ref) and delivered to the `on_quote` / `on_bar` callbacks of [`live_source`](@ref), but neither is persisted. A quote stream carries an order of magnitude more messages than the trade stream, so storing it is a separate decision. |
+| `channels` | Subset of `"trades"`, `"quotes"`, `"bars"`. Trades only by default: quote and bar frames are parsed into [`Quote`](@ref) and [`Bar`](@ref) and delivered to the `on_quote` / `on_bar` callbacks of [`live_source`](@ref), but neither is persisted. A quote stream carries an order of magnitude more messages than the trade stream, and storing it is out of scope by decision: the package is trades-only through 1.0, quote persistence being a feature for a microstructure question that has not arisen. |
 | `require_market_open` | Query the market clock before connecting and exit if closed. |
 | `wait_for_open` | When closed, sleep until the next open instead of exiting. The wait is shifted by the feed's intrinsic delay. |
 | `stop_at_market_close` | Schedule a graceful stop at the session's next close, likewise shifted. |
@@ -214,3 +214,9 @@ Endpoint roots, overridable in the same way.
 | `rest_base` | `https://api.binance.com` |
 | `ws_base` | `wss://stream.binance.com:9443` |
 | `bulk_base` | `https://data.binance.vision`, the daily bulk files. |
+
+The adapter requests microsecond timestamps — the REST header
+`X-MBX-TIME-UNIT` and the stream parameter `timeUnit` — which is the clock
+of the bulk files; rows and frames in milliseconds are read as well. Every
+session sidecar records `provenance.timestamp_unit`. A Binance capture whose
+sidecar lacks the key predates 0.4.0 and is millisecond-quantized.

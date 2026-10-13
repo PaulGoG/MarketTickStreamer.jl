@@ -24,7 +24,7 @@ abstract type AbstractProvider end
 
 """
     ProviderSpec(feeds, backfill_feeds, bulk_feeds, tz, needs_credentials, max_page_limit,
-                 regular_session, price_unit, size_unit)
+                 regular_session, price_unit, size_unit, timestamp_unit)
 
 What the configuration layer must know about a provider *before* any provider
 object exists: which feed names it accepts, the calendar its tape is filed
@@ -52,6 +52,12 @@ the venue's own clock.
 `price_unit` and `size_unit` are what the venue's prices and sizes are
 denominated in, as the figure axes should name them: dollars and shares on a
 US equity tape, quote asset and base asset on a crypto pair.
+
+`timestamp_unit` is the resolution of the venue's exchange timestamps as the
+adapter receives them — `"nanosecond"` on the SIP, `"microsecond"` on
+Binance, which answers in milliseconds unless asked. It is written into
+every session sidecar, so the clock a capture was quantized to is known
+after the fact.
 """
 struct ProviderSpec
     feeds::Vector{String}
@@ -63,6 +69,7 @@ struct ProviderSpec
     regular_session::Tuple{Float64,Float64}
     price_unit::String
     size_unit::String
+    timestamp_unit::String
 end
 
 """Provider names this build knows how to construct."""

@@ -75,13 +75,16 @@ end
 
 """
     start_mock_binance_rest(port; trades_per_day = 7, fail_after = typemax(Int),
-                            missing_dates = Date[], corrupt_checksum = false)
+                            missing_dates = Date[], corrupt_checksum = false,
+                            seen_units = nothing)
         -> HTTP server
 
 Serve `/api/v3/aggTrades`. Honors `symbol`, `startTime`, `fromId` and `limit`
 exactly as the real endpoint does for the seed-then-walk pattern; returns a
 short page once the mock tape is exhausted, which is the client's stop signal.
 `fail_after` scripts a mid-run failure to exercise backfill resume.
+`seen_units` collects the `X-MBX-TIME-UNIT` header of every request; rows
+carry microseconds when it asks for them, as the venue does.
 
 Also serves the daily bulk files under `/data/spot/daily/` from the same tape.
 `missing_dates` answers 404 for those days' bulk files, `corrupt_checksum`
@@ -93,6 +96,7 @@ function start_mock_binance_rest(
     fail_after::Integer = typemax(Int),
     missing_dates::Vector{Date} = Date[],
     corrupt_checksum::Bool = false,
+    seen_units::Union{Nothing,Vector{String}} = nothing,
 )
     router = HTTP.Router()
     hits = Ref(0)
@@ -103,6 +107,8 @@ function start_mock_binance_rest(
         "/api/v3/aggTrades",
         function (req)
             hits[] += 1
+            unit = uppercase(HTTP.header(req, "X-MBX-TIME-UNIT", "MILLISECOND"))
+            seen_units === nothing || push!(seen_units, unit)
             hits[] > fail_after && return HTTP.Response(418, "scripted backfill failure")
             q = HTTP.queryparams(HTTP.URI(req.target))
             limit = parse(Int, get(q, "limit", "500"))
@@ -119,6 +125,7 @@ function start_mock_binance_rest(
                 mock_binance_row(k, trades_per_day) for
                 k in first_k:min(first_k+limit-1, total)
             ]
+            unit == "MICROSECOND" && (rows = [merge(r, (; T = r.T * 1000)) for r in rows])
             return HTTP.Response(200, JSON.json(rows))
         end,
     )
@@ -194,18 +201,19 @@ function start_mock_binance_ws(
     end
 end
 
-mock_binance_frame(sym, k; trades_per_day = 7) = begin
+mock_binance_frame(sym, k; trades_per_day = 7, unit::Symbol = :ms) = begin
     r = mock_binance_row(k, trades_per_day)
+    scale = unit === :us ? 1000 : 1
     (;
         e = "aggTrade",
-        E = r.T,
+        E = r.T * scale,
         s = sym,
         a = r.a,
         p = r.p,
         q = r.q,
         f = r.f,
         l = r.l,
-        T = r.T,
+        T = r.T * scale,
         m = r.m,
         M = r.M,
     )

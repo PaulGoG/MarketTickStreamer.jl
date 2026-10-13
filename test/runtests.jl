@@ -1908,6 +1908,7 @@ hostname = "$(gethostname())"
                 @test meta["session"]["ticks"] == 14
                 @test meta["session"]["raw_files"] == basename.(result.raw_files)
                 @test meta["config"]["feed"] == "iex"
+                @test meta["provenance"]["timestamp_unit"] == "nanosecond"
                 @test occursin(
                     r"^([0-9a-f]{40}|unknown)$",
                     meta["provenance"]["git_commit"],
@@ -2172,9 +2173,22 @@ hostname = "$(gethostname())"
         @test t.id == 4
         # Prices and sizes arrive as strings and must survive as Float64.
         @test t.price ≈ 64_004.0 && t.size ≈ 0.004
-        # Milliseconds on the wire, nanoseconds in the schema.
+        # Milliseconds on the wire by default, nanoseconds in the schema.
         @test t.time_ns == Int64(f.T) * 1_000_000
         @test t.time_ns % 1_000_000 == 0
+        # The adapter asks for microseconds; a frame in either unit lands on
+        # the same instant, and the stream URL carries the request.
+        fu = mock_binance_frame("BTCUSDT", 4; unit = :us)
+        @test fu.T == f.T * 1000
+        @test MarketTickStreamer.parse_binance_trade(JSON.parse(JSON.json(fu)), 0).time_ns ==
+              t.time_ns
+        @test MarketTickStreamer._binance_ns(1_791_590_429_424) == 1_791_590_429_424_000_000
+        @test MarketTickStreamer._binance_ns(1_791_590_429_424_532) ==
+              1_791_590_429_424_532_000
+        p0 = BinanceProvider("trade", "http://x", "ws://y")
+        url = MarketTickStreamer.ws_url(p0, ["BTCUSDT", "ETHUSDT"])
+        @test occursin("streams=btcusdt@trade/ethusdt@trade", url)
+        @test endswith(url, "&timeUnit=MICROSECOND")
         # `m = true` means the buyer was the maker, so the seller crossed.
         @test t.conditions == (f.m ? ["sell"] : ["buy"])
         # k = 6 is even, so the mock sets m = false: the buyer crossed.
@@ -2203,7 +2217,9 @@ hostname = "$(gethostname())"
     @testset "binance: id-seeded backfill pagination" begin
         rest_port = freeport(9811)
         per_day = 7
-        server = start_mock_binance_rest(rest_port; trades_per_day = per_day)
+        units = String[]
+        server =
+            start_mock_binance_rest(rest_port; trades_per_day = per_day, seen_units = units)
         try
             p = BinanceProvider("aggTrade", "http://127.0.0.1:$rest_port", "ws://unused")
             # One UTC date, walked in pages of 3 — the seed request uses
@@ -2221,6 +2237,10 @@ hostname = "$(gethostname())"
             @test issorted([t.time_ns for t in got])
             @test [t.id for t in got] == collect(1:per_day)
             @test all(t -> t.recv_ns == 0, got)        # never crossed the wire
+            # Every request asked for microseconds, the mock answered in them,
+            # and the instants are the tape's.
+            @test !isempty(units) && all(==("MICROSECOND"), units)
+            @test all(t -> t.time_ns == mock_binance_row(t.id, per_day).T * 1_000_000, got)
 
             # Two dates must give exactly two days of tape, weekend included.
             two = historical_trades(
@@ -2286,6 +2306,10 @@ hostname = "$(gethostname())"
                 rows = CSV.read(first(sort(files)), DataFrame)
                 @test nrow(rows) == per_day
                 @test all(rows.tape .== "SPOT") && all(rows.exchange .== "BINANCE")
+                meta = TOML.parsefile(
+                    only(filter(endswith(".meta.toml"), readdir(cfg.raw_dir; join = true))),
+                )
+                @test meta["provenance"]["timestamp_unit"] == "microsecond"
             finally
                 close(server)
             end

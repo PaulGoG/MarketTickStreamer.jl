@@ -50,6 +50,10 @@ instead of dropping or buffering unboundedly.
 - Two clocks per tick: `time_ns` (exchange event time) and `recv_ns` (local
   receipt). Their difference measures pipeline latency; replay pacing uses
   `recv_ns` (the flux as experienced); `recv_ns = 0` marks backfilled rows.
+- The venue's own resolution is recorded, not assumed: the SIP delivers
+  nanoseconds; Binance delivers milliseconds unless asked for microseconds,
+  which the adapter asks for. Every session sidecar carries
+  `provenance.timestamp_unit`.
 
 ## 3. Persistence: two layers
 

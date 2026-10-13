@@ -278,8 +278,9 @@ end
 Persist a provenance sidecar `<raw_dir>/<sid>.meta.toml` next to the
 session's raw files: session summary (id, status, pid, span, tick count,
 file list), provenance (git commit + dirty flag, Julia and package
-versions, hostname, and the base name of a copy of the resolved
-`Manifest.toml` written alongside as `<sid>.manifest.toml`), a hardware
+versions, hostname, the venue's timestamp unit, and the base name of a copy
+of the resolved `Manifest.toml` written alongside as `<sid>.manifest.toml`),
+a hardware
 fingerprint (CPU model and logical core count, total memory, Julia and
 BLAS thread counts, full `versioninfo` output), and the full effective
 configuration snapshot. The crash-only
@@ -313,6 +314,7 @@ function write_session_meta(
             "package_version" =>
                 string(something(pkgversion(MarketTickStreamer), "unknown")),
             "hostname" => gethostname(),
+            "timestamp_unit" => provider_spec(cfg.provider).timestamp_unit,
             "manifest" => _snapshot_manifest(cfg.raw_dir, sid),
         ),
         "hardware" => _hardware_provenance(),

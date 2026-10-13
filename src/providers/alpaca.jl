@@ -61,6 +61,7 @@ provider_spec(::Val{:alpaca}) = ProviderSpec(
     (9.5, 16.0),
     "USD",
     "shares",
+    "nanosecond",
 )
 
 make_provider(::Val{:alpaca}, cfg::Config, key::AbstractString, secret::AbstractString) =
