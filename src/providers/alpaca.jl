@@ -54,6 +54,7 @@ ws_url(p::AlpacaProvider) = "$(p.ws_base)/$(p.feed)"
 provider_spec(::Val{:alpaca}) = ProviderSpec(
     ["iex", "sip", "delayed_sip"],
     ["iex", "sip"],
+    String[],
     tz"America/New_York",
     true,
     10_000,

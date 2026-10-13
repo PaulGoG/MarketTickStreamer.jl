@@ -20,6 +20,18 @@ Notable changes to MarketTickStreamer. The format follows
   processed schema.
 - `scripts/inventory.jl` prints the inventory of the configured tree.
 - `limits.read_mem_fraction`, default 0.5.
+- A bulk backfill source. `backfill.source = "bulk"` fetches Binance's
+  daily dump files (`aggTrades`, or `trades` for every execution, which no
+  public REST endpoint can backfill), verifies the venue's checksum, keeps
+  the file under `storage.bulk_subdir` as the vendor's record, and streams
+  its rows through the same per-day raw sink, compaction and resume as a
+  REST backfill. `bulk_trades` is the provider interface behind it;
+  `ProviderSpec.bulk_feeds` declares which feeds a venue publishes this
+  way. Timestamps in milliseconds (before 2025-01-01) and microseconds are
+  both read; the dumps carry microsecond timestamps where the REST API
+  reports milliseconds, so a day from the dump is the same prints at finer
+  resolution.
+- `[binance] bulk_base`, `[storage] bulk_subdir`, `[backfill] source`.
 
 ## [0.3.0] - 2026-10-06
 

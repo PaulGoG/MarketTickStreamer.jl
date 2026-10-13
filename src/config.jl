@@ -28,6 +28,7 @@ struct Config
     data_dir::String
     raw_dir::String
     processed_dir::String
+    bulk_dir::String
     flush_interval_s::Float64
     flush_max_ticks::Int
     processed_format::String
@@ -53,6 +54,7 @@ struct Config
     backfill_start::Date
     backfill_end::Date
     backfill_feed::String
+    backfill_source::String
     backfill_page_limit::Int
     backfill_rate_sleep_s::Float64
     backfill_resume::Bool
@@ -115,6 +117,7 @@ const CONFIG_KEYS = Dict{String,Vector{String}}(
         "data_dir",
         "raw_subdir",
         "processed_subdir",
+        "bulk_subdir",
         "flush_interval_s",
         "flush_max_ticks",
         "processed_format",
@@ -138,6 +141,7 @@ const CONFIG_KEYS = Dict{String,Vector{String}}(
         "start_date",
         "end_date",
         "feed",
+        "source",
         "page_limit",
         "rate_limit_sleep_s",
         "resume",
@@ -433,13 +437,32 @@ function load_config(path::AbstractString = _default_config_path())
     bf_start = config_date(get(bf, "start_date", "today-1d"), "backfill.start_date")
     bf_end = config_date(get(bf, "end_date", string(bf_start)), "backfill.end_date")
     bf_start <= bf_end || throw(ArgumentError("backfill.start_date is after end_date"))
-    bf_feed = _cfg_value(bf, "backfill", "feed", String, last(spec.backfill_feeds))
-    bf_feed in spec.backfill_feeds || throw(
-        ArgumentError(
-            "backfill.feed must be one of $(join(map(repr, spec.backfill_feeds), ", ")) " *
-            "for provider \"$provider\", got \"$bf_feed\"",
-        ),
+    bf_source = _cfg_value(bf, "backfill", "source", String, "rest")
+    bf_source in ("rest", "bulk") || throw(
+        ArgumentError("backfill.source must be \"rest\" or \"bulk\", got \"$bf_source\""),
     )
+    bf_feed = _cfg_value(bf, "backfill", "feed", String, last(spec.backfill_feeds))
+    if bf_source == "bulk"
+        isempty(spec.bulk_feeds) && throw(
+            ArgumentError(
+                "backfill.source = \"bulk\" is not available for provider \"$provider\": " *
+                "it publishes no bulk files",
+            ),
+        )
+        bf_feed in spec.bulk_feeds || throw(
+            ArgumentError(
+                "backfill.feed must be one of $(join(map(repr, spec.bulk_feeds), ", ")) " *
+                "for provider \"$provider\" with backfill.source = \"bulk\", got \"$bf_feed\"",
+            ),
+        )
+    else
+        bf_feed in spec.backfill_feeds || throw(
+            ArgumentError(
+                "backfill.feed must be one of $(join(map(repr, spec.backfill_feeds), ", ")) " *
+                "for provider \"$provider\", got \"$bf_feed\"",
+            ),
+        )
+    end
     page_limit = _cfg_value(bf, "backfill", "page_limit", Int, spec.max_page_limit)
     1 <= page_limit <= spec.max_page_limit || throw(
         ArgumentError(
@@ -530,6 +553,7 @@ function load_config(path::AbstractString = _default_config_path())
             data_dir,
             _cfg_value(sto, "storage", "processed_subdir", String, "processed"),
         ),
+        joinpath(data_dir, _cfg_value(sto, "storage", "bulk_subdir", String, "bulk")),
         flush_interval,
         flush_max_ticks,
         fmt,
@@ -552,6 +576,7 @@ function load_config(path::AbstractString = _default_config_path())
         bf_start,
         bf_end,
         bf_feed,
+        bf_source,
         page_limit,
         rate_sleep,
         _cfg_value(bf, "backfill", "resume", Bool, true),

@@ -15,6 +15,8 @@
 using Dates
 using HTTP
 using JSON
+using SHA: sha256
+using ZipArchives: ZipWriter, zip_newfile
 
 const MOCK_BINANCE_EPOCH = Date(2026, 1, 1)
 const MOCK_BINANCE_DAYS = 5
@@ -40,19 +42,57 @@ end
 
 mock_binance_total(trades_per_day::Integer) = MOCK_BINANCE_DAYS * trades_per_day
 
+# The day's dump as the venue serves it: one CSV entry, no header, booleans
+# capitalised, timestamps in microseconds (the unit since 2025-01-01).
+function mock_binance_bulk_csv(kind::AbstractString, d::Date, trades_per_day::Integer)
+    k0 = Dates.value(d - MOCK_BINANCE_EPOCH) * trades_per_day
+    io = IOBuffer()
+    for k in (k0+1):(k0+trades_per_day)
+        r = mock_binance_row(k, trades_per_day)
+        us = r.T * 1000
+        m = r.m ? "True" : "False"
+        if kind == "aggTrades"
+            println(io, "$(r.a),$(r.p),$(r.q),$(r.f),$(r.l),$us,$m,True")
+        else
+            quote_qty = string(parse(Float64, r.p) * parse(Float64, r.q))
+            println(io, "$(r.a),$(r.p),$(r.q),$quote_qty,$us,$m,True")
+        end
+    end
+    return take!(io)
+end
+
+# A zip holding one entry, as the venue packs a day.
+function mock_binance_bulk_zip(entry::AbstractString, csv::Vector{UInt8})
+    return mktempdir() do dir
+        path = joinpath(dir, "day.zip")
+        ZipWriter(path) do w
+            zip_newfile(w, entry)
+            write(w, csv)
+        end
+        read(path)
+    end
+end
+
 """
-    start_mock_binance_rest(port; trades_per_day = 7, fail_after = typemax(Int))
+    start_mock_binance_rest(port; trades_per_day = 7, fail_after = typemax(Int),
+                            missing_dates = Date[], corrupt_checksum = false)
         -> HTTP server
 
 Serve `/api/v3/aggTrades`. Honors `symbol`, `startTime`, `fromId` and `limit`
 exactly as the real endpoint does for the seed-then-walk pattern; returns a
 short page once the mock tape is exhausted, which is the client's stop signal.
 `fail_after` scripts a mid-run failure to exercise backfill resume.
+
+Also serves the daily bulk files under `/data/spot/daily/` from the same tape.
+`missing_dates` answers 404 for those days' bulk files, `corrupt_checksum`
+serves a checksum that cannot match.
 """
 function start_mock_binance_rest(
     port::Integer;
     trades_per_day::Integer = 7,
     fail_after::Integer = typemax(Int),
+    missing_dates::Vector{Date} = Date[],
+    corrupt_checksum::Bool = false,
 )
     router = HTTP.Router()
     hits = Ref(0)
@@ -80,6 +120,34 @@ function start_mock_binance_rest(
                 k in first_k:min(first_k+limit-1, total)
             ]
             return HTTP.Response(200, JSON.json(rows))
+        end,
+    )
+    # Daily bulk files, built from the same tape as the REST endpoint, so the
+    # two routes must agree print for print.
+    HTTP.register!(
+        router,
+        "GET",
+        "/data/spot/daily/**",
+        function (req)
+            m = match(
+                r"^/data/spot/daily/(aggTrades|trades)/([A-Z]+)/\2-\1-(\d{4}-\d{2}-\d{2})\.zip(\.CHECKSUM)?$",
+                HTTP.URI(req.target).path,
+            )
+            m === nothing && return HTTP.Response(404, "no such file")
+            kind, sym, d = String(m[1]), String(m[2]), Date(m[3])
+            last_day = MOCK_BINANCE_EPOCH + Day(MOCK_BINANCE_DAYS - 1)
+            (MOCK_BINANCE_EPOCH <= d <= last_day && !(d in missing_dates)) ||
+                return HTTP.Response(404, "no such file")
+            name = "$sym-$kind-$d"
+            zip = mock_binance_bulk_zip(
+                "$name.csv",
+                mock_binance_bulk_csv(kind, d, trades_per_day),
+            )
+            if m[4] !== nothing
+                sha = corrupt_checksum ? "0"^64 : bytes2hex(sha256(zip))
+                return HTTP.Response(200, "$sha  $name.zip\n")
+            end
+            return HTTP.Response(200, zip)
         end,
     )
     return HTTP.serve!(router, "127.0.0.1", port)
@@ -147,7 +215,8 @@ end
     mock_binance_config_toml(dir; ws_port, rest_port, kwargs...) -> path
 
 Config TOML pointing the Binance adapter at the mock servers, with all
-storage under `dir`.
+storage under `dir`. `source` and `backfill_feed` set `backfill.source` and
+`backfill.feed`.
 """
 function mock_binance_config_toml(
     dir::AbstractString;
@@ -155,6 +224,8 @@ function mock_binance_config_toml(
     rest_port::Integer,
     symbols = ["BTCUSDT"],
     feed = "aggTrade",
+    source = "rest",
+    backfill_feed = "aggTrade",
     start_date = string(MOCK_BINANCE_EPOCH),
     end_date = string(MOCK_BINANCE_EPOCH),
     page_limit = 3,
@@ -191,7 +262,8 @@ max_raw_file_mb = 64
 channel_capacity = 10000
 
 [backfill]
-feed = "aggTrade"
+feed = "$backfill_feed"
+source = "$source"
 start_date = "$start_date"
 end_date = "$end_date"
 page_limit = $page_limit
@@ -205,6 +277,7 @@ log_dir = "$(joinpath(dir, "logs"))"
 [binance]
 rest_base = "http://127.0.0.1:$rest_port"
 ws_base = "ws://127.0.0.1:$ws_port"
+bulk_base = "http://127.0.0.1:$rest_port"
 """,
     )
     return path

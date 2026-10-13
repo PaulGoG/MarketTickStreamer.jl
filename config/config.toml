@@ -26,6 +26,7 @@ stale_timeout_s = 120.0          # watchdog: reconnect after this frameless inte
 data_dir = "../data"             # data root; relative to this file or absolute
 raw_subdir = "raw"               # append-only NDJSON session files
 processed_subdir = "processed"   # compacted per-day, per-symbol files
+bulk_subdir = "bulk"             # vendor bulk files kept as downloaded (backfill.source = "bulk")
 flush_interval_s = 30.0          # sink flush interval [s]; > 0
 flush_max_ticks = 5000           # sink flush batch-size threshold; >= 1
 processed_format = "csv"         # one of: "csv" | "arrow"
@@ -55,6 +56,7 @@ clock = "auto"                   # pacing timestamp; one of: "auto" | "recv" | "
 start_date = "today-2d"          # inclusive start; ISO "YYYY-MM-DD" or "today" / "today-<N>d"
 end_date = "today-1d"            # inclusive end; >= start_date; same forms
 feed = "sip"                     # historical feed; alpaca: "iex" | "sip"; binance: "aggTrade"
+source = "rest"                  # one of: "rest" | "bulk"; "bulk" = the venue's daily files, binance only
 page_limit = 10000               # rows per REST page; 1 to the provider maximum (alpaca 10000, binance 1000)
 rate_limit_sleep_s = 0.35        # pause between REST pages [s]; >= 0
 resume = true                    # skip (symbol, day) pairs already present in processed/
@@ -95,3 +97,4 @@ ws_base = "wss://stream.data.alpaca.markets/v2"
 # Endpoint roots — overridable for testing against a mock server.
 rest_base = "https://api.binance.com"
 ws_base = "wss://stream.binance.com:9443"
+bulk_base = "https://data.binance.vision"

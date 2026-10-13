@@ -23,7 +23,7 @@ those axes, which is what keeps the interface honest.
 abstract type AbstractProvider end
 
 """
-    ProviderSpec(feeds, backfill_feeds, tz, needs_credentials, max_page_limit,
+    ProviderSpec(feeds, backfill_feeds, bulk_feeds, tz, needs_credentials, max_page_limit,
                  regular_session, price_unit, size_unit)
 
 What the configuration layer must know about a provider *before* any provider
@@ -35,6 +35,10 @@ Without this the config layer has to hard-code one vendor's vocabulary, which
 is how `provider.feed` came to be validated against Alpaca's feed names for
 every provider, and how a 24-hour venue would have had its days cut at
 midnight in New York.
+
+`bulk_feeds` names the feeds the venue also publishes as daily bulk files,
+which [`bulk_trades`](@ref) downloads; it is empty for a venue without such
+a service, and the configuration refuses `backfill.source = "bulk"` for it.
 
 `max_page_limit` exists because a venue may clamp an over-limit request
 instead of rejecting it, and a clamped page is indistinguishable from the last
@@ -52,6 +56,7 @@ US equity tape, quote asset and base asset on a crypto pair.
 struct ProviderSpec
     feeds::Vector{String}
     backfill_feeds::Vector{String}
+    bulk_feeds::Vector{String}
     tz::TimeZone
     needs_credentials::Bool
     max_page_limit::Int
@@ -173,17 +178,13 @@ _transient(e) =
     e isa Base.IOError ||
     e isa EOFError
 
-function _get_with_retry(url, headers; query = nothing, policy::RestPolicy = RestPolicy())
+# Run `f` under the policy's retry schedule: a retryable HTTP status or a
+# transport failure is retried with exponential backoff (or the server's
+# Retry-After), anything else propagates at once.
+function _with_retry(f, policy::RestPolicy)
     for attempt in 0:policy.max_retries
         try
-            return HTTP.get(
-                url,
-                headers;
-                query,
-                retry = false,
-                readtimeout = policy.request_timeout_s,
-                connect_timeout = policy.connect_timeout_s,
-            )
+            return f()
         catch e
             status = e isa HTTP.StatusError && e.status in RETRYABLE_STATUS
             ((status || _transient(e)) && attempt < policy.max_retries) || rethrow()
@@ -202,6 +203,18 @@ function _get_with_retry(url, headers; query = nothing, policy::RestPolicy = Res
         end
     end
 end
+
+_get_with_retry(url, headers; query = nothing, policy::RestPolicy = RestPolicy()) =
+    _with_retry(policy) do
+        HTTP.get(
+            url,
+            headers;
+            query,
+            retry = false,
+            readtimeout = policy.request_timeout_s,
+            connect_timeout = policy.connect_timeout_s,
+        )
+    end
 
 """
     always_open(p::AbstractProvider) -> Bool
@@ -225,6 +238,26 @@ hard-coded weekday filter did to a 24-hour venue before this was dispatched.
 """
 session_days(::AbstractProvider, start_date::Date, end_date::Date) =
     collect(start_date:Day(1):end_date)
+
+"""
+    bulk_trades(p::AbstractProvider, symbol, date; feed, dest_dir,
+                each_page = nothing, page_rows = 100_000) -> Vector{Trade} | Int
+
+The trades of `symbol` on exchange date `date` from the venue's daily bulk
+file, for a provider whose [`ProviderSpec`](@ref) lists `feed` in
+`bulk_feeds`. The file is downloaded into `dest_dir`, verified against the
+venue's checksum and kept there as the vendor's record of the day; a
+present, verified file is reused without a request. Rows are parsed in
+pages of `page_rows`: with `each_page` every page is passed to it and only
+the row count is returned, otherwise the trades are accumulated. A day the
+venue has not published yields no trades. Backfilled prints carry
+`recv_ns = 0`.
+
+The default method throws: a venue without bulk files cannot be asked for
+one.
+"""
+bulk_trades(p::AbstractProvider, ::AbstractString, ::Date; kwargs...) =
+    throw(ArgumentError("provider $(nameof(typeof(p))) publishes no bulk files"))
 
 """
     feed_delay_ns(p::AbstractProvider) -> Int64

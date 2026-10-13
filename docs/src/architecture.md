@@ -80,6 +80,13 @@ selection and refuses one that would exceed `limits.read_mem_fraction` of
 the free memory. Every day is loaded in full before its filters apply, so
 the memory bound is the busiest selected date — the bound replay has.
 
+A venue's daily bulk files are a third input, not a third layer. With
+`backfill.source = "bulk"` the backfill fetches Binance's dump of each day,
+verifies the venue's checksum, keeps the file under `data/bulk/` as the
+vendor's record, and streams its rows through the same per-day raw sink and
+compaction as a REST page walk, so the raw layer remains the one source of
+truth every reader understands. The copy costs disk, not correctness.
+
 Scale-up path (not yet needed at a-few-symbols IEX volume): swap the raw
 layer to `Arrow.append` on stream-format files and query with DuckDB.jl —
 the `Trade`-channel interface isolates that change to `sinks.jl`.

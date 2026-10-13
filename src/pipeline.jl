@@ -569,7 +569,8 @@ Logging is scoped to the call: the session runs under its own logger and the
 caller's global logger is untouched.
 """
 function run_backfill(cfg::Config; provider::Union{AbstractProvider,Nothing} = nothing)
-    sid = "backfill_" * session_id(cfg; feed = cfg.backfill_feed)
+    prefix = cfg.backfill_source == "bulk" ? "backfill_bulk_" : "backfill_"
+    sid = prefix * session_id(cfg; feed = cfg.backfill_feed)
     logger, log_io = setup_logging(cfg; session_id = sid)
     try
         return Logging.with_logger(logger) do
@@ -616,23 +617,36 @@ function _run_backfill(
             day_prefix = "$(sid)_$(sym)_$(day)"
             day_sink = open_raw_sink(cfg.raw_dir, day_prefix; max_mb = cfg.max_raw_file_mb)
             n = 0
+            sink_page =
+                page -> begin
+                    write_batch!(day_sink, page)
+                    check_live_heap(cfg.max_live_heap_mb; context = "backfill $sym $day")
+                end
             try
-                n = historical_trades(
-                    provider,
-                    sym,
-                    day,
-                    day;
-                    feed = cfg.backfill_feed,
-                    page_limit = cfg.backfill_page_limit,
-                    rate_sleep_s = cfg.backfill_rate_sleep_s,
-                    each_page = page -> begin
-                        write_batch!(day_sink, page)
-                        check_live_heap(
-                            cfg.max_live_heap_mb;
-                            context = "backfill $sym $day",
-                        )
-                    end,
-                )
+                # A bulk day is one file, a REST day a walk of pages; both
+                # stream through the same sink, so everything downstream of
+                # this point is one path.
+                n = if cfg.backfill_source == "bulk"
+                    bulk_trades(
+                        provider,
+                        sym,
+                        day;
+                        feed = cfg.backfill_feed,
+                        dest_dir = cfg.bulk_dir,
+                        each_page = sink_page,
+                    )
+                else
+                    historical_trades(
+                        provider,
+                        sym,
+                        day,
+                        day;
+                        feed = cfg.backfill_feed,
+                        page_limit = cfg.backfill_page_limit,
+                        rate_sleep_s = cfg.backfill_rate_sleep_s,
+                        each_page = sink_page,
+                    )
+                end
             finally
                 close_sink!(day_sink)
                 # A day that failed before writing anything leaves a zero-byte
@@ -652,6 +666,7 @@ function _run_backfill(
                 append!(processed, compact_raw(cfg, day_files))
             end
             total += n
+            cfg.backfill_source == "bulk" && sleep(cfg.backfill_rate_sleep_s)
             @info "backfilled" symbol = sym day trades = n
             next!(prog)
         end

@@ -27,7 +27,9 @@ using Dates:
 using FileWatching: Pidfile
 using InteractiveUtils: InteractiveUtils
 using LinearAlgebra: LinearAlgebra
+using Mmap: Mmap
 using Printf: @sprintf
+using SHA: sha256
 using Statistics: Statistics, median
 using TOML: TOML
 
@@ -48,6 +50,7 @@ using LoggingExtras:
 using ProgressMeter: ProgressMeter, Progress, next!
 using TimeZones:
     TimeZones, @tz_str, Date, DateTime, TimeZone, UTC, ZonedDateTime, astimezone, now
+using ZipArchives: ZipReader, zip_names, zip_readentry
 
 export Config, load_config, load_credentials!
 export Trade, Quote, Bar
@@ -71,7 +74,7 @@ export RestPolicy
 export AbstractProvider,
     LiveSession, FatalStreamError, live_source, stop!, schedule_close_stop!, tee
 export AlpacaProvider, BinanceProvider
-export market_clock, historical_trades, historical_trade_count, condition_map
+export market_clock, historical_trades, historical_trade_count, bulk_trades, condition_map
 export ProviderSpec, provider_spec, make_provider, exchange_tz, always_open, session_days
 export run_stream,
     run_backfill,

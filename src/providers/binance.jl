@@ -8,6 +8,15 @@
 #                       "T":ms,"m":bool,"M":bool}
 # Live aggTrade frame: {"e":"aggTrade","E":ms,"s":SYM,"a":id,"p":"px","q":"qty",
 #                       "f":first,"l":last,"T":ms,"m":bool,"M":bool}
+# Daily bulk files:    {bulk_base}/data/spot/daily/{aggTrades|trades}/SYM/
+#                      SYM-{kind}-YYYY-MM-DD.zip, with SYM-....zip.CHECKSUM
+#                      (sha256). One CSV entry, no header. aggTrades columns:
+#                      agg_trade_id, price, quantity, first_trade_id,
+#                      last_trade_id, transact_time, is_buyer_maker,
+#                      is_best_match; trades columns: trade_id, price, qty,
+#                      quote_qty, time, is_buyer_maker, is_best_match.
+#                      Booleans "True"/"False"; timestamps in milliseconds
+#                      before 2025-01-01 and microseconds from it.
 #
 # Three things differ from an equity tape and shape everything below:
 #   * the venue never closes, so there are no market-hours railings and the
@@ -20,9 +29,10 @@
 """
     BinanceProvider
 
-Connection descriptor for Binance spot market data. Endpoint roots are
-overridable through the `[binance]` config table, which is how the test suite
-points the client at a local mock server.
+Connection descriptor for Binance spot market data. Endpoint roots
+(`rest_base`, `ws_base`, `bulk_base`) are overridable through the `[binance]`
+config table, which is how the test suite points the client at a local mock
+server.
 
 `feed` selects the trade granularity: `"trade"` is every execution,
 `"aggTrade"` aggregates executions that filled at one price from a single
@@ -33,11 +43,22 @@ struct BinanceProvider <: AbstractProvider
     feed::String
     rest_base::String
     ws_base::String
+    bulk_base::String
     rest::RestPolicy
 end
 
+"""Root of the venue's daily bulk files (`[binance] bulk_base`)."""
+const BINANCE_BULK_BASE = "https://data.binance.vision"
+
 BinanceProvider(feed::AbstractString, rest_base::AbstractString, ws_base::AbstractString) =
-    BinanceProvider(feed, rest_base, ws_base, RestPolicy())
+    BinanceProvider(feed, rest_base, ws_base, BINANCE_BULK_BASE, RestPolicy())
+
+BinanceProvider(
+    feed::AbstractString,
+    rest_base::AbstractString,
+    ws_base::AbstractString,
+    bulk_base::AbstractString,
+) = BinanceProvider(feed, rest_base, ws_base, bulk_base, RestPolicy())
 
 function BinanceProvider(cfg::Config)
     ep = cfg.endpoints
@@ -45,6 +66,7 @@ function BinanceProvider(cfg::Config)
         cfg.feed,
         get(ep, "rest_base", "https://api.binance.com"),
         get(ep, "ws_base", "wss://stream.binance.com:9443"),
+        get(ep, "bulk_base", BINANCE_BULK_BASE),
         RestPolicy(cfg),
     )
 end
@@ -55,6 +77,7 @@ end
 provider_spec(::Val{:binance}) = ProviderSpec(
     ["trade", "aggTrade"],
     ["aggTrade"],
+    ["aggTrade", "trade"],
     tz"UTC",
     false,
     1_000,
@@ -165,7 +188,9 @@ one price from one taker order into a single row, so an aggregate trade is a
 taker order's fill, not an execution. Counts and inter-arrival times are
 therefore not comparable with a raw `trade` stream, and the choice belongs to
 the analysis — as with odd lots on an equity tape. Only `aggTrade` has a
-time-seekable public endpoint, which is why it is the backfill feed.
+time-seekable public endpoint, which is why it is the backfill feed. The
+venue's daily bulk files carry both feeds, every execution included: see
+[`bulk_trades`](@ref).
 """
 function historical_trades(
     p::BinanceProvider,
@@ -234,6 +259,245 @@ function historical_trades(
         sleep(rate_sleep_s)
     end
     return acc === nothing ? total : acc
+end
+
+# Vendor path segment of a feed's daily dump.
+_bulk_kind(feed::AbstractString) =
+    feed == "aggTrade" ? "aggTrades" :
+    feed == "trade" ? "trades" :
+    throw(
+        ArgumentError(
+            "Binance publishes bulk files for \"aggTrade\" and \"trade\", got \"$feed\"",
+        ),
+    )
+
+"""
+    bulk_url(p::BinanceProvider, symbol, date; feed = "aggTrade") -> String
+
+URL of the daily spot dump of `symbol` on UTC `date`:
+`{bulk_base}/data/spot/daily/{aggTrades|trades}/{SYM}/{SYM}-{kind}-{date}.zip`.
+The venue's checksum of the file is at the same URL with `.CHECKSUM`
+appended.
+"""
+function bulk_url(
+    p::BinanceProvider,
+    symbol::AbstractString,
+    date::Date;
+    feed::AbstractString = "aggTrade",
+)
+    kind = _bulk_kind(feed)
+    sym = uppercase(String(symbol))
+    return "$(p.bulk_base)/data/spot/daily/$kind/$sym/$sym-$kind-$date.zip"
+end
+
+# GET `url` into `path` through a `.partial` file renamed on completion.
+# Returns `false` when the venue answers 404 — the day is not published —
+# and throws `HTTP.StatusError` on any other non-200 status, so that
+# `_with_retry` judges it like a REST response.
+function _download_file(url::AbstractString, path::AbstractString, policy::RestPolicy)
+    tmp = path * ".partial"
+    found = true
+    try
+        HTTP.open(
+            "GET",
+            url;
+            retry = false,
+            status_exception = false,
+            readtimeout = policy.request_timeout_s,
+            connect_timeout = policy.connect_timeout_s,
+        ) do http
+            HTTP.startread(http)
+            st = http.message.status
+            if st == 404
+                found = false
+            elseif st != 200
+                throw(HTTP.StatusError(st, "GET", String(url), http.message))
+            else
+                open(tmp, "w") do f
+                    while !eof(http)
+                        write(f, readavailable(http))
+                    end
+                end
+            end
+        end
+        found && mv(tmp, path; force = true)
+    finally
+        rm(tmp; force = true)
+    end
+    return found
+end
+
+# The venue's `.CHECKSUM` body is `<sha256 hex>  <file name>`.
+function _expected_sha256(checksum_path::AbstractString)
+    tokens = split(strip(read(checksum_path, String)))
+    (isempty(tokens) || length(first(tokens)) != 64) &&
+        error("malformed checksum file: $checksum_path")
+    return lowercase(String(first(tokens)))
+end
+
+_sha256_hex(path::AbstractString) = bytes2hex(open(sha256, path))
+
+# The day's dump and its checksum, fetched into `dir` unless a verified copy
+# is already there. The checksum is fetched first: it is small, and its
+# absence is the venue saying the day is not published. Returns the zip
+# path, or `nothing` for an unpublished day.
+function _fetch_bulk(p::BinanceProvider, url::AbstractString, dir::AbstractString)
+    mkpath(dir)
+    path = joinpath(dir, basename(url))
+    sums = path * ".CHECKSUM"
+    isfile(path) &&
+        isfile(sums) &&
+        _sha256_hex(path) == _expected_sha256(sums) &&
+        return path
+    found = _with_retry(p.rest) do
+        _download_file(url * ".CHECKSUM", sums, p.rest)
+    end
+    found || return nothing
+    got_file = _with_retry(p.rest) do
+        _download_file(url, path, p.rest)
+    end
+    got_file || error("bulk file listed with a checksum but missing: $url")
+    want = _expected_sha256(sums)
+    got = _sha256_hex(path)
+    if got != want
+        rm(path; force = true)
+        error(
+            "checksum mismatch for $(basename(path)): expected $want, got $got — " *
+            "the download was discarded",
+        )
+    end
+    return path
+end
+
+# One row of a dump. `cols` is 8 for aggTrades (id, price, quantity, first
+# id, last id, time, buyer-is-maker, best match) and 7 for trades (id, price,
+# quantity, quote quantity, time, buyer-is-maker, best match). The timestamp
+# unit is told by magnitude: 10^14 ms is the year 5138, 10^14 µs was 1973.
+function _bulk_trade(fields::AbstractVector{<:AbstractString}, sym::String, cols::Int)
+    ts_col, maker_col = cols == 8 ? (6, 7) : (5, 6)
+    raw = parse(Int64, fields[ts_col])
+    ns = raw < 100_000_000_000_000 ? raw * 1_000_000 : raw * 1_000
+    maker = lowercase(fields[maker_col]) in ("true", "1")
+    return Trade(
+        sym,
+        ns,
+        0,
+        parse(Float64, fields[2]),
+        parse(Float64, fields[3]),
+        "BINANCE",
+        _aggressor(maker),
+        "SPOT",
+        parse(Int64, fields[1]),
+    )
+end
+
+# The rows of a dump's CSV as pages of trades. A header line, should the
+# venue add one, is skipped. A wrong column count or a row outside `date` is
+# an error: a print filed under the wrong day would corrupt that day without
+# a trace.
+function _parse_bulk_csv(
+    csv::AbstractVector{UInt8},
+    sym::String,
+    date::Date,
+    feed::AbstractString;
+    each_page = nothing,
+    page_rows::Integer = 100_000,
+    name::AbstractString = "",
+)
+    cols = feed == "aggTrade" ? 8 : 7
+    day_lo = round(Int64, datetime2unix(DateTime(date))) * NS_PER_SEC
+    day_hi = day_lo + 86_400 * NS_PER_SEC
+    acc = each_page === nothing ? Trade[] : nothing
+    page = Trade[]
+    total = 0
+    first_line = true
+    for line in eachline(IOBuffer(csv))
+        isempty(line) && continue
+        fields = split(line, ',')
+        if first_line
+            first_line = false
+            all(isdigit, fields[1]) || continue
+        end
+        length(fields) == cols || error(
+            "$name: expected $cols columns for feed \"$feed\", got $(length(fields)): $line",
+        )
+        t = _bulk_trade(fields, sym, cols)
+        day_lo <= t.time_ns < day_hi || error(
+            "$name: a row dated $(trading_date(t.time_ns; tz = tz"UTC")) in the file of $date",
+        )
+        push!(page, t)
+        if length(page) >= page_rows
+            total += length(page)
+            acc === nothing ? each_page(page) : append!(acc, page)
+            page = Trade[]
+        end
+    end
+    if !isempty(page)
+        total += length(page)
+        acc === nothing ? each_page(page) : append!(acc, page)
+    end
+    return acc === nothing ? total : acc
+end
+
+"""
+    bulk_trades(p::BinanceProvider, symbol, date; feed = "aggTrade", dest_dir,
+                each_page = nothing, page_rows = 100_000) -> Vector{Trade} | Int
+
+The trades of `symbol` on UTC `date` from the venue's daily dump
+([`bulk_url`](@ref)), the route to a large corpus: one file per day, both
+feeds, no pagination. `feed = "aggTrade"` is the population the REST
+backfill delivers; `feed = "trade"` is every execution, which no public
+REST endpoint can backfill. Prices, quantities, ids and the aggressor side
+map onto `Trade` as the REST rows do; the one difference is resolution. The
+REST API reports milliseconds, the dumps microseconds since 2025-01-01, so
+a day obtained either way holds the same prints, with the dump's timestamps
+the finer of the two.
+
+The zip and its `.CHECKSUM` are stored under `dest_dir/binance/SYMBOL/` and
+kept: they are the vendor's own record of the day. A stored file whose
+checksum verifies is reused; a download whose checksum does not match is
+deleted and the day fails. A day the venue has not published (HTTP 404)
+returns nothing, logged at `@info` — the dump of a day appears on the
+following UTC day.
+
+Rows are parsed in pages of `page_rows`; `each_page` streams them and
+returns only the count, otherwise the trades are accumulated. The vendor's
+timestamps are milliseconds before 2025-01-01 and microseconds from then
+on; both are read.
+"""
+function bulk_trades(
+    p::BinanceProvider,
+    symbol::AbstractString,
+    date::Date;
+    feed::AbstractString = "aggTrade",
+    dest_dir::AbstractString,
+    each_page = nothing,
+    page_rows::Integer = 100_000,
+)
+    page_rows >= 1 || throw(ArgumentError("page_rows must be at least 1, got $page_rows"))
+    sym = uppercase(String(symbol))
+    url = bulk_url(p, sym, date; feed)
+    path = _fetch_bulk(p, url, joinpath(dest_dir, "binance", sym))
+    if path === nothing
+        @info "no bulk file published for this day" symbol = sym date feed
+        return each_page === nothing ? Trade[] : 0
+    end
+    archive = ZipReader(Mmap.mmap(path))
+    entries = zip_names(archive)
+    length(entries) == 1 || error(
+        "$(basename(path)): expected one entry, found $(length(entries)): " *
+        join(entries, ", "),
+    )
+    csv = zip_readentry(archive, only(entries))
+    return _parse_bulk_csv(
+        csv,
+        sym,
+        date,
+        feed;
+        each_page,
+        page_rows,
+        name = basename(path),
+    )
 end
 
 # Binance spot streaming. There is no auth and no subscribe handshake — the

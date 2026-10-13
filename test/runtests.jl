@@ -216,6 +216,17 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             # request without an error, which would truncate every day
             rejected(base * "[backfill]\npage_limit = 10001\n")
             rejected(binance * base * "[backfill]\npage_limit = 1001\n")
+            # The bulk source is a provider capability: Alpaca has none,
+            # Binance has it for both feeds, REST for aggTrade only.
+            rejected(base * "[backfill]\nsource = \"ftp\"\n")
+            rejected(base * "[backfill]\nsource = \"bulk\"\n")
+            rejected(binance * base * "[backfill]\nsource = \"rest\"\nfeed = \"trade\"\n")
+            write(p, binance * base * "[backfill]\nsource = \"bulk\"\nfeed = \"trade\"\n")
+            c = load_config(p)
+            @test c.backfill_source == "bulk" && c.backfill_feed == "trade"
+            @test endswith(c.bulk_dir, joinpath("data", "bulk"))
+            write(p, base)
+            @test load_config(p).backfill_source == "rest"
             write(p, binance * base)
             @test load_config(p).backfill_page_limit == 1000
             write(p, base)
@@ -2275,6 +2286,205 @@ hostname = "$(gethostname())"
                 rows = CSV.read(first(sort(files)), DataFrame)
                 @test nrow(rows) == per_day
                 @test all(rows.tape .== "SPOT") && all(rows.exchange .== "BINANCE")
+            finally
+                close(server)
+            end
+        end
+    end
+
+    @testset "binance: bulk dump parsing" begin
+        d = Date(2026, 1, 1)
+        parse_csv(text; feed = "aggTrade", kw...) = MarketTickStreamer._parse_bulk_csv(
+            Vector{UInt8}(codeunits(text)),
+            "BTCUSDT",
+            d,
+            feed;
+            name = "x.csv",
+            kw...,
+        )
+        us = 1_767_225_600_000_000 + 5_000_000           # 2026-01-01T00:00:05Z, µs
+        ms = 1_767_225_600_000 + 5_000                   # the same instant, ms
+        agg = "7,64000.5,0.25,10,12,$us,True,True\n8,64001.0,0.5,13,13,$(us + 1_000),False,True\n"
+        got = parse_csv(agg)
+        @test length(got) == 2
+        @test got[1] == Trade(
+            "BTCUSDT",
+            1_767_225_605_000_000_000,
+            0,
+            64000.5,
+            0.25,
+            "BINANCE",
+            ["sell"],
+            "SPOT",
+            7,
+        )
+        @test got[2].conditions == ["buy"]
+        @test got[2].time_ns == 1_767_225_605_001_000_000 && got[2].id == 8
+        # Millisecond timestamps, the unit before 2025-01-01, read to the same instant.
+        @test parse_csv("7,64000.5,0.25,10,12,$ms,true,True\n")[1].time_ns == got[1].time_ns
+        # A header line is skipped; the trades feed has seven columns.
+        header = "agg_trade_id,price,quantity,first_trade_id,last_trade_id,transact_time,is_buyer_maker,is_best_match\n"
+        @test length(parse_csv(header * agg)) == 2
+        tr = parse_csv("10,64000.5,0.145,9280.07,$us,False,True\n"; feed = "trade")
+        @test tr[1].id == 10 && tr[1].size == 0.145 && tr[1].conditions == ["buy"]
+        # Paging: the count comes back and every page reaches the callback.
+        pages = Vector{Int}()
+        n = parse_csv(agg^3; each_page = pg -> push!(pages, length(pg)), page_rows = 4)
+        @test n == 6 && pages == [4, 2]
+        # A wrong column count and a row outside the day are errors, not silence.
+        @test_throws ErrorException parse_csv("7,64000.5,0.25,$us,True\n")
+        @test_throws ErrorException parse_csv(
+            "7,64000.5,0.25,10,12,$(us + 86_400_000_000),True,True\n",
+        )
+    end
+
+    @testset "binance: bulk files match the REST tape, are verified and kept" begin
+        mktempdir() do dir
+            rest_port = freeport(9871)
+            per_day = 7
+            server = start_mock_binance_rest(
+                rest_port;
+                trades_per_day = per_day,
+                missing_dates = [MOCK_BINANCE_EPOCH + Day(2)],
+            )
+            base = "http://127.0.0.1:$rest_port"
+            dest = joinpath(dir, "bulk")
+            try
+                p = BinanceProvider("aggTrade", base, "ws://unused", base)
+                @test MarketTickStreamer.bulk_url(p, "btcusdt", MOCK_BINANCE_EPOCH) ==
+                      "$base/data/spot/daily/aggTrades/BTCUSDT/BTCUSDT-aggTrades-2026-01-01.zip"
+                @test_throws ArgumentError MarketTickStreamer.bulk_url(
+                    p,
+                    "BTCUSDT",
+                    MOCK_BINANCE_EPOCH;
+                    feed = "kline",
+                )
+                bulk = bulk_trades(p, "BTCUSDT", MOCK_BINANCE_EPOCH; dest_dir = dest)
+                rest = historical_trades(
+                    p,
+                    "BTCUSDT",
+                    MOCK_BINANCE_EPOCH,
+                    MOCK_BINANCE_EPOCH;
+                    page_limit = 3,
+                    rate_sleep_s = 0.0,
+                )
+                @test bulk == rest
+                zip =
+                    joinpath(dest, "binance", "BTCUSDT", "BTCUSDT-aggTrades-2026-01-01.zip")
+                @test isfile(zip) && isfile(zip * ".CHECKSUM") && !isfile(zip * ".partial")
+                # The trades feed is the same tape under its own column layout.
+                tr = bulk_trades(
+                    p,
+                    "BTCUSDT",
+                    MOCK_BINANCE_EPOCH + Day(1);
+                    feed = "trade",
+                    dest_dir = dest,
+                )
+                @test length(tr) == per_day
+                @test [t.id for t in tr] == collect((per_day+1):2per_day)
+                @test isfile(
+                    joinpath(dest, "binance", "BTCUSDT", "BTCUSDT-trades-2026-01-02.zip"),
+                )
+                # Streaming returns the count; an unpublished day is empty and
+                # leaves no file behind.
+                pages = Vector{Int}()
+                n = bulk_trades(
+                    p,
+                    "BTCUSDT",
+                    MOCK_BINANCE_EPOCH;
+                    dest_dir = dest,
+                    each_page = pg -> push!(pages, length(pg)),
+                    page_rows = 3,
+                )
+                @test n == per_day && pages == [3, 3, 1]
+                gone = MOCK_BINANCE_EPOCH + Day(2)
+                @test isempty(bulk_trades(p, "BTCUSDT", gone; dest_dir = dest))
+                @test bulk_trades(
+                    p,
+                    "BTCUSDT",
+                    gone;
+                    dest_dir = dest,
+                    each_page = identity,
+                ) == 0
+                @test !isfile(
+                    joinpath(
+                        dest,
+                        "binance",
+                        "BTCUSDT",
+                        "BTCUSDT-aggTrades-2026-01-03.zip",
+                    ),
+                )
+            finally
+                close(server)
+            end
+            # A verified file is reused with the venue unreachable.
+            p = BinanceProvider("aggTrade", base, "ws://unused", base, RestPolicy(1, 1, 0))
+            @test length(bulk_trades(p, "BTCUSDT", MOCK_BINANCE_EPOCH; dest_dir = dest)) ==
+                  per_day
+            # A checksum that does not match discards the download and fails the day.
+            rest_port = freeport(9881)
+            server = start_mock_binance_rest(
+                rest_port;
+                trades_per_day = per_day,
+                corrupt_checksum = true,
+            )
+            try
+                base = "http://127.0.0.1:$rest_port"
+                p = BinanceProvider("aggTrade", base, "ws://unused", base)
+                bad = joinpath(dir, "bad")
+                @test_throws ErrorException bulk_trades(
+                    p,
+                    "BTCUSDT",
+                    MOCK_BINANCE_EPOCH;
+                    dest_dir = bad,
+                )
+                @test !isfile(
+                    joinpath(bad, "binance", "BTCUSDT", "BTCUSDT-aggTrades-2026-01-01.zip"),
+                )
+            finally
+                close(server)
+            end
+        end
+    end
+
+    @testset "binance: end-to-end bulk backfill, then resume" begin
+        mktempdir() do dir
+            rest_port = freeport(9891)
+            per_day = 7
+            server = start_mock_binance_rest(rest_port; trades_per_day = per_day)
+            try
+                cfg = load_config(
+                    mock_binance_config_toml(
+                        dir;
+                        ws_port = 9999,
+                        rest_port = rest_port,
+                        source = "bulk",
+                        backfill_feed = "trade",
+                        start_date = string(MOCK_BINANCE_EPOCH),
+                        end_date = string(MOCK_BINANCE_EPOCH + Day(2)),
+                    ),
+                )
+                @test cfg.backfill_source == "bulk" && cfg.backfill_feed == "trade"
+                files = run_backfill(cfg)
+                @test length(files) == 3
+                rows = CSV.read(first(sort(files)), DataFrame)
+                @test nrow(rows) == per_day
+                @test rows.id == collect(1:per_day) && all(rows.recv_ns .== 0)
+                @test all(rows.tape .== "SPOT") && all(rows.exchange .== "BINANCE")
+                @test all(
+                    isfile(
+                        joinpath(
+                            cfg.bulk_dir,
+                            "binance",
+                            "BTCUSDT",
+                            "BTCUSDT-trades-$(MOCK_BINANCE_EPOCH + Day(i)).zip",
+                        ),
+                    ) for i in 0:2
+                )
+                raw = filter(f -> endswith(f, ".jsonl"), readdir(cfg.raw_dir))
+                @test !isempty(raw) && all(startswith("backfill_bulk_"), raw)
+                # Resume: every day is under processed/, nothing is redone.
+                @test isempty(run_backfill(cfg))
             finally
                 close(server)
             end

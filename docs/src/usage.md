@@ -94,6 +94,7 @@ loop indefinitely.
 | `data_dir` | Root of the data tree, relative to the configuration file, or absolute. |
 | `raw_subdir` | Append-only NDJSON session files. |
 | `processed_subdir` | Compacted per-symbol per-day files. |
+| `bulk_subdir` | Vendor bulk files (`backfill.source = "bulk"`), kept as downloaded with their checksums, under `binance/SYMBOL/`. |
 | `flush_interval_s` | Sink flush interval. |
 | `flush_max_ticks` | Sink flush batch-size threshold; whichever trigger comes first. |
 | `processed_format` | `"csv"` or `"arrow"`. CSV for interoperability and inspection; Arrow when size or read time demands it. |
@@ -132,7 +133,8 @@ cutoffs — no threshold is hardcoded elsewhere in the pipeline.
 | Key | Meaning |
 | --- | --- |
 | `start_date`, `end_date` | Inclusive exchange dates (America/New_York). Either an ISO date `"YYYY-MM-DD"` or a sentinel: `"today"`, or `"today-<N>d"` for N calendar days back. |
-| `feed` | Historical feed, `"iex"` or `"sip"`. Free accounts have full SIP history back to 2016, minus the trailing 15 minutes. |
+| `feed` | Historical feed. Alpaca: `"iex"` or `"sip"`; free accounts have full SIP history back to 2016, minus the trailing 15 minutes. Binance: `"aggTrade"` by REST; `"aggTrade"` or `"trade"` from the daily bulk files. |
+| `source` | `"rest"` walks the provider's historical endpoint page by page; `"bulk"` downloads the venue's daily file for each day — Binance only — verifies its checksum and keeps it. Everything after that is the same run: raw parts per day, compaction, resume. |
 | `page_limit` | Rows per REST page, from 1 to the provider maximum (Alpaca 10000, Binance 1000), which is also the default. A larger value is rejected: Binance clamps it without an error, and a clamped page reads as the end of the tape. |
 | `rate_limit_sleep_s` | Pause between pages. The free tier allows 200 requests per minute. |
 | `resume` | Skip `(symbol, day)` pairs already present under `processed/`, so an aborted download resumes instead of restarting. |
@@ -202,3 +204,13 @@ in-process mock server.
 | `trading_base` | `https://paper-api.alpaca.markets` (paper keys) or `https://api.alpaca.markets` (live keys). |
 | `data_base` | `https://data.alpaca.markets` |
 | `ws_base` | `wss://stream.data.alpaca.markets/v2` |
+
+## `[binance]`
+
+Endpoint roots, overridable in the same way.
+
+| Key | Default |
+| --- | --- |
+| `rest_base` | `https://api.binance.com` |
+| `ws_base` | `wss://stream.binance.com:9443` |
+| `bulk_base` | `https://data.binance.vision`, the daily bulk files. |
