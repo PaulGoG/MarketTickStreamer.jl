@@ -71,4 +71,5 @@ Three properties shape everything else:
   pipeline consumes live or recorded ticks, and what is guaranteed about
   ordering, completion and backpressure.
 - API reference — the public functions and types:
-  [acquisition and storage](api.md), [analysis interfaces](api_analysis.md).
+  [acquisition and storage](api.md), [providers](api_providers.md),
+  [analysis interfaces](api_analysis.md).

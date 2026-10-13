@@ -20,6 +20,7 @@ makedocs(
         "Replay & Analysis Interfaces" => "replay.md",
         "API Reference" => [
             "Acquisition and storage" => "api.md",
+            "Providers" => "api_providers.md",
             "Analysis interfaces" => "api_analysis.md",
         ],
     ],
