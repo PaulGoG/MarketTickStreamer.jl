@@ -253,6 +253,8 @@ function mock_binance_config_toml(
     page_limit = 3,
     require_market_open = true,
     stop_at_market_close = true,
+    keep_raw = true,
+    resume = true,
 )
     path = joinpath(dir, "binance.toml")
     write(
@@ -290,6 +292,8 @@ start_date = "$start_date"
 end_date = "$end_date"
 page_limit = $page_limit
 rate_limit_sleep_s = 0.01
+keep_raw = $keep_raw
+resume = $resume
 
 [logging]
 level = "warn"

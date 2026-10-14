@@ -151,7 +151,7 @@ consumers are developed offline (see `docs/src/architecture.md`).
 | Resource guards (disk space, RAM ceiling with auto-GC, channel lag, REST backoff) | working, tested |
 | Crash-only session lifecycle (running/completed/interrupted/failed sidecars + startup reconciliation) | working, tested |
 | Page-streaming, per-day resumable backfill | working, tested |
-| Bulk backfill from the venue's daily files (Binance `aggTrades` and `trades` dumps: checksum-verified, kept as the vendor record, same raw/compaction/resume path) | working, tested |
+| Bulk backfill from the venue's daily files (Binance `aggTrades` and `trades` dumps: checksum-verified, kept as the vendor record, same raw/compaction/resume path; `keep_raw = false` drops the NDJSON copy) | working, tested |
 | Spill compaction (bounded memory for arbitrarily large raw inputs) | working, tested |
 | Single-instance lock per data tree | working, tested |
 | Capture-coverage cross-check against the historical tape (`coverage_report`) | working |

@@ -60,6 +60,7 @@ source = "rest"                  # one of: "rest" | "bulk"; "bulk" = the venue's
 page_limit = 10000               # rows per REST page; 1 to the provider maximum (alpaca 10000, binance 1000)
 rate_limit_sleep_s = 0.35        # pause between REST pages [s]; >= 0
 resume = true                    # skip (symbol, day) pairs already present in processed/
+keep_raw = true                  # keep each day's raw NDJSON after compaction; false only with source = "bulk"
 
 [rest]
 request_timeout_s = 30           # read timeout of a REST request [s]; >= 1

@@ -58,6 +58,7 @@ struct Config
     backfill_page_limit::Int
     backfill_rate_sleep_s::Float64
     backfill_resume::Bool
+    backfill_keep_raw::Bool
     # [rest]
     rest_request_timeout_s::Int
     rest_connect_timeout_s::Int
@@ -145,6 +146,7 @@ const CONFIG_KEYS = Dict{String,Vector{String}}(
         "page_limit",
         "rate_limit_sleep_s",
         "resume",
+        "keep_raw",
     ],
     "rest" => ["request_timeout_s", "connect_timeout_s", "max_retries"],
     "monitor" => ["refresh_s", "top_symbols", "rate_window_s"],
@@ -473,6 +475,15 @@ function load_config(path::AbstractString = _default_config_path())
     rate_sleep = _cfg_value(bf, "backfill", "rate_limit_sleep_s", Float64, 0.35)
     rate_sleep >= 0 ||
         throw(ArgumentError("backfill.rate_limit_sleep_s must be >= 0, got $rate_sleep"))
+    keep_raw = _cfg_value(bf, "backfill", "keep_raw", Bool, true)
+    keep_raw ||
+        bf_source == "bulk" ||
+        throw(
+            ArgumentError(
+                "backfill.keep_raw = false requires backfill.source = \"bulk\": " *
+                "the raw files are the only record of a REST backfill",
+            ),
+        )
 
     rst = tbl("rest")
     rest_request_timeout = _cfg_value(rst, "rest", "request_timeout_s", Int, 30)
@@ -580,6 +591,7 @@ function load_config(path::AbstractString = _default_config_path())
         page_limit,
         rate_sleep,
         _cfg_value(bf, "backfill", "resume", Bool, true),
+        keep_raw,
         rest_request_timeout,
         rest_connect_timeout,
         rest_max_retries,

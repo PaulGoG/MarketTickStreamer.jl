@@ -138,6 +138,7 @@ cutoffs — no threshold is hardcoded elsewhere in the pipeline.
 | `page_limit` | Rows per REST page, from 1 to the provider maximum (Alpaca 10000, Binance 1000), which is also the default. A larger value is rejected: Binance clamps it without an error, and a clamped page reads as the end of the tape. |
 | `rate_limit_sleep_s` | Pause between pages. The free tier allows 200 requests per minute. |
 | `resume` | Skip `(symbol, day)` pairs already present under `processed/`, so an aborted download resumes instead of restarting. |
+| `keep_raw` | Keep each day's raw NDJSON after it is compacted (default `true`). `false` is accepted only with `source = "bulk"`: the checksum-verified vendor file stays under `bulk/` as the day's record, its NDJSON copy (about 21 times its size on Binance `trades`) is deleted once the day is under `processed/`, and a rerun with `resume = false` rebuilds the day from the kept file without the network. The raw-layer tools — `session_report`, `coverage_report`, `monitor_raw` — then have nothing to read for that session; query the processed tree instead. |
 
 The sentinels keep a committed configuration from going stale. They count
 calendar days, not trading days: a window may land on a weekend or a holiday

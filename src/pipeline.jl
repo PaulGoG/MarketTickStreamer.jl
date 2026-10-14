@@ -560,6 +560,12 @@ processed file paths. The sidecar records both counts: `session.ticks`, the
 prints received, and `session.ticks_processed`, the prints stored after
 compaction removed duplicates — a vendor file can repeat rows.
 
+With `backfill.keep_raw = false` (bulk source only) a day's raw parts are
+deleted once it is compacted: the checksum-verified vendor file under
+`bulk/` is the day's record, and a rerun with `resume = false` rebuilds the
+day from it without the network. The NDJSON copy is about 21 times the
+vendor file on Binance `trades`, so this bounds the raw layer to one day.
+
 Work is done one `(symbol, day)` at a time: its own raw part set, compacted
 as soon as that day finishes. Pages are flushed to disk as they arrive, so
 RAM stays bounded by one page and `limits.max_live_heap_mb`.
@@ -681,6 +687,9 @@ function _run_backfill(
                 c = _compact_raw(cfg, day_files)
                 append!(processed, c.files)
                 n_stored = c.rows
+                # A bulk day's record is the verified vendor file; its NDJSON
+                # copy goes once the day is under processed/, and not before.
+                cfg.backfill_keep_raw || foreach(f -> rm(f; force = true), day_files)
             end
             total += n
             stored += n_stored

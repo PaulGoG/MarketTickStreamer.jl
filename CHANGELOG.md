@@ -14,6 +14,14 @@ Notable changes to MarketTickStreamer. The format follows
   `ETHUSDT-trades-2026-07-24.zip`, checksum valid, repeats its first
   259 000 rows. `finalize_session_meta` takes the stored count as an
   optional keyword.
+- `[backfill] keep_raw` (default `true`). With `source = "bulk"` it may be
+  set to `false`: each day's raw NDJSON is deleted once the day is
+  compacted, and the checksum-verified vendor file stays as its record; a
+  rerun with `resume = false` rebuilds the day from that file without the
+  network. On Binance `trades` the NDJSON copy is about 21 times the vendor
+  file, 79.6 GB against 3.7 GB for three pairs over a quarter. The
+  configuration refuses `false` for a REST backfill, whose raw files are its
+  only record.
 
 ### Changed
 - Compaction removes duplicates per symbol and trading day and logs the

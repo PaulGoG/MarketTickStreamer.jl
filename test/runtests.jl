@@ -225,6 +225,12 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             c = load_config(p)
             @test c.backfill_source == "bulk" && c.backfill_feed == "trade"
             @test endswith(c.bulk_dir, joinpath("data", "bulk"))
+            @test c.backfill_keep_raw
+            # Dropping the raw copy needs the vendor file as the record.
+            rejected(binance * base * "[backfill]\nkeep_raw = false\n")
+            rejected(binance * base * "[backfill]\nkeep_raw = \"no\"\n")
+            write(p, binance * base * "[backfill]\nsource = \"bulk\"\nkeep_raw = false\n")
+            @test !load_config(p).backfill_keep_raw
             write(p, base)
             @test load_config(p).backfill_source == "rest"
             write(p, binance * base)
@@ -2585,6 +2591,59 @@ hostname = "$(gethostname())"
             finally
                 close(server)
             end
+        end
+    end
+
+    @testset "binance: bulk backfill without the raw copy" begin
+        mktempdir() do dir
+            rest_port = freeport(9911)
+            per_day = 7
+            days = [MOCK_BINANCE_EPOCH + Day(i) for i in 0:1]
+            toml(; resume) = mock_binance_config_toml(
+                dir;
+                ws_port = 9999,
+                rest_port,
+                source = "bulk",
+                backfill_feed = "trade",
+                start_date = string(first(days)),
+                end_date = string(last(days)),
+                keep_raw = false,
+                resume,
+            )
+            server = start_mock_binance_rest(rest_port; trades_per_day = per_day)
+            cfg = load_config(toml(; resume = true))
+            local files
+            try
+                files = run_backfill(cfg)
+            finally
+                close(server)
+            end
+            @test length(files) == 2
+            @test all(f -> nrow(CSV.read(f, DataFrame)) == per_day, files)
+            # Only the sidecar and its manifest remain in raw/; the vendor
+            # files stay as the record of each day.
+            @test isempty(filter(endswith(".jsonl"), readdir(cfg.raw_dir)))
+            meta = TOML.parsefile(
+                only(filter(endswith(".meta.toml"), readdir(cfg.raw_dir; join = true))),
+            )
+            @test meta["session"]["ticks_processed"] == 2 * per_day
+            @test isempty(meta["session"]["raw_files"])
+            @test all(
+                isfile(
+                    joinpath(cfg.bulk_dir, "binance", "BTCUSDT", "BTCUSDT-trades-$d.zip"),
+                ) for d in days
+            )
+            # With the server gone, a rerun that does not resume rebuilds every
+            # day from the kept files; the displaced outputs become backups.
+            rebuilt = run_backfill(load_config(toml(; resume = false)))
+            @test sort(rebuilt) == sort(files)
+            backup(f) = string(first(splitext(f)), "_#1", last(splitext(f)))
+            @test all(
+                f ->
+                    isfile(backup(f)) &&
+                    CSV.read(f, DataFrame) == CSV.read(backup(f), DataFrame),
+                rebuilt,
+            )
         end
     end
 
