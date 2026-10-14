@@ -44,10 +44,17 @@ mock_binance_total(trades_per_day::Integer) = MOCK_BINANCE_DAYS * trades_per_day
 
 # The day's dump as the venue serves it: one CSV entry, no header, booleans
 # capitalised, timestamps in microseconds (the unit since 2025-01-01).
-function mock_binance_bulk_csv(kind::AbstractString, d::Date, trades_per_day::Integer)
+# `repeat_head` rows are written twice, the day's first ones ahead of the full
+# day, as in ETHUSDT-trades-2026-07-24.zip.
+function mock_binance_bulk_csv(
+    kind::AbstractString,
+    d::Date,
+    trades_per_day::Integer;
+    repeat_head::Integer = 0,
+)
     k0 = Dates.value(d - MOCK_BINANCE_EPOCH) * trades_per_day
     io = IOBuffer()
-    for k in (k0+1):(k0+trades_per_day)
+    for k in vcat((k0+1):(k0+repeat_head), (k0+1):(k0+trades_per_day))
         r = mock_binance_row(k, trades_per_day)
         us = r.T * 1000
         m = r.m ? "True" : "False"
@@ -76,7 +83,7 @@ end
 """
     start_mock_binance_rest(port; trades_per_day = 7, fail_after = typemax(Int),
                             missing_dates = Date[], corrupt_checksum = false,
-                            seen_units = nothing)
+                            repeat_head = Dict{Date,Int}(), seen_units = nothing)
         -> HTTP server
 
 Serve `/api/v3/aggTrades`. Honors `symbol`, `startTime`, `fromId` and `limit`
@@ -88,7 +95,8 @@ carry microseconds when it asks for them, as the venue does.
 
 Also serves the daily bulk files under `/data/spot/daily/` from the same tape.
 `missing_dates` answers 404 for those days' bulk files, `corrupt_checksum`
-serves a checksum that cannot match.
+serves a checksum that cannot match, and `repeat_head` maps a date to a number
+of its first rows that its file carries twice, with a valid checksum.
 """
 function start_mock_binance_rest(
     port::Integer;
@@ -96,6 +104,7 @@ function start_mock_binance_rest(
     fail_after::Integer = typemax(Int),
     missing_dates::Vector{Date} = Date[],
     corrupt_checksum::Bool = false,
+    repeat_head::Dict{Date,Int} = Dict{Date,Int}(),
     seen_units::Union{Nothing,Vector{String}} = nothing,
 )
     router = HTTP.Router()
@@ -148,7 +157,12 @@ function start_mock_binance_rest(
             name = "$sym-$kind-$d"
             zip = mock_binance_bulk_zip(
                 "$name.csv",
-                mock_binance_bulk_csv(kind, d, trades_per_day),
+                mock_binance_bulk_csv(
+                    kind,
+                    d,
+                    trades_per_day;
+                    repeat_head = get(repeat_head, d, 0),
+                ),
             )
             if m[4] !== nothing
                 sha = corrupt_checksum ? "0"^64 : bytes2hex(sha256(zip))

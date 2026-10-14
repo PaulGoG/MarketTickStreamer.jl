@@ -337,23 +337,31 @@ start_session_meta(cfg::Config, sid::AbstractString; started_utc::DateTime) =
     write_session_meta(cfg, sid; status = "running", started_utc)
 
 """
-    finalize_session_meta(path, status; ticks, raw_files) -> String
+    finalize_session_meta(path, status; ticks, raw_files,
+                          ticks_processed = nothing) -> String
 
 Rewrite the running sidecar with the final status (`"completed"`,
 `"interrupted"` or `"failed"`), tick count, file list, and finish timestamp. The sidecar
 is a mutable status record by design — the safesave rule protects data
 products, not status metadata.
+
+`ticks` counts the prints received and written to `raw/`. A session that
+also compacts passes `ticks_processed`, the prints it wrote to `processed/`;
+the two differ by the duplicates compaction dropped, and only a session that
+compacts has the second number to give.
 """
 function finalize_session_meta(
     path::AbstractString,
     status::AbstractString;
     ticks::Integer,
     raw_files::Vector{String},
+    ticks_processed::Union{Nothing,Integer} = nothing,
 )
     meta = TOML.parsefile(path)
     s = meta["session"]
     s["status"] = String(status)
     s["ticks"] = Int(ticks)
+    ticks_processed === nothing || (s["ticks_processed"] = Int(ticks_processed))
     s["raw_files"] = [basename(f) for f in raw_files]
     s["finished_utc"] = string(Dates.now(UTC))
     open(io -> TOML.print(io, meta), path, "w")
@@ -545,9 +553,12 @@ _processed_exists(cfg::Config, sym::AbstractString, day::Date) =
     run_backfill(cfg::Config; provider = nothing) -> Vector{String}
 
 Download historical trades for every configured symbol over
-`[backfill.start_date, backfill.end_date]` (weekends skipped), persist them
-through the same raw-NDJSON + compaction path as live data (marked by
-`recv_ns = 0`), and return the processed file paths.
+`[backfill.start_date, backfill.end_date]` (the provider's trading days,
+[`session_days`](@ref)), persist them through the same raw-NDJSON +
+compaction path as live data (marked by `recv_ns = 0`), and return the
+processed file paths. The sidecar records both counts: `session.ticks`, the
+prints received, and `session.ticks_processed`, the prints stored after
+compaction removed duplicates — a vendor file can repeat rows.
 
 Work is done one `(symbol, day)` at a time: its own raw part set, compacted
 as soon as that day finishes. Pages are flushed to disk as they arrive, so
@@ -594,6 +605,7 @@ function _run_backfill(
     slock = acquire_session_lock(cfg.data_dir)
     status = "completed"
     total = 0
+    stored = 0
     meta_path = nothing
     processed = String[]
     try
@@ -658,6 +670,7 @@ function _run_backfill(
                     rm(day_sink.path; force = true)
             end
             day_files = _raw_files_with_prefix(cfg.raw_dir, day_prefix)
+            n_stored = 0
             if n == 0
                 # A holiday, a halt, or a symbol not yet listed: drop our own
                 # empty stub rather than accumulate them.
@@ -665,11 +678,14 @@ function _run_backfill(
                     filesize(f) == 0 && rm(f; force = true)
                 end
             else
-                append!(processed, compact_raw(cfg, day_files))
+                c = _compact_raw(cfg, day_files)
+                append!(processed, c.files)
+                n_stored = c.rows
             end
             total += n
+            stored += n_stored
             cfg.backfill_source == "bulk" && sleep(cfg.backfill_rate_sleep_s)
-            @info "backfilled" symbol = sym day trades = n
+            @info "backfilled" symbol = sym day trades = n stored = n_stored
             next!(prog)
         end
     catch e
@@ -687,11 +703,12 @@ function _run_backfill(
             meta_path,
             status;
             ticks = total,
+            ticks_processed = stored,
             raw_files = _session_raw_files(cfg, sid),
         )
         close(slock)
     end
-    @info "backfill finished" status days = length(processed) ticks = total
+    @info "backfill finished" status days = length(processed) ticks = total stored
     return processed
 end
 

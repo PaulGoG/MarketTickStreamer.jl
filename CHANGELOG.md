@@ -6,6 +6,20 @@ Notable changes to MarketTickStreamer. The format follows
 
 ## [Unreleased]
 
+### Added
+- A backfill's sidecar records the prints it stored as
+  `session.ticks_processed`, beside `session.ticks`, the prints it received;
+  the per-day and closing log lines carry both. They differ by the duplicates
+  compaction drops, and a vendor file can contain them: Binance's
+  `ETHUSDT-trades-2026-07-24.zip`, checksum valid, repeats its first
+  259 000 rows. `finalize_session_meta` takes the stored count as an
+  optional keyword.
+
+### Changed
+- Compaction removes duplicates per symbol and trading day and logs the
+  count with both, so a duplicate-carrying file can be named from the log
+  alone. The prints kept are the same as before.
+
 ## [0.4.1] - 2026-10-13
 
 ### Added

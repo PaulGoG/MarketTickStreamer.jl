@@ -194,7 +194,8 @@ validated offline, reproducibly, before it is pointed at the wire.</sub>
   session-stamped filenames, size-rolled parts, never overwritten. Source of
   truth; line-by-line recoverable after a crash.
 - `data/raw/<session_id>.meta.toml` — provenance sidecar per session:
-  session summary, git commit, Julia/package versions, hardware fingerprint
+  session summary (prints received; for a backfill also the prints stored
+  after duplicate removal), git commit, Julia/package versions, hardware fingerprint
   (CPU, memory, thread counts, `versioninfo`), full effective configuration
   snapshot.
 - `data/bulk/binance/SYMBOL/` — the venue's daily dump files and their checksums, as downloaded by a bulk backfill; the vendor's record of each day.

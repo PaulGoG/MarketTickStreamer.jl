@@ -382,8 +382,9 @@ it displaces is kept as a numbered backup `YYYY-MM-DD_#N.csv|.arrow`
 (safesave semantics, see `_safesave`). Returns the list of files written.
 
 `dedup = true` drops exact duplicate prints (reconnection double-delivery,
-overlapping backfill/live captures) via [`deduplicate_trades`](@ref), logging the
-count. Small inputs are compacted in memory; when the estimated footprint
+overlapping backfill/live captures, rows a vendor file repeats) via
+[`deduplicate_trades`](@ref), logging the count for each symbol and day that
+had any. Small inputs are compacted in memory; when the estimated footprint
 exceeds `mem_fraction` of currently free RAM the input is instead streamed
 line-by-line into per-(symbol, day) spill files and each group is compacted
 independently — memory stays bounded by the largest single group.
@@ -411,7 +412,13 @@ on the same day — at the price of memory-mapped reads: an uncompressed file is
 mapped and touched lazily, a compressed one is decompressed on load (64 ms
 against under 1 ms for that day). Uncompressed is the default.
 """
-function compact_raw(
+compact_raw(raw_paths::AbstractVector{<:AbstractString}, out_dir::AbstractString; kw...) =
+    _compact_raw(raw_paths, out_dir; kw...).files
+
+# The compaction proper. Returns the files written and the number of prints
+# they hold, which is what a backfill records as stored: it differs from the
+# number received by the duplicates dropped.
+function _compact_raw(
     raw_paths::AbstractVector{<:AbstractString},
     out_dir::AbstractString;
     format::AbstractString = "csv",
@@ -459,21 +466,27 @@ function compact_raw(
         max_open_spill_files,
         compression,
     )
-    trades = read_raw(raw_paths)
-    if dedup
-        n0 = length(trades)
-        trades = deduplicate_trades(trades)
-        n0 > length(trades) && @info "dropped duplicate prints" count = n0 - length(trades)
-    end
-    isempty(trades) && return String[]
     groups = Dict{Tuple{String,Date},Vector{Trade}}()
-    for t in trades
+    for t in read_raw(raw_paths)
         push!(get!(() -> Trade[], groups, (t.symbol, trading_date(t.time_ns; tz))), t)
     end
-    return [
-        _write_group(groups[k], out_dir, k[1], k[2], format, compression) for
-        k in sort!(collect(keys(groups)))
-    ]
+    files = String[]
+    rows = 0
+    for k in sort!(collect(keys(groups)))
+        trades = dedup ? _deduplicate_group(groups[k], k) : groups[k]
+        push!(files, _write_group(trades, out_dir, k[1], k[2], format, compression))
+        rows += length(trades)
+    end
+    return (; files, rows)
+end
+
+# Duplicates are removed per (symbol, day): the key of a duplicate fixes both,
+# so the result equals a global pass, and the log names the day they came from.
+function _deduplicate_group(trades::Vector{Trade}, key::Tuple{String,Date})
+    out = deduplicate_trades(trades)
+    ndup = length(trades) - length(out)
+    ndup > 0 && @info "dropped duplicate prints" symbol = key[1] day = key[2] count = ndup
+    return out
 end
 
 """
@@ -485,12 +498,15 @@ configuration: format, the provider's calendar, the heap ceiling and the spill
 thresholds of `[limits]`. This is the form the pipeline and the scripts use, so
 a capture is never filed under a calendar other than its provider's.
 """
-compact_raw(
+compact_raw(cfg::Config, raw_paths::AbstractVector{<:AbstractString}; kw...) =
+    _compact_raw(cfg, raw_paths; kw...).files
+
+_compact_raw(
     cfg::Config,
     raw_paths::AbstractVector{<:AbstractString};
     dedup::Bool = true,
     scratch_dir::Union{Nothing,AbstractString} = nothing,
-) = compact_raw(
+) = _compact_raw(
     raw_paths,
     cfg.processed_dir;
     format = cfg.processed_format,
@@ -600,7 +616,9 @@ function _compact_spill(
     @info "large input — using spill compaction" mib = round(bytes / 2^20; digits = 1) scratch =
         parent
     written = String[]
-    mktempdir(parent; prefix = "compact_spill_") do spill
+    # The count is the closure's value: a variable reassigned inside it would
+    # be boxed.
+    rows = mktempdir(parent; prefix = "compact_spill_") do spill
         pool = SpillPool(spill, max_open_spill_files)
         nbad = 0
         try
@@ -620,22 +638,19 @@ function _compact_spill(
             _close_all!(pool)
         end
         nbad > 0 && @warn "skipped corrupt lines" count = nbad
-        ndup = 0
+        n = 0
         for key in sort!(collect(pool.seen))
             sym, date = key
             trades = read_raw(_spill_path(pool, key))
-            if dedup
-                n0 = length(trades)
-                trades = deduplicate_trades(trades)
-                ndup += n0 - length(trades)
-            end
+            dedup && (trades = _deduplicate_group(trades, key))
             push!(written, _write_group(trades, out_dir, sym, date, format, compression))
+            n += length(trades)
             max_live_heap_mb === nothing ||
                 check_live_heap(max_live_heap_mb; context = "compaction $sym $date")
         end
-        ndup > 0 && @info "dropped duplicate prints" count = ndup
+        n
     end
-    return written
+    return (; files = written, rows)
 end
 
 # First free backup name for `path`: "<base>_#1<ext>", "<base>_#2<ext>", …

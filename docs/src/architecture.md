@@ -168,7 +168,9 @@ path — no data is lost on interrupt (tested).
   commit + dirty flag, versions, hostname, pid, hardware fingerprint —
   CPU model/cores, memory, thread and BLAS-thread counts, `versioninfo` —
   and the full config snapshot) and
-  finalizes it at exit (`completed` / `interrupted` / `failed`, counts). A
+  finalizes it at exit (`completed` / `interrupted` / `failed`, counts:
+  prints received, and for a backfill the prints stored after compaction
+  removed duplicates). A
   copy of the resolved `Manifest.toml` is written beside it as
   `<session>.manifest.toml` and named under `provenance.manifest`: no manifest
   is tracked in the repository, so this copy is what pins the dependency

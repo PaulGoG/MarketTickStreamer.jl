@@ -844,6 +844,25 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             spill_files =
                 compact_raw([sink.path], joinpath(dir, "p2"); mem_fraction = 1e-12)
             @test length(spill_files) == length(files)
+            # Both paths log the dropped duplicates per symbol and day, and
+            # count the prints they stored.
+            for mem_fraction in (0.5, 1e-12)
+                logger = Test.TestLogger(; min_level = Base.CoreLogging.Info)
+                c = Base.CoreLogging.with_logger(logger) do
+                    MarketTickStreamer._compact_raw(
+                        [sink.path],
+                        mktempdir(dir);
+                        format = "csv",
+                        mem_fraction,
+                    )
+                end
+                rec =
+                    only(filter(r -> r.message == "dropped duplicate prints", logger.logs))
+                @test rec.kwargs[:symbol] == "AAPL"
+                @test rec.kwargs[:day] == Date(2026, 7, 30)
+                @test rec.kwargs[:count] == 5
+                @test c.rows == 21 + 5                       # AAPL + MSFT stored
+            end
         end
     end
 
@@ -2512,7 +2531,14 @@ hostname = "$(gethostname())"
         mktempdir() do dir
             rest_port = freeport(9891)
             per_day = 7
-            server = start_mock_binance_rest(rest_port; trades_per_day = per_day)
+            # The second day's file repeats its first three rows, as a real
+            # vendor file did; compaction drops them and the sidecar says so.
+            repeated = MOCK_BINANCE_EPOCH + Day(1)
+            server = start_mock_binance_rest(
+                rest_port;
+                trades_per_day = per_day,
+                repeat_head = Dict(repeated => 3),
+            )
             try
                 cfg = load_config(
                     mock_binance_config_toml(
@@ -2544,6 +2570,16 @@ hostname = "$(gethostname())"
                 )
                 raw = filter(f -> endswith(f, ".jsonl"), readdir(cfg.raw_dir))
                 @test !isempty(raw) && all(startswith("backfill_bulk_"), raw)
+                rep = CSV.read(
+                    joinpath(cfg.processed_dir, "BTCUSDT", "$(repeated).csv"),
+                    DataFrame,
+                )
+                @test nrow(rep) == per_day && allunique(rep.id)
+                meta = TOML.parsefile(
+                    only(filter(endswith(".meta.toml"), readdir(cfg.raw_dir; join = true))),
+                )
+                @test meta["session"]["ticks"] == 3 * per_day + 3        # received
+                @test meta["session"]["ticks_processed"] == 3 * per_day  # stored
                 # Resume: every day is under processed/, nothing is redone.
                 @test isempty(run_backfill(cfg))
             finally
