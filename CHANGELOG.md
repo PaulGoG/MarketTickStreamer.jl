@@ -6,6 +6,15 @@ Notable changes to MarketTickStreamer. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-15
+
+The release that closes the accounting of a bulk backfill. A sidecar now
+records what a backfill stored beside what it received, a duplicate-carrying
+vendor file can be named from the log alone, and the NDJSON copy of a bulk
+backfill, some twenty times the size of its vendor file, may be dropped once
+each day is compacted, because the checksum-verified vendor file is the
+record and rebuilds the day without the network.
+
 ### Added
 - A backfill's sidecar records the prints it stored as
   `session.ticks_processed`, beside `session.ticks`, the prints it received;
@@ -502,7 +511,8 @@ against the historical SIP tape.
 - An offline test suite driven by an in-process mock of the Alpaca REST and
   WebSocket APIs, with Aqua static quality assurance.
 
-[Unreleased]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.2.0...v0.3.0
