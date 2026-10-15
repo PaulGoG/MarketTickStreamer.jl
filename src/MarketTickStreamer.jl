@@ -22,6 +22,8 @@ module MarketTickStreamer
 # Every name entering this namespace is listed: the test suite asserts with
 # ExplicitImports.jl that nothing arrives implicitly, so an import that is no
 # longer used, or a new name used without being imported, fails the suite.
+using Base64: base64decode
+using CRC32c: crc32c
 using Dates:
     Dates, @dateformat_str, Day, Millisecond, datetime2unix, dayofweek, unix2datetime
 using FileWatching: Pidfile
@@ -77,7 +79,8 @@ export AbstractProvider,
     LiveSession, FatalStreamError, live_source, stop!, schedule_close_stop!, tee, snapshots
 export AlpacaProvider, BinanceProvider
 export market_clock, historical_trades, historical_trade_count, bulk_trades, condition_map
-export itch50_trades, itch50_date, iex_hist_trades
+export itch50_trades,
+    itch50_date, iex_hist_trades, fetch_itch50, fetch_iex_hist, iex_hist_index
 export ProviderSpec, provider_spec, make_provider, exchange_tz, always_open, session_days
 export run_stream,
     run_backfill,

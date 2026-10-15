@@ -437,3 +437,62 @@ function itch50_trades(
         truncated = scan.truncated,
     )
 end
+
+"""
+    fetch_itch50(url, dir; policy = RestPolicy()) -> String | Nothing
+
+Download one full-day ITCH 5.0 file from `emi.nasdaq.com/ITCH/` into
+`dir/itch50/`, resuming an interrupted transfer, and return its path; a URL
+the server does not know (404) returns `nothing`. The server publishes no
+checksum, so the file's size is checked against the `Content-Length` it
+announces; a size that does not match is an error and the file is removed.
+A file already present with the announced size is reused.
+
+```julia
+fetch_itch50("https://emi.nasdaq.com/ITCH/Nasdaq%20ITCH/12302019.NASDAQ_ITCH50.gz", cfg.bulk_dir)
+```
+"""
+function fetch_itch50(
+    url::AbstractString,
+    dir::AbstractString;
+    policy::RestPolicy = RestPolicy(),
+)
+    target = joinpath(dir, "itch50")
+    mkpath(target)
+    path = joinpath(target, HTTP.unescapeuri(basename(String(url))))
+    expected = _announced_length(url, policy)
+    expected === nothing && return nothing
+    isfile(path) && filesize(path) == expected && return path
+    r = _with_retry(policy) do
+        _download_resumable(url, path, policy)
+    end
+    r.found || return nothing
+    got = filesize(path)
+    if got != expected
+        rm(path; force = true)
+        error(
+            "size mismatch for $(basename(path)): announced $expected bytes, got $got — " *
+            "the download was discarded",
+        )
+    end
+    return path
+end
+
+# The Content-Length a HEAD request announces, or `nothing` on 404. The
+# server answers a HEAD with a Range header 416, so none is sent.
+function _announced_length(url::AbstractString, policy::RestPolicy)
+    resp = _with_retry(policy) do
+        HTTP.head(
+            url;
+            retry = false,
+            status_exception = false,
+            readtimeout = policy.request_timeout_s,
+            connect_timeout = policy.connect_timeout_s,
+        )
+    end::HTTP.Response
+    resp.status == 404 && return nothing
+    resp.status == 200 || throw(HTTP.StatusError(resp.status, "HEAD", String(url), resp))
+    len = HTTP.header(resp, "Content-Length", "")
+    isempty(len) && error("no Content-Length announced for $url")
+    return parse(Int64, len)
+end

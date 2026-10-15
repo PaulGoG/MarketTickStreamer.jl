@@ -14,6 +14,8 @@ const IEX_PROTOCOLS =
 # Sale-condition flag bits of a Trade Report, named as IEX names them — the
 # same letters the consolidated tape uses for the same conditions.
 const IEX_FLAGS = ((0x80, "F"), (0x40, "T"), (0x20, "I"), (0x10, "8"), (0x08, "X"))
+# The HIST download index; the files themselves live in a Google Cloud Storage bucket.
+const IEX_HIST_API = "https://iextrading.com/api/1.0"
 
 # Little-endian integers at the 1-based index `i` of their first byte.
 @inline _le16(b::Vector{UInt8}, i::Integer) = @inbounds UInt16(b[i]) | (UInt16(b[i+1]) << 8)
@@ -395,4 +397,133 @@ function iex_hist_trades(
         duplicates = duplicates[],
         truncated = scan.truncated,
     )
+end
+
+"""
+    iex_hist_index(date; api_base = IEX_HIST_API, policy = RestPolicy()) -> Vector{Dict} | Nothing
+
+The files IEX publishes for `date` — one entry per feed with `feed`,
+`version`, `protocol`, `link` and `size` (compressed bytes) — from the HIST
+API, or `nothing` on 404: a weekend, a holiday, a day not yet published
+(files appear on the following morning).
+"""
+function iex_hist_index(
+    date::Date;
+    api_base::AbstractString = IEX_HIST_API,
+    policy::RestPolicy = RestPolicy(),
+)
+    url = "$(api_base)/hist"
+    resp = _with_retry(policy) do
+        HTTP.get(
+            url;
+            query = ["date" => Dates.format(date, dateformat"yyyymmdd")],
+            retry = false,
+            status_exception = false,
+            readtimeout = policy.request_timeout_s,
+            connect_timeout = policy.connect_timeout_s,
+        )
+    end::HTTP.Response
+    resp.status == 404 && return nothing
+    resp.status == 200 || throw(HTTP.StatusError(resp.status, "GET", url, resp))
+    entries = JSON.parse(resp.body)
+    entries isa AbstractVector || error("unexpected HIST index for $date")
+    return [Dict{String,Any}(String(k) => v for (k, v) in pairs(e)) for e in entries]
+end
+
+"""
+    fetch_iex_hist(date, dir; feed = "TOPS", api_base = IEX_HIST_API,
+                   policy = RestPolicy()) -> String | Nothing
+
+Download the HIST capture of `date` for `feed` (`"TOPS"` or `"DEEP"`,
+case-insensitive; the version is whatever IEX lists for that day) into
+`dir/iex/`, resuming an interrupted transfer, verify it against the CRC-32C
+the file host announces (`x-goog-hash`), and return its path. `nothing`
+when IEX lists no files for the date, an error naming the feeds listed when
+the feed is not among them. A file already present whose size matches the
+index entry and whose CRC-32C matches the host's is reused; a verified
+mismatch deletes the file and fails.
+"""
+function fetch_iex_hist(
+    date::Date,
+    dir::AbstractString;
+    feed::AbstractString = "TOPS",
+    api_base::AbstractString = IEX_HIST_API,
+    policy::RestPolicy = RestPolicy(),
+)
+    entries = iex_hist_index(date; api_base, policy)
+    entries === nothing && return nothing
+    want = uppercase(String(feed))
+    e = findfirst(x -> uppercase(String(x["feed"])) == want, entries)
+    e === nothing && error(
+        "no $want file listed for $date; listed: " *
+        join(unique(String(x["feed"]) for x in entries), ", "),
+    )
+    entry = entries[e]
+    day = Dates.format(date, dateformat"yyyymmdd")
+    name = "$(day)_$(entry["protocol"])_$(entry["feed"])$(entry["version"]).pcap.gz"
+    target = joinpath(dir, "iex")
+    mkpath(target)
+    path = joinpath(target, name)
+    size = parse(Int64, String(entry["size"]))
+    link = String(entry["link"])
+    if isfile(path) && filesize(path) == size
+        announced = _announced_crc32c(link, policy)
+        (announced === nothing || _crc32c_hex(path) == announced) && return path
+    end
+    r = _with_retry(policy) do
+        _download_resumable(link, path, policy)
+    end
+    r.found || error("file listed but missing: $link")
+    want_crc = _crc32c_from_headers(r.headers)
+    if want_crc !== nothing
+        got_crc = _crc32c_hex(path)
+        if got_crc != want_crc
+            rm(path; force = true)
+            error(
+                "CRC-32C mismatch for $name: expected $want_crc, got $got_crc — " *
+                "the download was discarded",
+            )
+        end
+    end
+    got = filesize(path)
+    if got != size
+        rm(path; force = true)
+        error("size mismatch for $name: listed $size bytes, got $got")
+    end
+    return path
+end
+
+# CRC-32C of a file as 8 lowercase hex digits, streamed.
+_crc32c_hex(path::AbstractString) = string(open(io -> crc32c(io), path); base = 16, pad = 8)
+
+# The `crc32c=<base64>` member of an `x-goog-hash` header as 8 hex digits, or
+# `nothing` when the header or the member is absent. The host base64-encodes
+# the four big-endian bytes of the checksum.
+function _crc32c_from_headers(headers)
+    for (k, v) in headers
+        lowercase(k) == "x-goog-hash" || continue
+        for part in split(v, ',')
+            kv = split(strip(part), '='; limit = 2)
+            length(kv) == 2 && lowercase(kv[1]) == "crc32c" || continue
+            bytes = base64decode(kv[2])
+            length(bytes) == 4 || continue
+            return join(string(b; base = 16, pad = 2) for b in bytes)
+        end
+    end
+    return nothing
+end
+
+# HEAD the file host for its announced CRC-32C.
+function _announced_crc32c(url::AbstractString, policy::RestPolicy)
+    resp = _with_retry(policy) do
+        HTTP.head(
+            url;
+            retry = false,
+            status_exception = false,
+            readtimeout = policy.request_timeout_s,
+            connect_timeout = policy.connect_timeout_s,
+        )
+    end::HTTP.Response
+    resp.status == 200 || return nothing
+    return _crc32c_from_headers([String(k) => String(v) for (k, v) in resp.headers])
 end

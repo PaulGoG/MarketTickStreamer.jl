@@ -5,6 +5,8 @@ authors = ["Paul-Adrian Gogîță"]
 
 [deps]
 Arrow = "69666777-d1a9-59fb-9406-91d4454c9d45"
+Base64 = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
+CRC32c = "8bf52ea8-c179-5cab-976a-9e18b702a9bc"
 CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
 CodecZlib = "944b1d66-785c-5afd-91f1-9de20f533193"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
@@ -37,6 +39,8 @@ MarketTickStreamerUnicodePlotsExt = "UnicodePlots"
 
 [compat]
 Arrow = "2"
+Base64 = "1"
+CRC32c = "1"
 CSV = "1.1"
 CairoMakie = "0.15.13"
 CodecZlib = "0.7"

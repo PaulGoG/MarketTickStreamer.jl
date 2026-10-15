@@ -244,6 +244,50 @@ _get_with_retry(url, headers; query = nothing, policy::RestPolicy = RestPolicy()
         )
     end
 
+# Fetch `url` into `path`, resuming a `<path>.partial` left by an earlier
+# attempt with a Range request. A server that answers 206 appends to it, one
+# that ignores the range (200) restarts the transfer; 404 returns `false`
+# with nothing written; a failed transfer keeps the partial file for the next
+# attempt. Returns `(; found, headers)`: the response headers of the
+# transfer that completed, for the caller's integrity check.
+function _download_resumable(url::AbstractString, path::AbstractString, policy::RestPolicy)
+    tmp = path * ".partial"
+    have = isfile(tmp) ? filesize(tmp) : 0
+    headers = have > 0 ? ["Range" => "bytes=$(have)-"] : Pair{String,String}[]
+    found = true
+    resp_headers = Pair{String,String}[]
+    HTTP.open(
+        "GET",
+        url,
+        headers;
+        retry = false,
+        status_exception = false,
+        readtimeout = policy.request_timeout_s,
+        connect_timeout = policy.connect_timeout_s,
+    ) do http
+        HTTP.startread(http)
+        st = http.message.status
+        resp_headers = [String(k) => String(v) for (k, v) in http.message.headers]
+        if st == 404
+            found = false
+        elseif st == 206 || st == 200
+            open(tmp, st == 206 ? "a" : "w") do f
+                while !eof(http)
+                    write(f, readavailable(http))
+                end
+            end
+        else
+            throw(HTTP.StatusError(st, "GET", String(url), http.message))
+        end
+    end
+    if !found
+        rm(tmp; force = true)
+        return (; found = false, headers = resp_headers)
+    end
+    mv(tmp, path; force = true)
+    return (; found = true, headers = resp_headers)
+end
+
 """
     always_open(p::AbstractProvider) -> Bool
 

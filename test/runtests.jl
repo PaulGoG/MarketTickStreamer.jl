@@ -10,6 +10,8 @@ using CSV
 using DataFrames
 using TOML
 using Random: Xoshiro
+using Base64: base64encode
+using CRC32c: crc32c
 using CodecZlib: GzipCompressorStream
 using MarketTickStreamer
 
@@ -3234,6 +3236,149 @@ hostname = "$(gethostname())"
             bad = joinpath(dir, "bad.bin")
             write(bad, zeros(UInt8, 64))
             @test_throws ErrorException iex_hist_trades(bad)
+        end
+    end
+
+    @testset "fetch: resumable Range downloads, announced sizes, CRC-32C" begin
+        payload = rand(Xoshiro(3), UInt8, 3 * 1024 * 1024 + 123)
+        crc = string(crc32c(payload); base = 16, pad = 8)
+        crc_b64 =
+            base64encode([UInt8((crc32c(payload) >> (8 * (3 - k))) & 0xff) for k in 0:3])
+        ranges = String[]
+        port = freeport(8981)
+        router = HTTP.Router()
+        HTTP.register!(
+            router,
+            "HEAD",
+            "/f/{name}",
+            req -> HTTP.Response(
+                200,
+                [
+                    "Content-Length" => string(length(payload)),
+                    "x-goog-hash" => "crc32c=$crc_b64,md5=AAAA",
+                ],
+            ),
+        )
+        HTTP.register!(
+            router,
+            "GET",
+            "/f/{name}",
+            function (req)
+                name = HTTP.getparams(req)["name"]
+                name == "missing.gz" && return HTTP.Response(404, "Not Found")
+                r = HTTP.header(req, "Range", "")
+                push!(ranges, r)
+                if isempty(r)
+                    return HTTP.Response(
+                        200,
+                        ["x-goog-hash" => "crc32c=$crc_b64,md5=AAAA"],
+                        payload,
+                    )
+                end
+                from = parse(Int, split(split(r, '=')[2], '-')[1])
+                return HTTP.Response(
+                    206,
+                    [
+                        "Content-Range" => "bytes $from-$(length(payload)-1)/$(length(payload))",
+                        "x-goog-hash" => "crc32c=$crc_b64,md5=AAAA",
+                    ],
+                    payload[(from+1):end],
+                )
+            end,
+        )
+        HTTP.register!(
+            router,
+            "GET",
+            "/api/1.0/hist",
+            function (req)
+                d = get(HTTP.queryparams(HTTP.URI(req.target)), "date", "")
+                d == "20200102" || return HTTP.Response(404, "Not Found")
+                return HTTP.Response(
+                    200,
+                    JSON.json([
+                        Dict(
+                            "link" => "http://127.0.0.1:$port/f/20200102_IEXTP1_DEEP1.0.pcap.gz",
+                            "date" => d,
+                            "feed" => "DEEP",
+                            "version" => "1.0",
+                            "protocol" => "IEXTP1",
+                            "size" => string(length(payload)),
+                        ),
+                        Dict(
+                            "link" => "http://127.0.0.1:$port/f/20200102_IEXTP1_TOPS1.6.pcap.gz",
+                            "date" => d,
+                            "feed" => "TOPS",
+                            "version" => "1.6",
+                            "protocol" => "IEXTP1",
+                            "size" => string(length(payload)),
+                        ),
+                    ]),
+                )
+            end,
+        )
+        server = HTTP.serve!(router, "127.0.0.1", port)
+        policy = MarketTickStreamer.RestPolicy(10, 5, 1)
+        api = "http://127.0.0.1:$port/api/1.0"
+        try
+            mktempdir() do dir
+                # ITCH: a partial file is resumed with a Range request and the size checked
+                url = "http://127.0.0.1:$port/f/12302019.NASDAQ_ITCH50.gz"
+                partial = joinpath(dir, "itch50", "12302019.NASDAQ_ITCH50.gz.partial")
+                mkpath(dirname(partial))
+                write(partial, payload[1:1_000_000])
+                p = fetch_itch50(url, dir; policy)
+                @test p == joinpath(dir, "itch50", "12302019.NASDAQ_ITCH50.gz")
+                @test read(p) == payload && !isfile(partial)
+                @test ranges == ["bytes=1000000-"]
+                @test fetch_itch50(url, dir; policy) == p && ranges == ["bytes=1000000-"]   # reused
+                @test fetch_itch50("http://127.0.0.1:$port/f/missing.gz", dir; policy) ===
+                      nothing
+                # IEX: index, feed selection, download, CRC-32C
+                idx = iex_hist_index(Date(2020, 1, 2); api_base = api, policy)
+                @test [e["feed"] for e in idx] == ["DEEP", "TOPS"]
+                @test iex_hist_index(Date(2020, 1, 3); api_base = api, policy) === nothing
+                empty!(ranges)
+                q = fetch_iex_hist(
+                    Date(2020, 1, 2),
+                    dir;
+                    feed = "tops",
+                    api_base = api,
+                    policy,
+                )
+                @test q == joinpath(dir, "iex", "20200102_IEXTP1_TOPS1.6.pcap.gz") &&
+                      read(q) == payload
+                @test ranges == [""]
+                @test fetch_iex_hist(
+                    Date(2020, 1, 2),
+                    dir;
+                    feed = "TOPS",
+                    api_base = api,
+                    policy,
+                ) == q
+                @test ranges == [""]                                              # verified copy reused
+                @test fetch_iex_hist(Date(2020, 1, 3), dir; api_base = api, policy) ===
+                      nothing
+                @test_throws ErrorException fetch_iex_hist(
+                    Date(2020, 1, 2),
+                    dir;
+                    feed = "DPLS",
+                    api_base = api,
+                    policy,
+                )
+                # a corrupted copy of the right size is re-downloaded
+                bad = copy(payload)
+                bad[1] ⊻= 0xff
+                write(q, bad)
+                @test fetch_iex_hist(Date(2020, 1, 2), dir; api_base = api, policy) == q
+                @test read(q) == payload
+                @test MarketTickStreamer._crc32c_from_headers([
+                    "X-Goog-Hash" => "crc32c=$crc_b64,md5=AAAA",
+                ]) == crc
+                @test MarketTickStreamer._crc32c_from_headers(["Content-Type" => "x"]) ===
+                      nothing
+            end
+        finally
+            close(server)
         end
     end
 

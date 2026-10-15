@@ -1,6 +1,8 @@
 [deps]
 AllocCheck = "9b6a8646-10ed-4001-bbdc-1d2f46dfbb1a"
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
+Base64 = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
+CRC32c = "8bf52ea8-c179-5cab-976a-9e18b702a9bc"
 CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
 CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
 CodecZlib = "944b1d66-785c-5afd-91f1-9de20f533193"
@@ -28,6 +30,8 @@ MarketTickStreamer = {path = ".."}
 [compat]
 AllocCheck = "0.2"
 Aqua = "0.8"
+Base64 = "1"
+CRC32c = "1"
 CSV = "1.1"
 CairoMakie = "0.15.13"
 CodecZlib = "0.7"
