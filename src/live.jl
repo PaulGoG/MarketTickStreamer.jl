@@ -265,10 +265,15 @@ function _download_resumable(
     resp_headers = Pair{String,String}[]
     total = Int64(-1)                   # from Content-Range, once a 206 names it
     while true
-        have = isfile(tmp) ? filesize(tmp) : Int64(0)
-        total >= 0 && have >= total && break
+        before = isfile(tmp) ? filesize(tmp) : Int64(0)
+        total >= 0 && before >= total && break
         done = false
+        # The offset is read inside the retry: a request that failed mid-body
+        # has already appended what it received, and the next attempt must
+        # continue from there, not from where the failed one started.
         _with_retry(policy) do
+            have = isfile(tmp) ? filesize(tmp) : Int64(0)
+            bad_start = Int64(-1)       # a 206 that did not start at `have`
             HTTP.open(
                 "GET",
                 url,
@@ -285,11 +290,16 @@ function _download_resumable(
                     found = false
                     done = true
                 elseif st == 206
-                    total =
-                        _content_range_total(HTTP.header(http.message, "Content-Range", ""))
-                    open(tmp, "a") do f
-                        while !eof(http)
-                            write(f, readavailable(http))
+                    range = HTTP.header(http.message, "Content-Range", "")
+                    start = _content_range_start(range)
+                    if start != have
+                        bad_start = start           # raised outside the handler: not a transport error
+                    else
+                        total = _content_range_total(range)
+                        open(tmp, "a") do f
+                            while !eof(http)
+                                write(f, readavailable(http))
+                            end
                         end
                     end
                 elseif st == 200                    # the range was ignored: the whole body
@@ -305,9 +315,13 @@ function _download_resumable(
                     throw(HTTP.StatusError(st, "GET", String(url), http.message))
                 end
             end
+            bad_start >= 0 && error(
+                "$url answered the range from byte $bad_start, not the requested $have: " *
+                "refusing to splice",
+            )
         end
         done && break
-        filesize(tmp) > have || error("no progress downloading $url at byte $have")
+        filesize(tmp) > before || error("no progress downloading $url at byte $before")
     end
     if !found
         rm(tmp; force = true)
@@ -322,7 +336,12 @@ end
 _chunk_timeout(policy::RestPolicy, chunk_bytes::Integer) =
     max(policy.request_timeout_s, cld(Int(chunk_bytes), 50_000))
 
-# The total length named by a `Content-Range: bytes a-b/total` header, or -1.
+# The first byte and the total length named by a `Content-Range: bytes
+# a-b/total` header, or -1 for either when the header does not say.
+function _content_range_start(value::AbstractString)
+    m = match(r"bytes\s+(\d+)-\d+/", value)
+    return m === nothing ? Int64(-1) : parse(Int64, m[1])
+end
 function _content_range_total(value::AbstractString)
     m = match(r"bytes\s+\d+-\d+/(\d+)", value)
     return m === nothing ? Int64(-1) : parse(Int64, m[1])

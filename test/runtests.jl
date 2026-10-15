@@ -3268,6 +3268,12 @@ hostname = "$(gethostname())"
                 name == "missing.gz" && return HTTP.Response(404, "Not Found")
                 r = HTTP.header(req, "Range", "")
                 push!(ranges, r)
+                # a host that ignores the requested start: the client must not splice
+                name == "misaligned.gz" && return HTTP.Response(
+                    206,
+                    ["Content-Range" => "bytes 0-$(length(payload)-1)/$(length(payload))"],
+                    payload,
+                )
                 if isempty(r)
                     return HTTP.Response(
                         200,
@@ -3396,6 +3402,18 @@ hostname = "$(gethostname())"
                     "bytes=2097152-3145727",
                     "bytes=3145728-4194303",
                 ]
+                # a 206 whose range does not start where the partial ends is refused
+                mis = joinpath(dir, "misaligned.bin")
+                write(mis * ".partial", payload[1:1_000_000])
+                @test_throws ErrorException MarketTickStreamer._download_resumable(
+                    "http://127.0.0.1:$port/f/misaligned.gz",
+                    mis,
+                    policy,
+                )
+                @test filesize(mis * ".partial") == 1_000_000      # untouched, for the next attempt
+                @test MarketTickStreamer._content_range_start(
+                    "bytes 1000000-2097151/3145851",
+                ) == 1_000_000
                 @test MarketTickStreamer._content_range_total("bytes 0-9/3145851") ==
                       3145851
                 @test MarketTickStreamer._content_range_total("") == -1

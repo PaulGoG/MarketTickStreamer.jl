@@ -6,6 +6,14 @@ Notable changes to MarketTickStreamer. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- A chunked download resumes from the bytes actually on disk when a request
+  fails mid-body, and refuses a 206 whose range does not start at the
+  requested byte. A retry used to re-request from the offset captured before
+  the failure, splicing duplicate bytes into a file whose size still matched
+  the announced length; a 3.5 GB ITCH day downloaded that way failed to
+  inflate after 157 M of its 269 M messages.
+
 ## [0.6.0] - 2026-10-15
 
 The release that opens the corpus to two archives the package did not
