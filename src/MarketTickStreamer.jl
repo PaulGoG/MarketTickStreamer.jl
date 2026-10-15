@@ -73,7 +73,7 @@ export replay_source, processed_files
 export corpus_inventory, eachday, read_processed, trades_table, ProcessedDays
 export RestPolicy
 export AbstractProvider,
-    LiveSession, FatalStreamError, live_source, stop!, schedule_close_stop!, tee
+    LiveSession, FatalStreamError, live_source, stop!, schedule_close_stop!, tee, snapshots
 export AlpacaProvider, BinanceProvider
 export market_clock, historical_trades, historical_trade_count, bulk_trades, condition_map
 export ProviderSpec, provider_spec, make_provider, exchange_tz, always_open, session_days

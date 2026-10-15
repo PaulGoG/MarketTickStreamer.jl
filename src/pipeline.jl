@@ -131,6 +131,67 @@ function tee(
 end
 
 """
+    snapshots(fold!, ch, period_ns; on_snapshot, clock = :exchange) -> Int
+
+Drain `ch`, folding every print into a consumer's state with `fold!(t)`, and
+call `on_snapshot(at_ns, n, final)` at every boundary of a period clock and
+once when the channel closes. `n` is the number of prints folded before the
+call, `at_ns` the boundary time in nanoseconds, `final` whether the stream
+has ended. Returns the number of prints folded.
+
+The clock is the exchange timestamp (`clock = :exchange`, `time_ns`) or the
+receipt timestamp (`:recv`, `recv_ns`); its boundaries are the multiples of
+`period_ns`, so a one-minute period snapshots at whole UTC minutes. The first
+boundary is the first multiple after the first print. A print at or beyond
+the next boundary triggers one call per boundary crossed, before it is
+folded, so a window without prints still yields its snapshot, with `n`
+unchanged. A late print, one behind the window already open, folds into that
+window: the boundary never retreats. The final call carries the last print's
+timestamp and `final = true`; an empty stream makes no call.
+
+Snapshots are a function of the sequence alone, never of wall time, so a
+replay at any pace reproduces them exactly, and consumers fed by one
+[`tee`](@ref) produce aligned snapshots. This is the snapshot convention of
+the analysis interface: periodic state on the exchange clock, final state at
+close, each stamped with its boundary and its print count.
+
+# Example
+```julia
+rows = Tuple{Int64,Int,Float64}[]
+n = snapshots(ch, 60 * 10^9; on_snapshot = (at, k, _) -> push!(rows, (at, k, value(acc)))) do t
+    fit!(acc, t.size)
+end
+```
+"""
+function snapshots(
+    fold!,
+    ch::Channel{Trade},
+    period_ns::Integer;
+    on_snapshot,
+    clock::Symbol = :exchange,
+)
+    period_ns >= 1 || throw(ArgumentError("period_ns must be >= 1, got $period_ns"))
+    clock in (:exchange, :recv) ||
+        throw(ArgumentError("clock must be :exchange or :recv, got $(repr(clock))"))
+    n = 0
+    boundary = typemin(Int64)
+    last_ns = typemin(Int64)
+    for t in ch
+        τ = clock === :exchange ? t.time_ns : t.recv_ns
+        n == 0 && (boundary = fld(τ, period_ns) * period_ns + period_ns)
+        while τ >= boundary
+            on_snapshot(boundary, n, false)
+            boundary += period_ns
+        end
+        fold!(t)
+        n += 1
+        last_ns = τ
+    end
+    n > 0 && on_snapshot(last_ns, n, true)
+    return n
+end
+
+"""
     session_id(cfg::Config; feed = cfg.feed) -> String
 
 Unique identifier for a capture session, `<provider>_<feed>_<yyyymmdd-HHMMSS>`

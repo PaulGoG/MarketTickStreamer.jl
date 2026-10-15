@@ -13,6 +13,11 @@ Notable changes to MarketTickStreamer. The format follows
   sidecar's config snapshot as `rng_seed`, so a session's retry schedule is
   reproducible from its provenance. `RestPolicy` carries the generator and
   compares equal on its bounds.
+- `snapshots` drains a stream through a consumer's fold and reports the
+  consumer's state at every multiple of a period on the exchange clock and
+  once at close, each snapshot stamped with its boundary and print count: the
+  snapshot convention of the analysis interface, a function of the sequence
+  alone, so replay reproduces it and consumers on one `tee` align.
 
 ## [0.5.0] - 2026-10-15
 

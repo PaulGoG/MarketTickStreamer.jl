@@ -146,6 +146,28 @@ An analysis tap that occasionally cannot keep up belongs on a lossy output;
 one whose results depend on seeing every print does not, and should instead
 run offline against the raw files, where nothing is ever dropped.
 
+## Snapshots on the exchange clock
+
+A consumer that accumulates state over the stream — an OnlineStats set, a
+waiting-time histogram — publishes it under one convention, implemented by
+[`snapshots`](@ref): at every multiple of a period on the exchange clock,
+and once more when the channel closes. Each snapshot is stamped with its
+boundary and with the number of prints folded so far, a window without
+prints still yields one, and the final snapshot carries the last print's
+timestamp.
+
+```julia
+rows = Tuple{Int64,Int,Float64}[]
+n = snapshots(analyse, 60 * 10^9; on_snapshot = (at, k, _) -> push!(rows, (at, k, vwap(acc)))) do t
+    observe!(acc, t)
+end
+```
+
+Wall time never enters: the snapshots are a function of the sequence
+alone, so a replay at any pace reproduces those of the live session, and
+two consumers on one [`tee`](@ref) produce aligned rows. The monitor's
+refresh interval is a display cadence and is not a snapshot clock.
+
 ## A worked consumer
 
 `examples/waiting_times.jl` is this page in code: it replays a recorded

@@ -1172,6 +1172,76 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
         end
     end
 
+    @testset "snapshots: period boundaries on the exchange clock, final at close" begin
+        P = 1_000_000_000                       # one second
+        at(τ, i) = Trade("AAPL", τ, 0, 100.0, 1.0, "V", String[], "C", i)
+        times = [500, 700, 2100, 2200, 5900] .* 1_000_000
+        src = Channel{Trade}(10)
+        foreach(((i, τ),) -> put!(src, at(τ, i)), enumerate(times))
+        close(src)
+        snaps = Tuple{Int64,Int,Bool}[]
+        volume = 0.0
+        n = snapshots(src, P; on_snapshot = (a, k, f) -> push!(snaps, (a, k, f))) do t
+            volume += t.size
+        end
+        @test n == 5 && volume == 5.0
+        @test snaps == [
+            (1P, 2, false),
+            (2P, 2, false),                      # a window without prints
+            (3P, 4, false),
+            (4P, 4, false),
+            (5P, 4, false),
+            (5_900_000_000, 5, true),
+        ]
+        # A late print folds into the open window; the boundary never retreats.
+        src = Channel{Trade}(10)
+        foreach(
+            ((i, τ),) -> put!(src, at(τ, i)),
+            enumerate([1500, 2500, 1800] .* 1_000_000),
+        )
+        close(src)
+        empty!(snaps)
+        snapshots(src, P; on_snapshot = (a, k, f) -> push!(snaps, (a, k, f))) do _
+        end
+        @test snaps == [(2P, 1, false), (1_800_000_000, 3, true)]
+        # The receipt clock, and an empty stream makes no call.
+        src = Channel{Trade}(10)
+        put!(src, Trade("AAPL", 0, 3_200_000_000, 1.0, 1.0, "V", String[], "C", 1))
+        close(src)
+        empty!(snaps)
+        snapshots(
+            src,
+            P;
+            clock = :recv,
+            on_snapshot = (a, k, f) -> push!(snaps, (a, k, f)),
+        ) do _
+        end
+        @test snaps == [(3_200_000_000, 1, true)]
+        src = Channel{Trade}(1)
+        close(src)
+        empty!(snaps)
+        @test snapshots(
+            identity,
+            src,
+            P;
+            on_snapshot = (a, k, f) -> push!(snaps, (a, k, f)),
+        ) == 0
+        @test isempty(snaps)
+        @test_throws ArgumentError snapshots(
+            identity,
+            Channel{Trade}(1),
+            0;
+            on_snapshot = identity,
+        )
+        @test_throws ArgumentError snapshots(
+            identity,
+            Channel{Trade}(1),
+            P;
+            on_snapshot = identity,
+            clock = :wall,
+        )
+    end
+
     @testset "robustness: reconcile, lock, RAM guard, spill compaction, lossy tee" begin
         mktempdir() do dir
             # crash-only reconciliation: a "running" sidecar from a dead process
