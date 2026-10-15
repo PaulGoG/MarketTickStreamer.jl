@@ -28,6 +28,11 @@ Notable changes to MarketTickStreamer. The format follows
   checks, TOPS 1.5/1.6 and DEEP 1.0 trade reports with the tape's flag
   letters, breaks). The sidecar's `session.source` names the file, its
   size and SHA-256, and the reader's counts. `scripts/import.jl` drives it.
+- A manual page on unattended capture under systemd: a user service and a
+  weekday timer that start the session before the open and let the
+  package's railings wait for the bell and stop at the close, with SIGINT
+  as the stop signal so the sidecar is finalized; the units are verified
+  with `systemd-analyze`.
 
 ## [0.5.0] - 2026-10-15
 

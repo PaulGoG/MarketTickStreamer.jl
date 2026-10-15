@@ -16,6 +16,7 @@ real-time analysis methods.
 [Architecture](https://PaulGoG.github.io/MarketTickStreamer.jl/stable/architecture/) ·
 [Configuration](https://PaulGoG.github.io/MarketTickStreamer.jl/stable/usage/) ·
 [Analysis interfaces](https://PaulGoG.github.io/MarketTickStreamer.jl/stable/replay/) ·
+[Unattended operation](https://PaulGoG.github.io/MarketTickStreamer.jl/stable/deployment/) ·
 [API](https://PaulGoG.github.io/MarketTickStreamer.jl/stable/api/) ·
 [Changelog](CHANGELOG.md)
 
@@ -149,6 +150,7 @@ consumers are developed offline (see `docs/src/architecture.md`).
 | Provider-agnostic config, calendar and trading-day dispatch | working, tested |
 | Reconnection, stale-connection watchdog, graceful shutdown | working, tested |
 | Market-hours railings (wait-for-open, auto-stop at close, incl. half-day early close) | working, tested |
+| Unattended operation (systemd user service + timer; SIGINT stop, wait-for-open, stop-at-close) | documented; units verified with systemd-analyze on systemd 259 |
 | Delayed-feed handling (railings shifted by feed delay; tape tail captured) | working, tested |
 | Per-session provenance sidecars (`.meta.toml`) with a manifest snapshot | working, tested |
 | Resource guards (disk space, RAM ceiling with auto-GC, channel lag, REST backoff) | working, tested |
@@ -302,7 +304,7 @@ Citation metadata is in [`CITATION.cff`](CITATION.cff). BibTeX:
 │   ├── activate.jl         # silent environment activation
 │   ├── make.jl             # Documenter build → docs/build/
 │   ├── make_readme_assets.jl  # regenerate the figures shown above, from a capture
-│   └── src/                # manual: index, architecture, usage, replay, API
+│   └── src/                # manual: index, architecture, usage, replay, deployment, API
 │       └── assets/         # the rendered figures the README and manual show
 ├── .github/
 │   ├── dependabot.yml      # weekly dependency updates: julia, github-actions
