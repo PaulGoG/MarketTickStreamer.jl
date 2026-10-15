@@ -135,24 +135,27 @@ function exchange_day_start_ns(p::AbstractProvider, d::Date)
 end
 
 """
-    RestPolicy(request_timeout_s, connect_timeout_s, max_retries)
+    RestPolicy(request_timeout_s, connect_timeout_s, max_retries; rng = Xoshiro())
     RestPolicy()                 # 30 s, 10 s, 5 retries
-    RestPolicy(cfg::Config)      # the `[rest]` table
+    RestPolicy(cfg::Config)      # the `[rest]` table, jitter seeded from `[rng] seed`
 
 How a provider's REST requests are bounded: the read timeout and the connection
 timeout, both in whole seconds, and the number of retries on a transient
 failure. Without a read timeout a request against a server that accepts the
 connection and then goes silent blocks its task for good, and with it a
-backfill.
+backfill. `rng` draws the jitter of the retry backoff; two policies are equal
+when their bounds are, the generator being state rather than policy.
 """
 struct RestPolicy
     request_timeout_s::Int
     connect_timeout_s::Int
     max_retries::Int
+    rng::Xoshiro
     function RestPolicy(
         request_timeout_s::Integer,
         connect_timeout_s::Integer,
-        max_retries::Integer,
+        max_retries::Integer;
+        rng::Xoshiro = Xoshiro(),
     )
         request_timeout_s >= 1 ||
             throw(ArgumentError("request_timeout_s must be >= 1, got $request_timeout_s"))
@@ -160,13 +163,31 @@ struct RestPolicy
             throw(ArgumentError("connect_timeout_s must be >= 1, got $connect_timeout_s"))
         max_retries >= 0 ||
             throw(ArgumentError("max_retries must be >= 0, got $max_retries"))
-        return new(request_timeout_s, connect_timeout_s, max_retries)
+        return new(request_timeout_s, connect_timeout_s, max_retries, rng)
     end
 end
 
+Base.:(==)(a::RestPolicy, b::RestPolicy) =
+    a.request_timeout_s == b.request_timeout_s &&
+    a.connect_timeout_s == b.connect_timeout_s &&
+    a.max_retries == b.max_retries
+Base.hash(p::RestPolicy, h::UInt) =
+    hash(p.request_timeout_s, hash(p.connect_timeout_s, hash(p.max_retries, h)))
+
 RestPolicy() = RestPolicy(30, 10, 5)
-RestPolicy(cfg::Config) =
-    RestPolicy(cfg.rest_request_timeout_s, cfg.rest_connect_timeout_s, cfg.rest_max_retries)
+# The REST generator takes the master seed's neighbour, so REST retries and
+# stream reconnects draw from independent streams of one recorded seed.
+RestPolicy(cfg::Config) = RestPolicy(
+    cfg.rest_request_timeout_s,
+    cfg.rest_connect_timeout_s,
+    cfg.rest_max_retries;
+    rng = Xoshiro(UInt64(cfg.rng_seed) ⊻ 0x1),
+)
+
+# Jittered exponential backoff: `base · 2^attempt`, capped at `cap`, scaled by
+# a uniform factor in [0.5, 1.5) drawn from `rng`.
+_backoff_delay(rng, base::Real, attempt::Integer, cap::Real) =
+    min(base * 2.0^attempt, cap) * (0.5 + rand(rng))
 
 # GET with exponential-backoff retry on transient statuses (rate limiting,
 # server hiccups). Client errors other than 429 fail immediately. Shared by
@@ -198,7 +219,7 @@ function _with_retry(f, policy::RestPolicy)
             ra =
                 status ? tryparse(Float64, HTTP.header(e.response, "Retry-After", "")) :
                 nothing
-            delay = ra !== nothing ? ra : 2.0^attempt * (0.5 + rand())
+            delay = ra !== nothing ? ra : _backoff_delay(policy.rng, 1.0, attempt, Inf)
             if status
                 @warn "REST $(e.status) — backing off" attempt delay =
                     round(delay; digits = 1)
@@ -447,8 +468,9 @@ shares with its logger.
 
 Reconnects with jittered exponential backoff
 (`stream.reconnect_base_delay_s * 2^attempt`, capped at
-`stream.reconnect_max_delay_s`); the attempt counter resets after any
-connection that actually delivered data.
+`stream.reconnect_max_delay_s`, the jitter drawn from a generator seeded by
+`rng.seed`); the attempt counter resets after any connection that actually
+delivered data.
 """
 function live_source(
     p::AbstractProvider,
@@ -475,6 +497,7 @@ function live_source(
     )
     Threads.@spawn begin
         attempt = 0
+        rng = Xoshiro(UInt64(cfg.rng_seed))
         try
             while !session.stop[] && time() < deadline
                 ticks_before = session.stats[].ticks
@@ -494,11 +517,12 @@ function live_source(
                     break
                 end
                 bump!(session; reconnects = 1)
-                delay =
-                    min(
-                        cfg.reconnect_base_delay_s * 2.0^(attempt - 1),
-                        cfg.reconnect_max_delay_s,
-                    ) * (0.5 + rand())
+                delay = _backoff_delay(
+                    rng,
+                    cfg.reconnect_base_delay_s,
+                    attempt - 1,
+                    cfg.reconnect_max_delay_s,
+                )
                 @info "reconnecting" attempt delay = round(delay; digits = 1)
                 sleep(delay)
             end

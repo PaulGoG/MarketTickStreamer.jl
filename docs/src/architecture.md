@@ -179,6 +179,12 @@ path — no data is lost on interrupt (tested).
   zero-byte raw stubs — provenance survives SIGKILL and power loss, which
   graceful-path handling alone cannot (threaded Ctrl-C delivery is
   best-effort in Julia).
+- **Reproducible randomness**: the package's only random draws are the
+  jitter of its backoff schedules, REST retries and stream reconnects. Both
+  generators derive from one seed, `[rng] seed`, drawn from the OS at load
+  when the configuration names none and recorded in the sidecar's config
+  snapshot, so a session's retry and reconnect schedule can be replayed
+  from its sidecar.
 - **Backfill robustness**: per-(symbol, trading-day) download loop with
   page-streamed sink writes — memory is bounded by one REST page plus the
   configured heap ceiling (`limits.max_live_heap_mb`, auto-GC then loud

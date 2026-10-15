@@ -67,6 +67,9 @@ request_timeout_s = 30           # read timeout of a REST request [s]; >= 1
 connect_timeout_s = 10           # connection timeout of a REST request [s]; >= 1
 max_retries = 5                  # retries on transient failures (429, 5xx, timeouts, dropped connections); >= 0
 
+[rng]
+# seed = 20261015                # master seed of the backoff jitter; >= 0; omitted: drawn from the OS at load, recorded in the sidecar
+
 [quality]
 # Sale-condition codes excluded from the price-forming population, by tape
 # ("A"/"B": CTA, "C": UTP, "O": OTC).

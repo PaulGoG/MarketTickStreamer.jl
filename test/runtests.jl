@@ -9,6 +9,7 @@ using TimeZones
 using CSV
 using DataFrames
 using TOML
+using Random: Xoshiro
 using MarketTickStreamer
 
 include("mock_alpaca.jl")
@@ -246,6 +247,19 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             # a TOML date is accepted as well as a date string
             write(p, base * "[backfill]\nstart_date = 2026-08-12\nend_date = 2026-08-12\n")
             @test load_config(p).backfill_start == Date(2026, 8, 12)
+        end
+        mktempdir() do dir
+            p = joinpath(dir, "rng.toml")
+            base = "[stream]\nsymbols = [\"A\"]\n"
+            write(p, base * "[rng]\nseed = 42\n")
+            @test load_config(p).rng_seed == 42
+            write(p, base)
+            a, b = load_config(p).rng_seed, load_config(p).rng_seed
+            @test a >= 0 && b >= 0 && a != b      # drawn from the OS at each load
+            write(p, base * "[rng]\nseed = -1\n")
+            @test_throws ArgumentError load_config(p)
+            write(p, base * "[rng]\nseed = \"7\"\n")
+            @test_throws ArgumentError load_config(p)
         end
     end
 
@@ -1733,15 +1747,27 @@ hostname = "$(gethostname())"
             policy = MarketTickStreamer.RestPolicy(1, 1, 1),
         )
         @test time() - t0 >= 0.5                     # one backoff was taken
-        # A provider built from a configuration carries its [rest] table.
+        # Backoff jitter is a deterministic function of the seed, within
+        # [0.5, 1.5) of the capped exponential.
+        d = [MarketTickStreamer._backoff_delay(Xoshiro(7), 1.0, k, 60.0) for k in 0:5]
+        @test d ==
+              [MarketTickStreamer._backoff_delay(Xoshiro(7), 1.0, k, 60.0) for k in 0:5]
+        @test all(0.5 * 2.0^k <= d[k+1] < 1.5 * 2.0^k for k in 0:5)
+        @test 30.0 <= MarketTickStreamer._backoff_delay(Xoshiro(7), 1.0, 20, 60.0) < 90.0
+        # A provider built from a configuration carries its [rest] table, and
+        # its generator is seeded from [rng] seed.
         mktempdir() do dir
             p = joinpath(dir, "c.toml")
             write(
                 p,
-                "[stream]\nsymbols = [\"A\"]\n[rest]\nrequest_timeout_s = 7\nmax_retries = 0\n",
+                "[stream]\nsymbols = [\"A\"]\n[rng]\nseed = 5\n[rest]\nrequest_timeout_s = 7\nmax_retries = 0\n",
             )
-            prov = AlpacaProvider(load_config(p), "k", "s")
+            cfg = load_config(p)
+            prov = AlpacaProvider(cfg, "k", "s")
             @test prov.rest == MarketTickStreamer.RestPolicy(7, 10, 0)
+            @test rand(MarketTickStreamer.RestPolicy(cfg).rng) ==
+                  rand(MarketTickStreamer.RestPolicy(cfg).rng)
+            @test rand(MarketTickStreamer.RestPolicy(cfg).rng) != rand(Xoshiro(5))
         end
         @test AlpacaProvider("k", "s", "iex", "a", "b", "c").rest ==
               MarketTickStreamer.RestPolicy()
@@ -1970,6 +1996,7 @@ hostname = "$(gethostname())"
                 @test meta["session"]["ticks"] == 14
                 @test meta["session"]["raw_files"] == basename.(result.raw_files)
                 @test meta["config"]["feed"] == "iex"
+                @test meta["config"]["rng_seed"] == cfg.rng_seed
                 @test meta["provenance"]["timestamp_unit"] == "nanosecond"
                 @test occursin(
                     r"^([0-9a-f]{40}|unknown)$",

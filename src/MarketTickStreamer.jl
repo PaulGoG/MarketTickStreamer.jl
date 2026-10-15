@@ -29,6 +29,7 @@ using InteractiveUtils: InteractiveUtils
 using LinearAlgebra: LinearAlgebra
 using Mmap: Mmap
 using Printf: @sprintf
+using Random: RandomDevice, Xoshiro
 using SHA: sha256
 using Statistics: Statistics, median
 using TOML: TOML

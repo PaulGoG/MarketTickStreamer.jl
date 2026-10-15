@@ -6,6 +6,14 @@ Notable changes to MarketTickStreamer. The format follows
 
 ## [Unreleased]
 
+### Added
+- `[rng] seed` seeds the jitter of the backoff schedules, REST retries and
+  stream reconnects, the package's only random draws. Left out, the seed is
+  drawn from the OS when the configuration loads; either way it is in the
+  sidecar's config snapshot as `rng_seed`, so a session's retry schedule is
+  reproducible from its provenance. `RestPolicy` carries the generator and
+  compares equal on its bounds.
+
 ## [0.5.0] - 2026-10-15
 
 The release that closes the accounting of a bulk backfill. A sidecar now

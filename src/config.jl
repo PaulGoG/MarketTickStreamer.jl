@@ -63,6 +63,8 @@ struct Config
     rest_request_timeout_s::Int
     rest_connect_timeout_s::Int
     rest_max_retries::Int
+    # [rng]
+    rng_seed::Int
     # [monitor]
     monitor_refresh_s::Float64
     monitor_top_symbols::Int
@@ -149,6 +151,7 @@ const CONFIG_KEYS = Dict{String,Vector{String}}(
         "keep_raw",
     ],
     "rest" => ["request_timeout_s", "connect_timeout_s", "max_retries"],
+    "rng" => ["seed"],
     "monitor" => ["refresh_s", "top_symbols", "rate_window_s"],
     "logging" => ["level", "log_to_file", "log_dir"],
     "credentials" => ["env_file"],
@@ -233,6 +236,10 @@ function _cfg_strings(
         throw(ArgumentError("$table.$key must be an array of strings, got $(repr(v))"))
     return String[String(x) for x in v]
 end
+
+# A fresh seed for a configuration that names none: 63 bits from the OS, so
+# it fits a TOML integer and the sidecar's config snapshot records it.
+_draw_seed() = Int(rand(RandomDevice(), UInt64) >> 1)
 
 """
     _reject_unknown_keys(raw)
@@ -498,6 +505,9 @@ function load_config(path::AbstractString = _default_config_path())
     rest_max_retries >= 0 ||
         throw(ArgumentError("rest.max_retries must be >= 0, got $rest_max_retries"))
 
+    rng_seed = _cfg_value(tbl("rng"), "rng", "seed", Int, _draw_seed())
+    rng_seed >= 0 || throw(ArgumentError("rng.seed must be >= 0, got $rng_seed"))
+
     mon = tbl("monitor")
     mon_refresh = _cfg_value(mon, "monitor", "refresh_s", Float64, 2.0)
     mon_refresh > 0 || throw(ArgumentError("monitor.refresh_s must be positive"))
@@ -595,6 +605,7 @@ function load_config(path::AbstractString = _default_config_path())
         rest_request_timeout,
         rest_connect_timeout,
         rest_max_retries,
+        rng_seed,
         mon_refresh,
         mon_top,
         mon_window,
