@@ -3382,6 +3382,103 @@ hostname = "$(gethostname())"
         end
     end
 
+    @testset "import: a vendor day through sink, compaction and sidecar" begin
+        be(x, n) = UInt8[(UInt64(x) >> (8 * (n - k))) & 0xff for k in 1:n]
+        alpha(s, n) = UInt8.(collect(rpad(s, n)))
+        msg(type, locate, ts, body) = (
+            m = vcat(UInt8(type), be(locate, 2), be(0, 2), be(ts, 6), body);
+            vcat(be(length(m), 2), m)
+        )
+        R(loc, stock) = msg(
+            'R',
+            loc,
+            0,
+            vcat(
+                alpha(stock, 8),
+                UInt8('Q'),
+                UInt8(' '),
+                be(100, 4),
+                UInt8('N'),
+                UInt8(' '),
+                alpha("", 2),
+                UInt8('P'),
+                alpha("", 4),
+                be(0, 4),
+                UInt8('N'),
+            ),
+        )
+        A(loc, ts, ref, sh, px) = msg(
+            'A',
+            loc,
+            ts,
+            vcat(be(ref, 8), UInt8('S'), be(sh, 4), alpha("", 8), be(px, 4)),
+        )
+        E(loc, ts, ref, sh, match) =
+            msg('E', loc, ts, vcat(be(ref, 8), be(sh, 4), be(match, 8)))
+        T0 = 34_200_000_000_000
+        stream = vcat(
+            msg('S', 0, 0, [UInt8('O')]),
+            R(1, "AAPL"),
+            R(2, "MSFT"),
+            A(1, T0, 1, 1000, 2_900_000),
+            A(2, T0, 2, 1000, 1_600_000),
+            [E(1, T0 + k, 1, 100, 100 + k) for k in 1:3]...,
+            [E(2, T0 + k, 2, 100, 200 + k) for k in 1:2]...,
+            msg('S', 0, 0, [UInt8('C')]),
+        )
+        mktempdir() do dir
+            file = joinpath(dir, "12302019.NASDAQ_ITCH50.gz")
+            open(GzipCompressorStream, file, "w") do io
+                write(io, stream)
+            end
+            p = joinpath(dir, "c.toml")
+            write(
+                p,
+                "[stream]\nsymbols = [\"AAPL\", \"MSFT\"]\n[storage]\ndata_dir = \"data\"\nprocessed_format = \"csv\"\n[logging]\nlog_to_file = false\n",
+            )
+            cfg = load_config(p)
+            files = run_import(cfg, file; format = "itch50")
+            @test length(files) == 2
+            @test sort(basename.(dirname.(files))) == ["AAPL", "MSFT"]
+            @test all(endswith("2019-12-30.csv"), files)
+            @test length(collect(replay_source(files; pace = "max"))) == 5
+            metas = filter(endswith(".meta.toml"), readdir(cfg.raw_dir; join = true))
+            @test length(metas) == 1
+            meta = TOML.parsefile(only(metas))
+            @test startswith(meta["session"]["id"], "import_itch50_")
+            @test meta["session"]["status"] == "completed"
+            @test meta["session"]["ticks"] == 5 && meta["session"]["ticks_processed"] == 5
+            src = meta["session"]["source"]
+            @test src["file"] == basename(file) && src["format"] == "itch50"
+            @test src["bytes"] == filesize(file) && length(src["sha256"]) == 64
+            @test src["messages"] == 11 && src["prints"] == 5 && src["truncated"] == false
+            @test length(meta["session"]["raw_files"]) == 1
+            # a second import of one symbol without the raw copy: processed again (safesave
+            # keeps the first), raw parts gone, the sidecar lists none. Session ids
+            # are second-resolved, so a second import in the same second would
+            # share the first one's prefix.
+            sleep(1.1)
+            files2 = run_import(
+                cfg,
+                file;
+                format = "itch50",
+                symbols = ["AAPL"],
+                keep_raw = false,
+            )
+            @test length(files2) == 1
+            raws = filter(endswith(".jsonl"), readdir(cfg.raw_dir; join = true))
+            @test length(raws) == 1                       # the first session's part only
+            metas = filter(endswith(".meta.toml"), readdir(cfg.raw_dir; join = true))
+            @test length(metas) == 2
+            @test_throws ArgumentError run_import(cfg, file; format = "csv")
+            @test_throws ArgumentError run_import(
+                cfg,
+                joinpath(dir, "missing.gz");
+                format = "iex",
+            )
+        end
+    end
+
 end
 
 # The extensions load with their trigger packages. Everything above ran

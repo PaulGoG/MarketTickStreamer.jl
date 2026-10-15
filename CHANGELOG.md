@@ -18,6 +18,16 @@ Notable changes to MarketTickStreamer. The format follows
   once at close, each snapshot stamped with its boundary and print count: the
   snapshot convention of the analysis interface, a function of the sequence
   alone, so replay reproduces it and consumers on one `tee` align.
+- `run_import` reads a vendor day file into the processed tree through the
+  raw sink, compaction and sidecar of a backfill: Nasdaq TotalView-ITCH 5.0
+  full-day files (`itch50_trades`: displayed executions priced off the
+  order book the reader keeps, printable executions with price, hidden
+  trades, crosses; odd lots marked `I` against the stock directory's round
+  lot; breaks dropped, marked or kept) and IEX HIST captures
+  (`iex_hist_trades`: pcap and pcapng, IEX-TP sessions with sequence
+  checks, TOPS 1.5/1.6 and DEEP 1.0 trade reports with the tape's flag
+  letters, breaks). The sidecar's `session.source` names the file, its
+  size and SHA-256, and the reader's counts. `scripts/import.jl` drives it.
 
 ## [0.5.0] - 2026-10-15
 

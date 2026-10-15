@@ -33,6 +33,7 @@ argument.
 ```bash
 julia --threads=auto scripts/stream.jl   # live capture
 julia scripts/backfill.jl                # historical download over the configured window
+julia scripts/import.jl itch50 data/bulk/12302019.NASDAQ_ITCH50.gz --symbols=AAPL,MSFT   # a vendor day file → processed/
 julia scripts/compact.jl  data/raw/<session>_part001.jsonl
 julia scripts/replay.jl   data/raw/<session>_part001.jsonl
 julia scripts/visualize.jl data/raw/<session>_part001.jsonl
@@ -40,7 +41,8 @@ julia scripts/monitor.jl                 # read-only dashboard for a running ses
 ```
 
 From the REPL the same operations are [`run_stream`](@ref),
-[`run_backfill`](@ref), [`compact_raw`](@ref) and [`replay_source`](@ref).
+[`run_backfill`](@ref), [`run_import`](@ref), [`compact_raw`](@ref) and
+[`replay_source`](@ref).
 The figure functions need `using CairoMakie` beside the package, and
 [`monitor_raw`](@ref) draws its plots once `using UnicodePlots` has run; the
 package itself depends on neither.
@@ -221,3 +223,39 @@ The adapter requests microsecond timestamps — the REST header
 of the bulk files; rows and frames in milliseconds are read as well. Every
 session sidecar records `provenance.timestamp_unit`. A Binance capture whose
 sidecar lacks the key predates 0.4.0 and is millisecond-quantized.
+
+## Importing vendor day files
+
+Two archives publish one file per trading day holding every symbol, and
+[`run_import`](@ref) reads them into the processed tree through the same
+raw sink, compaction and sidecar as a backfill, so an imported day is
+queried, replayed and resampled like a captured one.
+
+**Nasdaq TotalView-ITCH 5.0** (`format = "itch50"`): the full-day binary
+files of `emi.nasdaq.com/ITCH/`, 3.5–18 GB gzipped, 0.3–1.4 × 10⁹ messages,
+about 10 M prints. [`itch50_trades`](@ref) prices every displayed execution
+off the order book it keeps, emits the printable executions-with-price, the
+hidden-order trades and the crosses, and files each print with
+`exchange = "Q"`, the match number as `id`, the tape from the stock
+directory, and conditions that name the kind of execution (`displayed`,
+`improved`, `hidden`, `cross_open`, `cross_close`, `cross_halt`,
+`cross_intraday`), the aggressor side for displayed executions, and `"I"`
+for an odd lot against the symbol's round lot — the condition the SIP gives
+the same execution, so `price_forming` treats both alike. The session date
+comes from the file name.
+
+**IEX HIST** (`format = "iex"`): IEX's T+1 packet captures of its TOPS or
+DEEP multicast feed, 0.5–21 GB gzipped. [`iex_hist_trades`](@ref) walks the
+pcap or pcapng container, the IEX-TP segments and their messages, decodes
+every Trade Report, and files it with `exchange = "V"`, the trade id, and
+the set sale-condition flags as the tape's letters (`F`, `T`, `I`, `8`,
+`X`). IEX does not publish the listing venue, so `tape` is empty unless
+given; the capture clock is never read.
+
+Both readers take a symbol filter, stream their prints in pages, and treat
+a broken trade by its id: dropped by default, marked with `"broken"`, or
+kept, the first two reading the file twice. The sidecar's `session.source`
+table records the file's name, size and SHA-256, the format, and the
+reader's statistics (messages, prints, broken, sequence gaps, whether the
+file ended inside a message). `keep_raw = false` drops the day's NDJSON
+copy after compaction, the vendor file being the record.

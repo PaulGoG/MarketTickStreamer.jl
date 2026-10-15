@@ -26,9 +26,9 @@ real-time analysis methods.
 ├── Project.toml        # package environment and [compat]
 ├── activate.jl         # silent activation; one per environment (scripts/, test/, docs/, bench/, examples/)
 ├── config/config.toml  # every tunable: provider, symbols, storage, limits, replay, backfill
-├── src/                # the package: schema, config, sinks, quality, resample, corpus, replay, live, providers/, pipeline, diagnostics, figures
+├── src/                # the package: schema, config, sinks, quality, resample, corpus, replay, live, providers/, formats/, pipeline, import, diagnostics, figures
 ├── ext/                # package extensions: figures (CairoMakie), terminal plots (UnicodePlots)
-├── scripts/            # entry points: stream, backfill, compact, inventory, replay, monitor, visualize (own environment)
+├── scripts/            # entry points: stream, backfill, import, compact, inventory, replay, monitor, visualize (own environment)
 ├── examples/           # worked consumers of the Channel{Trade} interface (own environment)
 ├── test/               # offline suite: unit, mock-server end-to-end, static QA (own environment)
 ├── bench/              # BenchmarkTools suite over the acquisition hot paths (own environment)
@@ -92,6 +92,9 @@ julia --threads=auto scripts/stream.jl
 #   (backfill.source = "bulk": Binance's daily dump files instead of REST pages)
 julia scripts/backfill.jl
 
+# import one vendor day file (Nasdaq ITCH 5.0 or IEX HIST) into processed/
+julia scripts/import.jl itch50 data/bulk/12302019.NASDAQ_ITCH50.gz --symbols=AAPL,MSFT
+
 # compact raw session files into per-symbol per-day CSV/Arrow
 julia scripts/compact.jl data/raw/<session>_part001.jsonl
 
@@ -152,6 +155,7 @@ consumers are developed offline (see `docs/src/architecture.md`).
 | Crash-only session lifecycle (running/completed/interrupted/failed sidecars + startup reconciliation) | working, tested |
 | Page-streaming, per-day resumable backfill | working, tested |
 | Bulk backfill from the venue's daily files (Binance `aggTrades` and `trades` dumps: checksum-verified, kept as the vendor record, same raw/compaction/resume path; `keep_raw = false` drops the NDJSON copy) | working, tested |
+| Vendor day-file import (Nasdaq ITCH 5.0 executions priced off the book, crosses, odd lots, breaks; IEX HIST pcap/pcapng, IEX-TP sessions, trade reports and breaks) through the raw/compaction/sidecar path | working, tested on synthetic files; validated on a real ITCH prefix (every execution resolved) and a full IEX day (print-for-print against the SIP) |
 | Spill compaction (bounded memory for arbitrarily large raw inputs) | working, tested |
 | Single-instance lock per data tree | working, tested |
 | Capture-coverage cross-check against the historical tape (`coverage_report`) | working |
@@ -255,11 +259,15 @@ Citation metadata is in [`CITATION.cff`](CITATION.cff). BibTeX:
 │   ├── live.jl             # provider-agnostic live source: reconnect, watchdog,
 │   │                       #   market-close guard
 │   ├── pipeline.jl         # session orchestration: run_stream / run_backfill; tee
+│   ├── import.jl           # vendor day files → processed/: run_import
 │   ├── diagnostics.jl      # plotting-free numerics of the figures: CCDF, decimation, Hill
 │   ├── figures.jl          # figure interface: documented stubs the extension implements
-│   └── providers/
-│       ├── alpaca.jl       # Alpaca adapter: US equities, NY calendar, credentialed
-│       └── binance.jl      # Binance adapter: crypto spot, UTC calendar, public
+│   ├── providers/
+│   │   ├── alpaca.jl       # Alpaca adapter: US equities, NY calendar, credentialed
+│   │   └── binance.jl      # Binance adapter: crypto spot, UTC calendar, public
+│   └── formats/
+│       ├── itch50.jl       # Nasdaq TotalView-ITCH 5.0 day files → Trade
+│       └── iex_hist.jl     # IEX HIST pcap/pcapng captures → Trade
 ├── ext/
 │   ├── MarketTickStreamerMakieExt.jl         # session and overview figures (loads with CairoMakie)
 │   └── MarketTickStreamerUnicodePlotsExt.jl  # monitor rate history and bar chart (loads with UnicodePlots)
@@ -268,6 +276,7 @@ Citation metadata is in [`CITATION.cff`](CITATION.cff). BibTeX:
 │   ├── activate.jl         # silent activation; included by every script
 │   ├── stream.jl           # live capture session
 │   ├── backfill.jl         # historical trade download
+│   ├── import.jl           # vendor day file import
 │   ├── compact.jl          # raw NDJSON → per-symbol per-day CSV/Arrow
 │   ├── inventory.jl        # inventory of the processed tree
 │   ├── replay.jl           # replay a recorded session to the terminal

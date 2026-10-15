@@ -43,6 +43,15 @@ Modules = [MarketTickStreamer]
 Pages = ["pipeline.jl"]
 ```
 
+## Vendor day files
+
+One file, one trading day, every symbol: the readers and the import stage.
+
+```@autodocs
+Modules = [MarketTickStreamer]
+Pages = ["itch50.jl", "iex_hist.jl", "import.jl"]
+```
+
 ## Live monitoring
 
 ```@autodocs

@@ -398,8 +398,7 @@ start_session_meta(cfg::Config, sid::AbstractString; started_utc::DateTime) =
     write_session_meta(cfg, sid; status = "running", started_utc)
 
 """
-    finalize_session_meta(path, status; ticks, raw_files,
-                          ticks_processed = nothing) -> String
+    finalize_session_meta(path, status; ticks, raw_files, ticks_processed = nothing, source = nothing) -> String
 
 Rewrite the running sidecar with the final status (`"completed"`,
 `"interrupted"` or `"failed"`), tick count, file list, and finish timestamp. The sidecar
@@ -410,6 +409,10 @@ products, not status metadata.
 also compacts passes `ticks_processed`, the prints it wrote to `processed/`;
 the two differ by the duplicates compaction dropped, and only a session that
 compacts has the second number to give.
+
+`source` describes the vendor file an import session read — name, size,
+checksum, format and the reader's statistics — and is written as the
+sidecar's `session.source` table.
 """
 function finalize_session_meta(
     path::AbstractString,
@@ -417,12 +420,15 @@ function finalize_session_meta(
     ticks::Integer,
     raw_files::Vector{String},
     ticks_processed::Union{Nothing,Integer} = nothing,
+    source::Union{Nothing,AbstractDict} = nothing,
 )
     meta = TOML.parsefile(path)
     s = meta["session"]
     s["status"] = String(status)
     s["ticks"] = Int(ticks)
     ticks_processed === nothing || (s["ticks_processed"] = Int(ticks_processed))
+    source === nothing ||
+        (s["source"] = Dict{String,Any}(String(k) => v for (k, v) in source))
     s["raw_files"] = [basename(f) for f in raw_files]
     s["finished_utc"] = string(Dates.now(UTC))
     open(io -> TOML.print(io, meta), path, "w")

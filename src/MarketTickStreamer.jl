@@ -84,6 +84,7 @@ export itch50_trades,
 export ProviderSpec, provider_spec, make_provider, exchange_tz, always_open, session_days
 export run_stream,
     run_backfill,
+    run_import,
     session_id,
     setup_logging,
     write_session_meta,
@@ -109,6 +110,7 @@ include("providers/binance.jl")
 include("formats/itch50.jl")
 include("formats/iex_hist.jl")
 include("pipeline.jl")
+include("import.jl")
 include("diagnostics.jl")
 include("figures.jl")
 

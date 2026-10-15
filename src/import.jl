@@ -1,0 +1,166 @@
+# Vendor day files → the processed tree. One session per file, through the
+# raw sink, compaction and the provenance sidecar a backfill uses, so an
+# imported day is indistinguishable downstream from a captured one, except
+# that its sidecar names the file it came from.
+
+"""Formats `run_import` reads: Nasdaq TotalView-ITCH 5.0 day files and IEX HIST captures."""
+const IMPORT_FORMATS = ("itch50", "iex")
+
+"""
+    run_import(cfg, path; format, date = nothing, symbols = cfg.symbols, broken = :drop,
+               tape = "", keep_raw = true) -> Vector{String}
+
+Import one vendor day file into the processed tree, as one session: the
+file's prints stream through a raw NDJSON part set (prefix
+`import_<format>_<timestamp>`), the day is compacted per symbol on the
+configured provider's calendar, and the sidecar records the file (name,
+size, SHA-256, format) and the reader's statistics under `session.source`,
+beside the usual provenance. Returns the processed files written.
+
+`format` is `"itch50"` ([`itch50_trades`](@ref); `date` is the session
+date, read from the file name with [`itch50_date`](@ref) when not given) or
+`"iex"` ([`iex_hist_trades`](@ref); the timestamps carry their date).
+`symbols` defaults to the configured basket; `nothing` imports every symbol
+in the file. `broken` and `tape` pass to the reader. With `keep_raw = false`
+the day's raw parts are deleted once the day is under `processed/`, the
+checksummed vendor file being the record, as `backfill.keep_raw` does for a
+bulk day.
+
+A file that ends inside a message, as a partial download does, is imported
+to that point and logged as incomplete; the sidecar's `source.truncated`
+says so. The configured provider contributes its calendar and timestamp
+unit only; `"alpaca"` is the host for both US-equity formats.
+"""
+function run_import(
+    cfg::Config,
+    path::AbstractString;
+    format::AbstractString,
+    date::Union{Nothing,Date} = nothing,
+    symbols::Union{Nothing,AbstractVector{<:AbstractString}} = cfg.symbols,
+    broken::Symbol = :drop,
+    tape = "",
+    keep_raw::Bool = true,
+)
+    format in IMPORT_FORMATS || throw(
+        ArgumentError(
+            "format must be one of $(join(IMPORT_FORMATS, ", ")), got \"$format\"",
+        ),
+    )
+    isfile(path) || throw(ArgumentError("no such file: $path"))
+    sid = "import_$(format)_$(Dates.format(Dates.now(UTC), dateformat"yyyymmdd-HHMMSS"))"
+    logger, log_io = setup_logging(cfg; session_id = sid)
+    try
+        return Logging.with_logger(logger) do
+            _run_import(cfg, sid, path, format, date, symbols, broken, tape, keep_raw)
+        end
+    finally
+        log_io === nothing || close(log_io)
+    end
+end
+
+function _run_import(
+    cfg::Config,
+    sid::AbstractString,
+    path::AbstractString,
+    format::AbstractString,
+    date::Union{Nothing,Date},
+    symbols::Union{Nothing,AbstractVector{<:AbstractString}},
+    broken::Symbol,
+    tape,
+    keep_raw::Bool,
+)
+    started_utc = Dates.now(UTC)
+    mkpath(cfg.raw_dir)
+    slock = acquire_session_lock(cfg.data_dir)
+    status = "completed"
+    total = 0
+    stored = 0
+    meta_path = nothing
+    processed = String[]
+    stats = nothing
+    try
+        reconcile_sessions!(cfg.raw_dir)
+        _ensure_free_disk(cfg)
+        meta_path = start_session_meta(cfg, sid; started_utc)
+        sink = open_raw_sink(cfg.raw_dir, sid; max_mb = cfg.max_raw_file_mb)
+        sink_page =
+            page -> begin
+                write_batch!(sink, page)
+                check_live_heap(
+                    cfg.max_live_heap_mb;
+                    context = "import $format $(basename(path))",
+                )
+            end
+        try
+            stats = if format == "itch50"
+                itch50_trades(
+                    path,
+                    date === nothing ? itch50_date(path) : date;
+                    symbols,
+                    broken,
+                    each_page = sink_page,
+                )
+            else
+                iex_hist_trades(path; symbols, broken, tape, each_page = sink_page)
+            end
+        finally
+            close_sink!(sink)
+            sink.n_written == 0 && filesize(sink.path) == 0 && rm(sink.path; force = true)
+        end
+        total = stats.prints
+        files = _raw_files_with_prefix(cfg.raw_dir, sid)
+        if total == 0
+            for f in files
+                filesize(f) == 0 && rm(f; force = true)
+            end
+            @warn "no prints read from the file" file = basename(path)
+        else
+            c = _compact_raw(cfg, files)
+            append!(processed, c.files)
+            stored = c.rows
+            keep_raw || foreach(f -> rm(f; force = true), files)
+        end
+        stats.truncated &&
+            @warn "the file ended inside a message — the day is incomplete" file =
+                basename(path)
+        @info "imported" format file = basename(path) messages = stats.messages prints =
+            total stored broken = stats.broken
+    catch e
+        if e isa InterruptException
+            status = "interrupted"
+            @info "interrupt — what was compacted stays; the sidecar says so" sid
+        else
+            status = "failed"
+            rethrow()
+        end
+    finally
+        meta_path === nothing || finalize_session_meta(
+            meta_path,
+            status;
+            ticks = total,
+            ticks_processed = stored,
+            raw_files = _session_raw_files(cfg, sid),
+            source = _import_source(path, format, stats),
+        )
+        close(slock)
+    end
+    @info "import finished" status files = length(processed) prints = total stored
+    return processed
+end
+
+# The vendor file as the sidecar records it: identity, checksum and what the
+# reader counted. `stats` is `nothing` when the reader never ran.
+function _import_source(path::AbstractString, format::AbstractString, stats)
+    src = Dict{String,Any}(
+        "file" => basename(path),
+        "bytes" => filesize(path),
+        "sha256" => _sha256_hex(path),
+        "format" => String(format),
+    )
+    stats === nothing && return src
+    for (k, v) in pairs(stats)
+        k === :trades && continue
+        src[String(k)] = v
+    end
+    return src
+end
