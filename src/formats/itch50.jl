@@ -463,9 +463,7 @@ function fetch_itch50(
     expected = _announced_length(url, policy)
     expected === nothing && return nothing
     isfile(path) && filesize(path) == expected && return path
-    r = _with_retry(policy) do
-        _download_resumable(url, path, policy)
-    end
+    r = _download_resumable(url, path, policy)
     r.found || return nothing
     got = filesize(path)
     if got != expected

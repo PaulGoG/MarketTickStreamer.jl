@@ -470,9 +470,7 @@ function fetch_iex_hist(
         announced = _announced_crc32c(link, policy)
         (announced === nothing || _crc32c_hex(path) == announced) && return path
     end
-    r = _with_retry(policy) do
-        _download_resumable(link, path, policy)
-    end
+    r = _download_resumable(link, path, policy)
     r.found || error("file listed but missing: $link")
     want_crc = _crc32c_from_headers(r.headers)
     if want_crc !== nothing

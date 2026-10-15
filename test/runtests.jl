@@ -3275,14 +3275,22 @@ hostname = "$(gethostname())"
                         payload,
                     )
                 end
-                from = parse(Int, split(split(r, '=')[2], '-')[1])
+                lo, hi = split(split(r, '=')[2], '-')
+                from = parse(Int, lo)
+                from >= length(payload) && return HTTP.Response(
+                    416,
+                    ["Content-Range" => "bytes */$(length(payload))"],
+                )
+                to =
+                    isempty(hi) ? length(payload) - 1 :
+                    min(parse(Int, hi), length(payload) - 1)
                 return HTTP.Response(
                     206,
                     [
-                        "Content-Range" => "bytes $from-$(length(payload)-1)/$(length(payload))",
+                        "Content-Range" => "bytes $from-$to/$(length(payload))",
                         "x-goog-hash" => "crc32c=$crc_b64,md5=AAAA",
                     ],
-                    payload[(from+1):end],
+                    payload[(from+1):(to+1)],
                 )
             end,
         )
@@ -3329,8 +3337,9 @@ hostname = "$(gethostname())"
                 p = fetch_itch50(url, dir; policy)
                 @test p == joinpath(dir, "itch50", "12302019.NASDAQ_ITCH50.gz")
                 @test read(p) == payload && !isfile(partial)
-                @test ranges == ["bytes=1000000-"]
-                @test fetch_itch50(url, dir; policy) == p && ranges == ["bytes=1000000-"]   # reused
+                @test ranges == ["bytes=1000000-9388607"]
+                @test fetch_itch50(url, dir; policy) == p &&
+                      ranges == ["bytes=1000000-9388607"]   # reused
                 @test fetch_itch50("http://127.0.0.1:$port/f/missing.gz", dir; policy) ===
                       nothing
                 # IEX: index, feed selection, download, CRC-32C
@@ -3347,7 +3356,7 @@ hostname = "$(gethostname())"
                 )
                 @test q == joinpath(dir, "iex", "20200102_IEXTP1_TOPS1.6.pcap.gz") &&
                       read(q) == payload
-                @test ranges == [""]
+                @test ranges == ["bytes=0-8388607"]
                 @test fetch_iex_hist(
                     Date(2020, 1, 2),
                     dir;
@@ -3355,7 +3364,7 @@ hostname = "$(gethostname())"
                     api_base = api,
                     policy,
                 ) == q
-                @test ranges == [""]                                              # verified copy reused
+                @test ranges == ["bytes=0-8388607"]              # verified copy reused
                 @test fetch_iex_hist(Date(2020, 1, 3), dir; api_base = api, policy) ===
                       nothing
                 @test_throws ErrorException fetch_iex_hist(
@@ -3371,6 +3380,27 @@ hostname = "$(gethostname())"
                 write(q, bad)
                 @test fetch_iex_hist(Date(2020, 1, 2), dir; api_base = api, policy) == q
                 @test read(q) == payload
+                # chunked transfer: one bounded request per chunk, the last one clipped
+                empty!(ranges)
+                chunked = joinpath(dir, "chunked.bin")
+                r3 = MarketTickStreamer._download_resumable(
+                    url,
+                    chunked,
+                    policy;
+                    chunk_bytes = 1 << 20,
+                )
+                @test r3.found && read(chunked) == payload
+                @test ranges == [
+                    "bytes=0-1048575",
+                    "bytes=1048576-2097151",
+                    "bytes=2097152-3145727",
+                    "bytes=3145728-4194303",
+                ]
+                @test MarketTickStreamer._content_range_total("bytes 0-9/3145851") ==
+                      3145851
+                @test MarketTickStreamer._content_range_total("") == -1
+                @test MarketTickStreamer._chunk_timeout(policy, 8 << 20) ==
+                      cld(8 << 20, 50_000)
                 @test MarketTickStreamer._crc32c_from_headers([
                     "X-Goog-Hash" => "crc32c=$crc_b64,md5=AAAA",
                 ]) == crc

@@ -34,6 +34,13 @@ Notable changes to MarketTickStreamer. The format follows
   as the stop signal so the sidecar is finalized; the units are verified
   with `systemd-analyze`.
 
+### Fixed
+- A vendor-file download is fetched in bounded Range requests of 8 MiB,
+  each retried on the REST policy's schedule, because HTTP.jl's read
+  timeout bounds a whole request and cut a multi-hour streaming transfer
+  at the policy's 30 s on every attempt. A dropped connection now costs one
+  chunk, resumed from the partial file.
+
 ## [0.5.0] - 2026-10-15
 
 The release that closes the accounting of a bulk backfill. A sidecar now

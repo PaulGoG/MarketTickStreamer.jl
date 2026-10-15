@@ -244,41 +244,70 @@ _get_with_retry(url, headers; query = nothing, policy::RestPolicy = RestPolicy()
         )
     end
 
-# Fetch `url` into `path`, resuming a `<path>.partial` left by an earlier
-# attempt with a Range request. A server that answers 206 appends to it, one
-# that ignores the range (200) restarts the transfer; 404 returns `false`
-# with nothing written; a failed transfer keeps the partial file for the next
-# attempt. Returns `(; found, headers)`: the response headers of the
-# transfer that completed, for the caller's integrity check.
-function _download_resumable(url::AbstractString, path::AbstractString, policy::RestPolicy)
+# Fetch `url` into `path` in bounded Range requests of `chunk_bytes`, resuming
+# a `<path>.partial` left by an earlier attempt. HTTP.jl's read timeout bounds
+# a whole request, so one request per chunk keeps a transfer of hours inside
+# the policy's timeouts, and a dropped connection costs one chunk, retried on
+# the policy's schedule. A server that ignores the range (200) streams the
+# whole body in one request; 404 returns `found = false` with nothing
+# written; 416 past the end means the partial file is already complete.
+# Returns `(; found, headers)`, the headers of the last response, for the
+# caller's integrity check.
+function _download_resumable(
+    url::AbstractString,
+    path::AbstractString,
+    policy::RestPolicy;
+    chunk_bytes::Integer = 8 << 20,
+)
+    chunk_bytes >= 1 || throw(ArgumentError("chunk_bytes must be >= 1, got $chunk_bytes"))
     tmp = path * ".partial"
-    have = isfile(tmp) ? filesize(tmp) : 0
-    headers = have > 0 ? ["Range" => "bytes=$(have)-"] : Pair{String,String}[]
     found = true
     resp_headers = Pair{String,String}[]
-    HTTP.open(
-        "GET",
-        url,
-        headers;
-        retry = false,
-        status_exception = false,
-        readtimeout = policy.request_timeout_s,
-        connect_timeout = policy.connect_timeout_s,
-    ) do http
-        HTTP.startread(http)
-        st = http.message.status
-        resp_headers = [String(k) => String(v) for (k, v) in http.message.headers]
-        if st == 404
-            found = false
-        elseif st == 206 || st == 200
-            open(tmp, st == 206 ? "a" : "w") do f
-                while !eof(http)
-                    write(f, readavailable(http))
+    total = Int64(-1)                   # from Content-Range, once a 206 names it
+    while true
+        have = isfile(tmp) ? filesize(tmp) : Int64(0)
+        total >= 0 && have >= total && break
+        done = false
+        _with_retry(policy) do
+            HTTP.open(
+                "GET",
+                url,
+                ["Range" => "bytes=$(have)-$(have + chunk_bytes - 1)"];
+                retry = false,
+                status_exception = false,
+                readtimeout = _chunk_timeout(policy, chunk_bytes),
+                connect_timeout = policy.connect_timeout_s,
+            ) do http
+                HTTP.startread(http)
+                st = http.message.status
+                resp_headers = [String(k) => String(v) for (k, v) in http.message.headers]
+                if st == 404
+                    found = false
+                    done = true
+                elseif st == 206
+                    total =
+                        _content_range_total(HTTP.header(http.message, "Content-Range", ""))
+                    open(tmp, "a") do f
+                        while !eof(http)
+                            write(f, readavailable(http))
+                        end
+                    end
+                elseif st == 200                    # the range was ignored: the whole body
+                    open(tmp, "w") do f
+                        while !eof(http)
+                            write(f, readavailable(http))
+                        end
+                    end
+                    done = true
+                elseif st == 416                    # nothing past `have`: complete
+                    done = true
+                else
+                    throw(HTTP.StatusError(st, "GET", String(url), http.message))
                 end
             end
-        else
-            throw(HTTP.StatusError(st, "GET", String(url), http.message))
         end
+        done && break
+        filesize(tmp) > have || error("no progress downloading $url at byte $have")
     end
     if !found
         rm(tmp; force = true)
@@ -286,6 +315,17 @@ function _download_resumable(url::AbstractString, path::AbstractString, policy::
     end
     mv(tmp, path; force = true)
     return (; found = true, headers = resp_headers)
+end
+
+# The request timeout of one chunk: the policy's, or longer when the chunk
+# would not arrive within it at 50 kB/s, the slowest host worth waiting for.
+_chunk_timeout(policy::RestPolicy, chunk_bytes::Integer) =
+    max(policy.request_timeout_s, cld(Int(chunk_bytes), 50_000))
+
+# The total length named by a `Content-Range: bytes a-b/total` header, or -1.
+function _content_range_total(value::AbstractString)
+    m = match(r"bytes\s+\d+-\d+/(\d+)", value)
+    return m === nothing ? Int64(-1) : parse(Int64, m[1])
 end
 
 """
