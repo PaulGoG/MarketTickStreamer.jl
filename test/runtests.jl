@@ -10,6 +10,7 @@ using CSV
 using DataFrames
 using TOML
 using Random: Xoshiro
+using CodecZlib: GzipCompressorStream
 using MarketTickStreamer
 
 include("mock_alpaca.jl")
@@ -2769,6 +2770,210 @@ hostname = "$(gethostname())"
                 close(server)
             end
         end
+    end
+
+    @testset "itch50: executions priced off the book, crosses, odd lots, breaks" begin
+        be(x, n) = UInt8[(UInt64(x) >> (8 * (n - k))) & 0xff for k in 1:n]
+        alpha(s, n) = UInt8.(collect(rpad(s, n)))
+        msg(type, locate, ts, body) = (
+            m = vcat(UInt8(type), be(locate, 2), be(0, 2), be(ts, 6), body);
+            vcat(be(length(m), 2), m)
+        )
+        R(loc, stock, cat, lot) = msg(
+            'R',
+            loc,
+            0,
+            vcat(
+                alpha(stock, 8),
+                UInt8(cat),
+                UInt8(' '),
+                be(lot, 4),
+                UInt8('N'),
+                UInt8(' '),
+                alpha("", 2),
+                UInt8('P'),
+                alpha("", 4),
+                be(0, 4),
+                UInt8('N'),
+            ),
+        )
+        A(loc, ts, ref, side, sh, stock, px) = msg(
+            'A',
+            loc,
+            ts,
+            vcat(be(ref, 8), UInt8(side), be(sh, 4), alpha(stock, 8), be(px, 4)),
+        )
+        F(loc, ts, ref, side, sh, stock, px) = msg(
+            'F',
+            loc,
+            ts,
+            vcat(
+                be(ref, 8),
+                UInt8(side),
+                be(sh, 4),
+                alpha(stock, 8),
+                be(px, 4),
+                alpha("NSDQ", 4),
+            ),
+        )
+        E(loc, ts, ref, sh, match) =
+            msg('E', loc, ts, vcat(be(ref, 8), be(sh, 4), be(match, 8)))
+        C(loc, ts, ref, sh, match, printable, px) = msg(
+            'C',
+            loc,
+            ts,
+            vcat(be(ref, 8), be(sh, 4), be(match, 8), UInt8(printable), be(px, 4)),
+        )
+        X(loc, ts, ref, sh) = msg('X', loc, ts, vcat(be(ref, 8), be(sh, 4)))
+        D(loc, ts, ref) = msg('D', loc, ts, be(ref, 8))
+        U(loc, ts, orig, new, sh, px) =
+            msg('U', loc, ts, vcat(be(orig, 8), be(new, 8), be(sh, 4), be(px, 4)))
+        P(loc, ts, sh, stock, px, match) = msg(
+            'P',
+            loc,
+            ts,
+            vcat(be(0, 8), UInt8('B'), be(sh, 4), alpha(stock, 8), be(px, 4), be(match, 8)),
+        )
+        Q(loc, ts, sh, stock, px, match, cross) = msg(
+            'Q',
+            loc,
+            ts,
+            vcat(be(sh, 8), alpha(stock, 8), be(px, 4), be(match, 8), UInt8(cross)),
+        )
+        B(loc, ts, match) = msg('B', loc, ts, be(match, 8))
+        S(event) = msg('S', 0, 0, [UInt8(event)])
+        H(loc) = msg('H', loc, 0, zeros(UInt8, 14))                    # skipped by length
+        @test length(R(1, "AAPL", 'Q', 100)) == 41 &&
+              length(A(1, 0, 1, 'B', 1, "A", 1)) == 38
+        @test length(E(1, 0, 1, 1, 1)) == 33 && length(Q(1, 0, 1, "A", 1, 1, 'O')) == 42
+        T0 = 34_200_000_000_000                                        # 09:30 ET in ns
+        day0 = 1_577_682_000_000_000_000                               # 2019-12-30 05:00 UTC
+        stream = vcat(
+            S('O'),
+            R(1, "AAPL", 'Q', 100),
+            R(2, "IBM", 'N', 100),
+            R(3, "SPY", 'P', 100),
+            R(4, "ZZZ", 'Q', 0),
+            H(1),
+            A(1, T0, 10, 'B', 500, "AAPL", 2_900_000),
+            F(1, T0, 11, 'S', 100, "AAPL", 2_901_000),
+            E(1, T0 + 1, 10, 100, 1001),
+            E(1, T0 + 2, 10, 50, 1002),
+            X(1, T0 + 3, 10, 350),
+            E(1, T0 + 4, 10, 10, 1003),                                # dead order: unresolved
+            U(1, T0 + 5, 11, 12, 200, 2_899_500),
+            C(1, T0 + 6, 12, 200, 1004, 'Y', 2_899_000),
+            A(2, T0 + 7, 13, 'B', 300, "IBM", 1_300_000),
+            C(2, T0 + 8, 13, 100, 1005, 'N', 1_300_500),               # non-printable
+            P(2, T0 + 9, 75, "IBM", 1_300_250, 1006),
+            Q(3, T0 + 10, 0, "SPY", 3_200_000, 1007, 'O'),             # zero shares
+            Q(3, T0 + 11, 1_000_000, "SPY", 3_200_000, 1008, 'C'),
+            B(1, T0 + 12, 1004),
+            A(4, T0 + 13, 20, 'B', 50, "ZZZ", 100_000),
+            E(4, T0 + 14, 20, 50, 1009),
+            Q(1, T0 + 15, 10, "AAPL", 2_900_000, 1010, 'H'),
+            D(1, T0 + 16, 12),
+            S('C'),
+        )
+        mktempdir() do dir
+            raw = joinpath(dir, "day.bin")
+            write(raw, stream)
+            gz = joinpath(dir, "day.gz")
+            open(GzipCompressorStream, gz, "w") do io
+                write(io, stream)
+            end
+            date = Date(2019, 12, 30)
+            r = itch50_trades(raw, date; symbols = ["AAPL", "IBM", "SPY"])
+            @test (r.messages, r.prints, r.broken, r.unresolved, r.symbols, r.truncated) ==
+                  (25, 5, 1, 1, 3, false)
+            got = r.trades
+            @test [t.id for t in got] == [1001, 1002, 1006, 1008, 1010]
+            @test got[1] == Trade(
+                "AAPL",
+                day0 + T0 + 1,
+                0,
+                290.0,
+                100.0,
+                "Q",
+                ["displayed", "sell"],
+                "C",
+                1001,
+            )
+            @test got[2].conditions == ["displayed", "sell", "I"] && got[2].size == 50.0
+            @test got[3] == Trade(
+                "IBM",
+                day0 + T0 + 9,
+                0,
+                130.025,
+                75.0,
+                "Q",
+                ["hidden", "I"],
+                "A",
+                1006,
+            )
+            @test got[4] == Trade(
+                "SPY",
+                day0 + T0 + 11,
+                0,
+                320.0,
+                1.0e6,
+                "Q",
+                ["cross_close"],
+                "B",
+                1008,
+            )
+            @test got[5].conditions == ["cross_halt", "I"] && got[5].symbol == "AAPL"
+            # gzip input decodes identically
+            @test itch50_trades(gz, date; symbols = ["AAPL", "IBM", "SPY"]).trades == got
+            # every symbol, and an unknown round lot never marks an odd lot
+            all_r = itch50_trades(raw, date)
+            @test [t.id for t in all_r.trades] == [1001, 1002, 1006, 1008, 1009, 1010]
+            @test all_r.trades[5] == Trade(
+                "ZZZ",
+                day0 + T0 + 14,
+                0,
+                10.0,
+                50.0,
+                "Q",
+                ["displayed", "sell"],
+                "C",
+                1009,
+            )
+            @test all_r.symbols == 4
+            # broken prints: marked, or kept untouched in one pass
+            m = itch50_trades(raw, date; symbols = ["AAPL"], broken = :mark)
+            @test [t.id for t in m.trades] == [1001, 1002, 1004, 1010]
+            @test m.trades[3].conditions == ["improved", "buy", "broken"] && m.broken == 1
+            @test m.trades[3].price == 289.9 && m.trades[3].size == 200.0
+            k = itch50_trades(raw, date; symbols = ["AAPL"], broken = :keep)
+            @test k.trades[3].conditions == ["improved", "buy"] && k.broken == 1
+            # pages stream through each_page; the returned trades are then empty
+            pages = Vector{Trade}[]
+            s = itch50_trades(
+                raw,
+                date;
+                symbols = ["AAPL", "IBM", "SPY"],
+                page_rows = 2,
+                each_page = p -> push!(pages, copy(p)),
+            )
+            @test length.(pages) == [2, 2, 1] && isempty(s.trades) && s.prints == 5
+            @test reduce(vcat, pages) == got
+            # a file cut inside a message: what precedes it is read, and the cut is reported
+            cut = joinpath(dir, "cut.bin")
+            write(cut, stream[1:(end-30)])
+            c = itch50_trades(cut, date; broken = :keep)
+            @test c.truncated && c.prints == 7 && c.messages == 23
+            # a gzip member cut short, as a partial download is: read to the cut, reported
+            gzcut = joinpath(dir, "cut.gz")
+            write(gzcut, read(gz)[1:(end-12)])
+            gc = itch50_trades(gzcut, date; broken = :keep)
+            @test gc.truncated && gc.messages <= 25
+            @test_throws ArgumentError itch50_trades(raw, date; broken = :void)
+            @test_throws ArgumentError itch50_trades(raw, date; page_rows = 0)
+        end
+        @test itch50_date("12302019.NASDAQ_ITCH50.gz") == Date(2019, 12, 30)
+        @test itch50_date("/x/S112825-v50.txt.gz") == Date(2025, 11, 28)
+        @test_throws ArgumentError itch50_date("itch50_05_15.gz")
     end
 
 end
