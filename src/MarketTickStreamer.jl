@@ -77,7 +77,7 @@ export AbstractProvider,
     LiveSession, FatalStreamError, live_source, stop!, schedule_close_stop!, tee, snapshots
 export AlpacaProvider, BinanceProvider
 export market_clock, historical_trades, historical_trade_count, bulk_trades, condition_map
-export itch50_trades, itch50_date
+export itch50_trades, itch50_date, iex_hist_trades
 export ProviderSpec, provider_spec, make_provider, exchange_tz, always_open, session_days
 export run_stream,
     run_backfill,
@@ -104,6 +104,7 @@ include("live.jl")
 include("providers/alpaca.jl")
 include("providers/binance.jl")
 include("formats/itch50.jl")
+include("formats/iex_hist.jl")
 include("pipeline.jl")
 include("diagnostics.jl")
 include("figures.jl")

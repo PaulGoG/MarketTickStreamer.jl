@@ -2976,6 +2976,267 @@ hostname = "$(gethostname())"
         @test_throws ArgumentError itch50_date("itch50_05_15.gz")
     end
 
+    @testset "iex hist: pcap and pcapng framing, IEX-TP sessions, trade reports and breaks" begin
+        le(x, n) = (
+            u = x < 0 ? reinterpret(UInt64, Int64(x)) : UInt64(x);
+            UInt8[(u >> (8 * (k - 1))) & 0xff for k in 1:n]
+        )
+        be(x, n) = UInt8[(UInt64(x) >> (8 * (n - k))) & 0xff for k in 1:n]
+        sym(s) = UInt8.(collect(rpad(s, 8)))
+        S(ev, ts) = vcat(UInt8('S'), UInt8(ev), le(ts, 8))
+        Qm(s, ts) = vcat(
+            UInt8('Q'),
+            0x00,
+            le(ts, 8),
+            sym(s),
+            le(100, 4),
+            le(1_000_000, 8),
+            le(1_000_100, 8),
+            le(100, 4),
+        )
+        T(s, flags, ts, size, px, id; reserved = 0) = vcat(
+            UInt8('T'),
+            UInt8(flags),
+            le(ts, 8),
+            sym(s),
+            le(size, 4),
+            le(px, 8),
+            le(id, 8),
+            zeros(UInt8, reserved),
+        )
+        B(s, ts, id) =
+            vcat(UInt8('B'), 0x00, le(ts, 8), sym(s), le(1, 4), le(0, 8), le(id, 8))
+        function segment(proto, session, seq, msgs; send = 0)
+            payload =
+                isempty(msgs) ? UInt8[] :
+                reduce(vcat, [vcat(le(length(m), 2), m) for m in msgs])
+            return vcat(
+                0x01,
+                0x00,
+                le(proto, 2),
+                le(1, 4),
+                le(session, 4),
+                le(length(payload), 2),
+                le(length(msgs), 2),
+                le(0, 8),
+                le(seq, 8),
+                le(send, 8),
+                payload,
+            )
+        end
+        function frame(seg; vlan = false)
+            udp = vcat(be(10377, 2), be(10377, 2), be(8 + length(seg), 2), be(0, 2), seg)
+            ip = vcat(
+                0x45,
+                0x00,
+                be(20 + length(udp), 2),
+                be(0, 2),
+                be(0, 2),
+                0x40,
+                0x11,
+                be(0, 2),
+                UInt8[23, 226, 155, 131],
+                UInt8[233, 215, 21, 3],
+                udp,
+            )
+            eth = vcat(
+                UInt8[0x01, 0x00, 0x5e, 0x57, 0x15, 0x03],
+                UInt8[0, 0x11, 0x22, 0x33, 0x44, 0x55],
+            )
+            return vlan ? vcat(eth, be(0x8100, 2), be(1017, 2), be(0x0800, 2), ip) :
+                   vcat(eth, be(0x0800, 2), ip)
+        end
+        pad4(v) = vcat(v, zeros(UInt8, (4 - length(v) % 4) % 4))
+        shb() = vcat(
+            le(0x0A0D0D0A, 4),
+            le(28, 4),
+            le(0x1A2B3C4D, 4),
+            le(1, 2),
+            le(0, 2),
+            le(-1, 8),
+            le(28, 4),
+        )
+        idb() = vcat(le(1, 4), le(20, 4), le(1, 2), le(0, 2), le(65535, 4), le(20, 4))
+        function epb(data)
+            body = vcat(
+                le(0, 4),
+                le(0, 4),
+                le(0, 4),
+                le(length(data), 4),
+                le(length(data), 4),
+                pad4(data),
+            )
+            return vcat(
+                le(6, 4),
+                le(8 + length(body) + 4, 4),
+                body,
+                le(8 + length(body) + 4, 4),
+            )
+        end
+        pcap_header() = vcat(
+            le(0xa1b2c3d4, 4),
+            le(2, 2),
+            le(4, 2),
+            le(0, 4),
+            le(0, 4),
+            le(65535, 4),
+            le(1, 4),
+        )
+        pcap_record(data) =
+            vcat(le(0, 4), le(0, 4), le(length(data), 4), le(length(data), 4), data)
+        t0 = 1_577_975_400_000_000_000                         # 2020-01-02 14:30 UTC
+        seg_hb = segment(0x8003, 0, 1, []; send = -1)          # pre-session heartbeat
+        seg1 = segment(0x8003, 7, 1, [S('O', t0), Qm("AAPL", t0 + 1)])
+        seg2 = segment(
+            0x8003,
+            7,
+            3,
+            [
+                T("AAPL", 0x00, t0 + 2, 100, 1_500_000, 1),
+                T("AAPL", 0x20, t0 + 3, 7, 1_500_100, 2),
+                T("MSFT", 0xc0, t0 + 4, 200, 3_000_000, 3),
+            ],
+        )
+        seg3 = segment(
+            0x8003,
+            7,
+            6,
+            [B("AAPL", t0 + 5, 2), T("SPY", 0x08, t0 + 6, 1000, 4_000_000, 4)],
+        )
+        # gap: 8 expected
+        seg4 = segment(0x8003, 7, 10, [T("AAPL", 0x10, t0 + 7, 50, 1_500_200, 5)])
+        ng = vcat(
+            shb(),
+            idb(),
+            epb(frame(seg_hb)),
+            epb(frame(seg1)),
+            epb(frame(seg2)),
+            epb(frame(seg3)),
+            epb(frame(seg3)),                                   # seg3 twice: a duplicate
+            epb(frame(seg4)),
+        )
+        mktempdir() do dir
+            f = joinpath(dir, "day.pcapng")
+            write(f, ng)
+            r = iex_hist_trades(f; symbols = ["AAPL", "SPY"])
+            @test r.feed == "TOPS1.6"
+            @test (
+                r.packets,
+                r.segments,
+                r.messages,
+                r.prints,
+                r.broken,
+                r.gaps,
+                r.duplicates,
+                r.truncated,
+            ) == (6, 4, 8, 3, 1, 1, 1, false)
+            @test r.trades == [
+                Trade("AAPL", t0 + 2, 0, 150.0, 100.0, "V", String[], "", 1),
+                Trade("SPY", t0 + 6, 0, 400.0, 1000.0, "V", ["X"], "", 4),
+                Trade("AAPL", t0 + 7, 0, 150.02, 50.0, "V", ["8"], "", 5),
+            ]
+            all_r = iex_hist_trades(f; tape = Dict("MSFT" => "C"))
+            @test [t.id for t in all_r.trades] == [1, 3, 4, 5]
+            @test all_r.trades[2] ==
+                  Trade("MSFT", t0 + 4, 0, 300.0, 200.0, "V", ["F", "T"], "C", 3)
+            m = iex_hist_trades(f; symbols = ["AAPL"], broken = :mark, tape = "C")
+            @test [t.id for t in m.trades] == [1, 2, 5] && m.trades[2].conditions == ["I", "broken"]
+            @test all(t.tape == "C" for t in m.trades)
+            k = iex_hist_trades(f; symbols = ["AAPL"], broken = :keep)
+            @test [t.id for t in k.trades] == [1, 2, 5] &&
+                  k.trades[2].conditions == ["I"] &&
+                  k.broken == 1
+            # gzip, as published
+            gz = joinpath(dir, "day.pcap.gz")
+            open(GzipCompressorStream, gz, "w") do io
+                write(io, ng)
+            end
+            @test iex_hist_trades(gz; symbols = ["AAPL", "SPY"]).trades == r.trades
+            # pages
+            pages = Vector{Trade}[]
+            s = iex_hist_trades(f; page_rows = 3, each_page = p -> push!(pages, copy(p)))
+            @test length.(pages) == [3, 1] && isempty(s.trades) && s.prints == 4
+            # a capture cut inside a packet block
+            cut = joinpath(dir, "cut.pcapng")
+            write(cut, ng[1:(end-40)])
+            c = iex_hist_trades(cut; broken = :keep)
+            @test c.truncated && c.prints == 4 && c.packets == 5
+            # classic pcap, 802.1Q-tagged frames, TOPS 1.5 with its reserved bytes
+            seg15 = segment(
+                0x8002,
+                9,
+                1,
+                [T("ZIEXT", 0x00, t0, 100, 990_500, 429_974; reserved = 4)],
+            )
+            classic = vcat(
+                pcap_header(),
+                pcap_record(frame(seg15; vlan = true)),
+                pcap_record(frame(seg_hb)),
+            )
+            p = joinpath(dir, "day.pcap")
+            write(p, classic)
+            c15 = iex_hist_trades(p)
+            @test c15.feed == "TOPS1.5" && c15.packets == 2 && c15.segments == 1
+            @test c15.trades ==
+                  [Trade("ZIEXT", t0, 0, 99.05, 100.0, "V", String[], "", 429_974)]
+            # the TOPS specification's own Trade Report example, byte for byte
+            golden = UInt8[
+                0x54,
+                0x00,
+                0xc3,
+                0xdf,
+                0xf7,
+                0x05,
+                0xa2,
+                0x86,
+                0x6d,
+                0x14,
+                0x5a,
+                0x49,
+                0x45,
+                0x58,
+                0x54,
+                0x20,
+                0x20,
+                0x20,
+                0x64,
+                0x00,
+                0x00,
+                0x00,
+                0x24,
+                0x1d,
+                0x0f,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x96,
+                0x8f,
+                0x06,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+            ]
+            g = joinpath(dir, "golden.pcapng")
+            write(g, vcat(shb(), idb(), epb(frame(segment(0x8003, 1, 1, [golden])))))
+            gt = only(iex_hist_trades(g).trades)
+            @test gt.symbol == "ZIEXT" && gt.time_ns == 1_471_980_683_662_974_915
+            @test gt.price == 99.05 &&
+                  gt.size == 100.0 &&
+                  gt.id == 429_974 &&
+                  isempty(gt.conditions)
+            @test_throws ArgumentError iex_hist_trades(f; tape = 3)
+            @test_throws ArgumentError iex_hist_trades(f; broken = :void)
+            # not a capture at all
+            bad = joinpath(dir, "bad.bin")
+            write(bad, zeros(UInt8, 64))
+            @test_throws ErrorException iex_hist_trades(bad)
+        end
+    end
+
 end
 
 # The extensions load with their trigger packages. Everything above ran
