@@ -6,6 +6,15 @@ Notable changes to MarketTickStreamer. The format follows
 
 ## [Unreleased]
 
+### Added
+- `[rest] max_download_mb_s` caps the download rate of vendor files —
+  Binance dumps, ITCH and IEX day files — in MB/s, so a multi-gigabyte
+  transfer leaves room on a shared link; `0`, the default, leaves it
+  uncapped. It reaches the downloader as `RestPolicy(...; max_download_rate)`
+  in bytes per second. Each Range request is paced from its own start, so a
+  stall or a retry earns no burst afterwards, and the per-chunk timeout
+  stretches to whatever the cap needs.
+
 ## [0.7.0] - 2026-10-16
 
 Safeguards and fixes found while importing six vendor days for every listed

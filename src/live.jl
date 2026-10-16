@@ -135,27 +135,33 @@ function exchange_day_start_ns(p::AbstractProvider, d::Date)
 end
 
 """
-    RestPolicy(request_timeout_s, connect_timeout_s, max_retries; rng = Xoshiro())
-    RestPolicy()                 # 30 s, 10 s, 5 retries
+    RestPolicy(request_timeout_s, connect_timeout_s, max_retries;
+               rng = Xoshiro(), max_download_rate = Inf)
+    RestPolicy()                 # 30 s, 10 s, 5 retries, no download cap
     RestPolicy(cfg::Config)      # the `[rest]` table, jitter seeded from `[rng] seed`
 
 How a provider's REST requests are bounded: the read timeout and the connection
 timeout, both in whole seconds, and the number of retries on a transient
 failure. Without a read timeout a request against a server that accepts the
 connection and then goes silent blocks its task for good, and with it a
-backfill. `rng` draws the jitter of the retry backoff; two policies are equal
-when their bounds are, the generator being state rather than policy.
+backfill. `max_download_rate` caps the transfer rate of vendor files (Binance
+dumps, ITCH and IEX day files) in bytes per second, so a multi-gigabyte
+download does not take the whole of a shared link; `Inf` leaves it uncapped.
+`rng` draws the jitter of the retry backoff; two policies are equal when their
+bounds are, the generator being state rather than policy.
 """
 struct RestPolicy
     request_timeout_s::Int
     connect_timeout_s::Int
     max_retries::Int
     rng::Xoshiro
+    max_download_rate::Float64
     function RestPolicy(
         request_timeout_s::Integer,
         connect_timeout_s::Integer,
         max_retries::Integer;
         rng::Xoshiro = Xoshiro(),
+        max_download_rate::Real = Inf,
     )
         request_timeout_s >= 1 ||
             throw(ArgumentError("request_timeout_s must be >= 1, got $request_timeout_s"))
@@ -163,25 +169,42 @@ struct RestPolicy
             throw(ArgumentError("connect_timeout_s must be >= 1, got $connect_timeout_s"))
         max_retries >= 0 ||
             throw(ArgumentError("max_retries must be >= 0, got $max_retries"))
-        return new(request_timeout_s, connect_timeout_s, max_retries, rng)
+        max_download_rate > 0 || throw(
+            ArgumentError(
+                "max_download_rate must be positive (Inf for no cap), got $max_download_rate",
+            ),
+        )
+        return new(
+            request_timeout_s,
+            connect_timeout_s,
+            max_retries,
+            rng,
+            max_download_rate,
+        )
     end
 end
 
 Base.:(==)(a::RestPolicy, b::RestPolicy) =
     a.request_timeout_s == b.request_timeout_s &&
     a.connect_timeout_s == b.connect_timeout_s &&
-    a.max_retries == b.max_retries
-Base.hash(p::RestPolicy, h::UInt) =
-    hash(p.request_timeout_s, hash(p.connect_timeout_s, hash(p.max_retries, h)))
+    a.max_retries == b.max_retries &&
+    a.max_download_rate == b.max_download_rate
+Base.hash(p::RestPolicy, h::UInt) = hash(
+    p.request_timeout_s,
+    hash(p.connect_timeout_s, hash(p.max_retries, hash(p.max_download_rate, h))),
+)
 
 RestPolicy() = RestPolicy(30, 10, 5)
 # The REST generator takes the master seed's neighbour, so REST retries and
 # stream reconnects draw from independent streams of one recorded seed.
+# `max_download_mb_s` is in 10⁶ bytes per second, 0 meaning no cap.
 RestPolicy(cfg::Config) = RestPolicy(
     cfg.rest_request_timeout_s,
     cfg.rest_connect_timeout_s,
     cfg.rest_max_retries;
     rng = Xoshiro(UInt64(cfg.rng_seed) ⊻ 0x1),
+    max_download_rate = cfg.rest_max_download_mb_s > 0 ?
+                        1e6 * cfg.rest_max_download_mb_s : Inf,
 )
 
 # Jittered exponential backoff: `base · 2^attempt`, capped at `cap`, scaled by
@@ -251,6 +274,7 @@ _get_with_retry(url, headers; query = nothing, policy::RestPolicy = RestPolicy()
 # the policy's schedule. A server that ignores the range (200) streams the
 # whole body in one request; 404 returns `found = false` with nothing
 # written; 416 past the end means the partial file is already complete.
+# The body is read at no more than the policy's `max_download_rate`.
 # Returns `(; found, headers)`, the headers of the last response, for the
 # caller's integrity check.
 function _download_resumable(
@@ -297,16 +321,12 @@ function _download_resumable(
                     else
                         total = _content_range_total(range)
                         open(tmp, "a") do f
-                            while !eof(http)
-                                write(f, readavailable(http))
-                            end
+                            _paced_copy!(f, http, policy.max_download_rate)
                         end
                     end
                 elseif st == 200                    # the range was ignored: the whole body
                     open(tmp, "w") do f
-                        while !eof(http)
-                            write(f, readavailable(http))
-                        end
+                        _paced_copy!(f, http, policy.max_download_rate)
                     end
                     done = true
                 elseif st == 416                    # nothing past `have`: complete
@@ -332,9 +352,30 @@ function _download_resumable(
 end
 
 # The request timeout of one chunk: the policy's, or longer when the chunk
-# would not arrive within it at 50 kB/s, the slowest host worth waiting for.
-_chunk_timeout(policy::RestPolicy, chunk_bytes::Integer) =
-    max(policy.request_timeout_s, cld(Int(chunk_bytes), 50_000))
+# would not arrive within it at 50 kB/s, the slowest host worth waiting for,
+# or at the policy's download cap when that is lower still.
+_chunk_timeout(policy::RestPolicy, chunk_bytes::Integer) = max(
+    policy.request_timeout_s,
+    ceil(Int, chunk_bytes / min(50_000.0, policy.max_download_rate)),
+)
+
+# Copy a response body to `io` at no more than `rate` bytes per second,
+# measured from the start of the request: whenever the bytes received run
+# ahead of that schedule the reader sleeps, and TCP flow control holds the
+# sender back. Pacing per request means a stall or a retry backoff earns no
+# burst afterwards.
+function _paced_copy!(io::IO, http, rate::Float64)
+    t0 = time()
+    n = 0
+    while !eof(http)
+        n += write(io, readavailable(http))
+        if isfinite(rate)
+            ahead = n / rate - (time() - t0)
+            ahead > 0 && sleep(ahead)
+        end
+    end
+    return n
+end
 
 # The first byte and the total length named by a `Content-Range: bytes
 # a-b/total` header, or -1 for either when the header does not say.

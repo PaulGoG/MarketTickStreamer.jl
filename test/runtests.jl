@@ -1732,7 +1732,11 @@ hostname = "$(gethostname())"
                 cfg.rest_request_timeout_s,
                 cfg.rest_connect_timeout_s,
                 cfg.rest_max_retries,
-            ) == (30, 10, 5)
+                cfg.rest_max_download_mb_s,
+            ) == (30, 10, 5, 0.0)
+            @test MarketTickStreamer.RestPolicy(cfg).max_download_rate == Inf
+            write(p, base * "[rest]\nmax_download_mb_s = 5\n")
+            @test MarketTickStreamer.RestPolicy(load_config(p)).max_download_rate == 5e6
             @test cfg.max_open_spill_files == 256
             @test cfg.compact_mem_fraction == 0.5
             @test cfg.spill_headroom == 1.1
@@ -1752,6 +1756,9 @@ hostname = "$(gethostname())"
                 "[rest]\nconnect_timeout_s = 0\n",
                 "[rest]\nmax_retries = -1\n",
                 "[rest]\nretries = 3\n",
+                "[rest]\nmax_download_mb_s = -1.0\n",
+                "[rest]\nmax_download_mb_s = inf\n",
+                "[rest]\nmax_download_mb_s = \"5\"\n",
                 "[limits]\nmax_open_spill_files = 0\n",
                 "[limits]\ncompact_mem_fraction = 0.0\n",
                 "[limits]\ncompact_mem_fraction = 1.5\n",
@@ -1792,6 +1799,14 @@ hostname = "$(gethostname())"
         @test_throws ArgumentError MarketTickStreamer.RestPolicy(0, 10, 5)
         @test_throws ArgumentError MarketTickStreamer.RestPolicy(30, 0, 5)
         @test_throws ArgumentError MarketTickStreamer.RestPolicy(30, 10, -1)
+        @test_throws ArgumentError MarketTickStreamer.RestPolicy(
+            30,
+            10,
+            5;
+            max_download_rate = 0,
+        )
+        @test MarketTickStreamer.RestPolicy(30, 10, 5; max_download_rate = 1e6) !=
+              MarketTickStreamer.RestPolicy()
         # A server that accepts the request and goes silent once, then answers.
         port = freeport(8961)
         hits = Threads.Atomic{Int}(0)
@@ -3429,6 +3444,20 @@ hostname = "$(gethostname())"
                 @test MarketTickStreamer._content_range_total("") == -1
                 @test MarketTickStreamer._chunk_timeout(policy, 8 << 20) ==
                       cld(8 << 20, 50_000)
+                # a download cap paces the body: 3.1 MB at 4 MB/s takes at least
+                # 0.79 s (a local transfer otherwise takes milliseconds), and a
+                # cap below 50 kB/s stretches the chunk timeout to match
+                capped = MarketTickStreamer.RestPolicy(10, 5, 1; max_download_rate = 4e6)
+                t = @elapsed r4 = MarketTickStreamer._download_resumable(
+                    url,
+                    joinpath(dir, "capped.bin"),
+                    capped,
+                )
+                @test r4.found && read(joinpath(dir, "capped.bin")) == payload
+                @test t >= length(payload) / 4e6
+                slow = MarketTickStreamer.RestPolicy(10, 5, 1; max_download_rate = 10_000)
+                @test MarketTickStreamer._chunk_timeout(slow, 8 << 20) ==
+                      cld(8 << 20, 10_000)
                 @test MarketTickStreamer._crc32c_from_headers([
                     "X-Goog-Hash" => "crc32c=$crc_b64,md5=AAAA",
                 ]) == crc

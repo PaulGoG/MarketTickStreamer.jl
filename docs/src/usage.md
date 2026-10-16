@@ -154,6 +154,7 @@ rather than an error.
 | `request_timeout_s` | Read timeout of a REST request. Vendor files (Binance dumps, ITCH and IEX day files) are fetched in 8 MiB Range requests, each allowed this long or the time 50 kB/s would need, whichever is longer. |
 | `connect_timeout_s` | Connection timeout of a REST request. |
 | `max_retries` | Retries on transient failures: 429, 5xx, timeouts and dropped connections. |
+| `max_download_mb_s` | Cap on the download rate of vendor files, in MB/s (10⁶ bytes per second); `0` leaves it uncapped. Each Range request is paced from its own start, so a stall earns no burst afterwards. Set it when a multi-gigabyte download shares a link with other traffic. |
 
 ## `[quality]`
 
