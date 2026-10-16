@@ -6,6 +6,17 @@ Notable changes to MarketTickStreamer. The format follows
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-16
+
+Safeguards and fixes found while importing six vendor days for every listed
+symbol. An import no longer displaces a (symbol, day) already in the
+processed tree unless asked to with `replace = true`, which is the one
+change that can stop a script that re-runs imports over days it already
+holds. NYSE American listings read from ITCH carry tape B, as the
+consolidated tape does. Every vendor download, Binance dumps included, runs
+in bounded, resumable Range requests that survive slow links and dropped
+connections without splicing a byte twice.
+
 ### Added
 - `run_import` refuses to write a (symbol, day) that already exists in the
   processed tree unless `replace = true`: the tree has no source dimension,
@@ -585,7 +596,8 @@ against the historical SIP tape.
 - An offline test suite driven by an in-process mock of the Alpaca REST and
   WebSocket APIs, with Aqua static quality assurance.
 
-[Unreleased]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.4.0...v0.4.1
