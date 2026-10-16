@@ -311,43 +311,6 @@ function bulk_url(
     return "$(p.bulk_base)/data/spot/daily/$kind/$sym/$sym-$kind-$date.zip"
 end
 
-# GET `url` into `path` through a `.partial` file renamed on completion.
-# Returns `false` when the venue answers 404 — the day is not published —
-# and throws `HTTP.StatusError` on any other non-200 status, so that
-# `_with_retry` judges it like a REST response.
-function _download_file(url::AbstractString, path::AbstractString, policy::RestPolicy)
-    tmp = path * ".partial"
-    found = true
-    try
-        HTTP.open(
-            "GET",
-            url;
-            retry = false,
-            status_exception = false,
-            readtimeout = policy.request_timeout_s,
-            connect_timeout = policy.connect_timeout_s,
-        ) do http
-            HTTP.startread(http)
-            st = http.message.status
-            if st == 404
-                found = false
-            elseif st != 200
-                throw(HTTP.StatusError(st, "GET", String(url), http.message))
-            else
-                open(tmp, "w") do f
-                    while !eof(http)
-                        write(f, readavailable(http))
-                    end
-                end
-            end
-        end
-        found && mv(tmp, path; force = true)
-    finally
-        rm(tmp; force = true)
-    end
-    return found
-end
-
 # The venue's `.CHECKSUM` body is `<sha256 hex>  <file name>`.
 function _expected_sha256(checksum_path::AbstractString)
     tokens = split(strip(read(checksum_path, String)))
@@ -360,8 +323,11 @@ _sha256_hex(path::AbstractString) = bytes2hex(open(sha256, path))
 
 # The day's dump and its checksum, fetched into `dir` unless a verified copy
 # is already there. The checksum is fetched first: it is small, and its
-# absence is the venue saying the day is not published. Returns the zip
-# path, or `nothing` for an unpublished day.
+# absence (404) is the venue saying the day is not published. Both go through
+# the chunked downloader, whose per-chunk timeout lets a large dump arrive
+# over a slow link (a single request is cut off at the policy's timeout,
+# whatever its progress). Returns the zip path, or `nothing` for an
+# unpublished day.
 function _fetch_bulk(p::BinanceProvider, url::AbstractString, dir::AbstractString)
     mkpath(dir)
     path = joinpath(dir, basename(url))
@@ -370,14 +336,9 @@ function _fetch_bulk(p::BinanceProvider, url::AbstractString, dir::AbstractStrin
         isfile(sums) &&
         _sha256_hex(path) == _expected_sha256(sums) &&
         return path
-    found = _with_retry(p.rest) do
-        _download_file(url * ".CHECKSUM", sums, p.rest)
-    end
-    found || return nothing
-    got_file = _with_retry(p.rest) do
-        _download_file(url, path, p.rest)
-    end
-    got_file || error("bulk file listed with a checksum but missing: $url")
+    _download_resumable(url * ".CHECKSUM", sums, p.rest).found || return nothing
+    _download_resumable(url, path, p.rest).found ||
+        error("bulk file listed with a checksum but missing: $url")
     want = _expected_sha256(sums)
     got = _sha256_hex(path)
     if got != want

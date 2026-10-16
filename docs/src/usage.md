@@ -151,7 +151,7 @@ rather than an error.
 
 | Key | Meaning |
 | --- | --- |
-| `request_timeout_s` | Read timeout of a REST request. |
+| `request_timeout_s` | Read timeout of a REST request. Vendor files (Binance dumps, ITCH and IEX day files) are fetched in 8 MiB Range requests, each allowed this long or the time 50 kB/s would need, whichever is longer. |
 | `connect_timeout_s` | Connection timeout of a REST request. |
 | `max_retries` | Retries on transient failures: 429, 5xx, timeouts and dropped connections. |
 

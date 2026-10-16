@@ -2558,6 +2558,13 @@ hostname = "$(gethostname())"
                 zip =
                     joinpath(dest, "binance", "BTCUSDT", "BTCUSDT-aggTrades-2026-01-01.zip")
                 @test isfile(zip) && isfile(zip * ".CHECKSUM") && !isfile(zip * ".partial")
+                # An interrupted download resumes from its partial file with a
+                # Range request and still passes the checksum.
+                full = read(zip)
+                rm(zip)
+                write(zip * ".partial", full[1:(length(full)÷2)])
+                @test bulk_trades(p, "BTCUSDT", MOCK_BINANCE_EPOCH; dest_dir = dest) == rest
+                @test read(zip) == full && !isfile(zip * ".partial")
                 # The trades feed is the same tape under its own column layout.
                 tr = bulk_trades(
                     p,

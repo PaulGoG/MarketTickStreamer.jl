@@ -164,14 +164,32 @@ function start_mock_binance_rest(
                     repeat_head = get(repeat_head, d, 0),
                 ),
             )
-            if m[4] !== nothing
+            body = if m[4] !== nothing
                 sha = corrupt_checksum ? "0"^64 : bytes2hex(sha256(zip))
-                return HTTP.Response(200, "$sha  $name.zip\n")
+                Vector{UInt8}("$sha  $name.zip\n")
+            else
+                zip
             end
-            return HTTP.Response(200, zip)
+            return mock_range_response(req, body)
         end,
     )
     return HTTP.serve!(router, "127.0.0.1", port)
+end
+
+# A file served as data.binance.vision serves it: the whole body without a
+# Range header, 206 with `Content-Range` for `bytes=a-b`, 416 past the end.
+function mock_range_response(req, body::Vector{UInt8})
+    r = match(r"^bytes=(\d+)-(\d*)$", HTTP.header(req, "Range", ""))
+    r === nothing && return HTTP.Response(200, body)
+    n = length(body)
+    from = parse(Int, r[1])
+    from >= n && return HTTP.Response(416, ["Content-Range" => "bytes */$n"], "")
+    to = isempty(r[2]) ? n - 1 : min(parse(Int, r[2]), n - 1)
+    return HTTP.Response(
+        206,
+        ["Content-Range" => "bytes $from-$to/$n"],
+        body[(from+1):(to+1)],
+    )
 end
 
 """

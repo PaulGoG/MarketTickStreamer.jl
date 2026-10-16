@@ -20,6 +20,12 @@ Notable changes to MarketTickStreamer. The format follows
   the failure, splicing duplicate bytes into a file whose size still matched
   the announced length; a 3.5 GB ITCH day downloaded that way failed to
   inflate after 157 M of its 269 M messages.
+- Binance bulk dumps are fetched in bounded Range requests through the same
+  resumable downloader as the ITCH and IEX files. A dump used to arrive in a
+  single request, which HTTP.jl cuts off at `rest.request_timeout_s` however
+  far the transfer has got, so on a link slower than about 2 MB/s a busy
+  BTCUSDT day (65 MB) failed on every retry; an interrupted dump now resumes
+  from its partial file.
 - `itch50_trades` files NYSE American listings (Market Category `A`) under
   tape B, as the CTA plan and the SIP's own tape field do; they were filed
   under tape A, which belongs to NYSE listings alone. Checked on 2019-12-30
