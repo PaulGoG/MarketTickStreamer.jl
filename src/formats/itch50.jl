@@ -32,11 +32,14 @@ end
 @inline _alpha(b::Vector{UInt8}, i::Integer, n::Integer) =
     @inbounds rstrip(String(b[i:(i+n-1)]))
 
-# The tape of a symbol from the Stock Directory's Market Category byte.
+# The tape of a symbol from the Stock Directory's Market Category byte. Nasdaq
+# listings (Q G S) are tape C; under the CTA plan NYSE listings (N) are tape A
+# and those of the other exchanges (A NYSE American, P NYSE Arca, Z Cboe BZX,
+# V IEX) tape B.
 function _itch50_tape(category::UInt8)::String
     category in (UInt8('Q'), UInt8('G'), UInt8('S')) && return "C"
-    category in (UInt8('N'), UInt8('A')) && return "A"
-    category in (UInt8('P'), UInt8('Z'), UInt8('V')) && return "B"
+    category == UInt8('N') && return "A"
+    category in (UInt8('A'), UInt8('P'), UInt8('Z'), UInt8('V')) && return "B"
     return ""
 end
 

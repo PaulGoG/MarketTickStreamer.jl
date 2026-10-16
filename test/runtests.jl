@@ -2848,6 +2848,9 @@ hostname = "$(gethostname())"
         @test length(R(1, "AAPL", 'Q', 100)) == 41 &&
               length(A(1, 0, 1, 'B', 1, "A", 1)) == 38
         @test length(E(1, 0, 1, 1, 1)) == 33 && length(Q(1, 0, 1, "A", 1, 1, 'O')) == 42
+        # Market Category → tape: Nasdaq C, NYSE A, NYSE American and the other
+        # exchanges B (as the SIP itself stamps them), unknown categories "".
+        @test [MarketTickStreamer._itch50_tape(UInt8(c)) for c in "QGSNAPZVM "] == ["C", "C", "C", "A", "B", "B", "B", "B", "", ""]
         T0 = 34_200_000_000_000                                        # 09:30 ET in ns
         day0 = 1_577_682_000_000_000_000                               # 2019-12-30 05:00 UTC
         stream = vcat(

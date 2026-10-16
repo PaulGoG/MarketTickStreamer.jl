@@ -20,6 +20,11 @@ Notable changes to MarketTickStreamer. The format follows
   the failure, splicing duplicate bytes into a file whose size still matched
   the announced length; a 3.5 GB ITCH day downloaded that way failed to
   inflate after 157 M of its 269 M messages.
+- `itch50_trades` files NYSE American listings (Market Category `A`) under
+  tape B, as the CTA plan and the SIP's own tape field do; they were filed
+  under tape A, which belongs to NYSE listings alone. Checked on 2019-12-30
+  and 2026-06-12 against the consolidated tape: every sampled `A` symbol
+  prints on B, and every other category already matched.
 
 ## [0.6.0] - 2026-10-15
 
