@@ -3506,12 +3506,20 @@ hostname = "$(gethostname())"
             # are second-resolved, so a second import in the same second would
             # share the first one's prefix.
             sleep(1.1)
+            # the day exists: refused unless the displacement is explicit
+            @test_throws ArgumentError run_import(
+                cfg,
+                file;
+                format = "itch50",
+                symbols = ["AAPL"],
+            )
             files2 = run_import(
                 cfg,
                 file;
                 format = "itch50",
                 symbols = ["AAPL"],
                 keep_raw = false,
+                replace = true,
             )
             @test length(files2) == 1
             raws = filter(endswith(".jsonl"), readdir(cfg.raw_dir; join = true))
@@ -3519,6 +3527,12 @@ hostname = "$(gethostname())"
             metas = filter(endswith(".meta.toml"), readdir(cfg.raw_dir; join = true))
             @test length(metas) == 2
             @test_throws ArgumentError run_import(cfg, file; format = "csv")
+            # an IEX file whose name carries no date needs `date`
+            anon = joinpath(dir, "capture.pcap.gz")
+            write(anon, zeros(UInt8, 16))
+            @test_throws ArgumentError run_import(cfg, anon; format = "iex")
+            @test iex_hist_date("20200102_IEXTP1_TOPS1.6.pcap.gz") == Date(2020, 1, 2)
+            @test_throws ArgumentError iex_hist_date("capture.pcap.gz")
             @test_throws ArgumentError run_import(
                 cfg,
                 joinpath(dir, "missing.gz");

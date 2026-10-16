@@ -80,7 +80,12 @@ export AbstractProvider,
 export AlpacaProvider, BinanceProvider
 export market_clock, historical_trades, historical_trade_count, bulk_trades, condition_map
 export itch50_trades,
-    itch50_date, iex_hist_trades, fetch_itch50, fetch_iex_hist, iex_hist_index
+    itch50_date,
+    iex_hist_trades,
+    iex_hist_date,
+    fetch_itch50,
+    fetch_iex_hist,
+    iex_hist_index
 export ProviderSpec, provider_spec, make_provider, exchange_tz, always_open, session_days
 export run_stream,
     run_backfill,

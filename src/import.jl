@@ -8,7 +8,7 @@ const IMPORT_FORMATS = ("itch50", "iex")
 
 """
     run_import(cfg, path; format, date = nothing, symbols = cfg.symbols, broken = :drop,
-               tape = "", keep_raw = true) -> Vector{String}
+               tape = "", keep_raw = true, replace = false) -> Vector{String}
 
 Import one vendor day file into the processed tree, as one session: the
 file's prints stream through a raw NDJSON part set (prefix
@@ -30,6 +30,14 @@ A file that ends inside a message, as a partial download does, is imported
 to that point and logged as incomplete; the sidecar's `source.truncated`
 says so. The configured provider contributes its calendar and timestamp
 unit only; `"alpaca"` is the host for both US-equity formats.
+
+The processed tree is keyed by symbol and day with no source dimension, so
+an imported day is filed where a capture of that day would be. A source
+therefore gets a data tree of its own, and the import refuses to write a
+(symbol, day) that already exists in `processed/` unless `replace = true`,
+which displaces the existing files into safesave backups. The day is
+`date`, or is read from the file name ([`itch50_date`](@ref),
+[`iex_hist_date`](@ref)) when not given.
 """
 function run_import(
     cfg::Config,
@@ -40,6 +48,7 @@ function run_import(
     broken::Symbol = :drop,
     tape = "",
     keep_raw::Bool = true,
+    replace::Bool = false,
 )
     format in IMPORT_FORMATS || throw(
         ArgumentError(
@@ -51,7 +60,18 @@ function run_import(
     logger, log_io = setup_logging(cfg; session_id = sid)
     try
         return Logging.with_logger(logger) do
-            _run_import(cfg, sid, path, format, date, symbols, broken, tape, keep_raw)
+            _run_import(
+                cfg,
+                sid,
+                path,
+                format,
+                date,
+                symbols,
+                broken,
+                tape,
+                keep_raw,
+                replace,
+            )
         end
     finally
         log_io === nothing || close(log_io)
@@ -68,7 +88,19 @@ function _run_import(
     broken::Symbol,
     tape,
     keep_raw::Bool,
+    replace::Bool,
 )
+    day = _import_day(path, format, date)
+    clash = _import_collisions(cfg, day, symbols)
+    isempty(clash) ||
+        replace ||
+        throw(
+            ArgumentError(
+                "processed files of $day exist for $(join(clash, ", ")) in " *
+                "$(cfg.processed_dir): an imported day belongs in a data tree of its own, " *
+                "or pass replace = true to displace them into safesave backups",
+            ),
+        )
     started_utc = Dates.now(UTC)
     mkpath(cfg.raw_dir)
     slock = acquire_session_lock(cfg.data_dir)
@@ -93,13 +125,7 @@ function _run_import(
             end
         try
             stats = if format == "itch50"
-                itch50_trades(
-                    path,
-                    date === nothing ? itch50_date(path) : date;
-                    symbols,
-                    broken,
-                    each_page = sink_page,
-                )
+                itch50_trades(path, day; symbols, broken, each_page = sink_page)
             else
                 iex_hist_trades(path; symbols, broken, tape, each_page = sink_page)
             end
@@ -163,4 +189,23 @@ function _import_source(path::AbstractString, format::AbstractString, stats)
         src[String(k)] = v
     end
     return src
+end
+
+# The session date of a vendor file: as given, or read from its name.
+_import_day(path::AbstractString, format::AbstractString, date::Union{Nothing,Date}) =
+    date !== nothing ? date :
+    format == "itch50" ? itch50_date(basename(path)) : iex_hist_date(basename(path))
+
+# The symbols whose processed day already exists in the tree: the import
+# would displace them. Every symbol directory is checked when the import is
+# unrestricted.
+function _import_collisions(cfg::Config, day::Date, symbols)
+    syms = if symbols === nothing
+        isdir(cfg.processed_dir) ?
+        filter(s -> isdir(joinpath(cfg.processed_dir, s)), readdir(cfg.processed_dir)) :
+        String[]
+    else
+        String.(symbols)
+    end
+    return [s for s in syms if _processed_exists(cfg, s, day)]
 end

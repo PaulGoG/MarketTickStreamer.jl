@@ -259,3 +259,10 @@ table records the file's name, size and SHA-256, the format, and the
 reader's statistics (messages, prints, broken, sequence gaps, whether the
 file ended inside a message). `keep_raw = false` drops the day's NDJSON
 copy after compaction, the vendor file being the record.
+
+The processed tree is keyed by symbol and day with no source dimension, so
+an imported day is filed exactly where a capture of that day would be. Give
+each source a data tree of its own (`[storage] data_dir`; the `bulk`
+subtree may be shared) and keep the SIP tree for captures: `run_import`
+refuses to write a (symbol, day) that already exists unless
+`replace = true`, which moves the existing files into safesave backups.

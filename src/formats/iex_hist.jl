@@ -400,6 +400,21 @@ function iex_hist_trades(
 end
 
 """
+    iex_hist_date(name) -> Date
+
+The session date encoded in a HIST file name as IEX publishes it and
+[`fetch_iex_hist`](@ref) stores it, `YYYYMMDD_IEXTP1_<FEED><version>.pcap.gz`.
+Throws `ArgumentError` for any other name.
+"""
+function iex_hist_date(name::AbstractString)
+    m = match(r"^(\d{4})(\d{2})(\d{2})_IEXTP1", basename(name))
+    m === nothing &&
+        throw(ArgumentError("cannot read a session date from \"$name\"; pass `date`"))
+    yyyy, mm, dd = (parse(Int, something(m[i])) for i in 1:3)
+    return Date(yyyy, mm, dd)
+end
+
+"""
     iex_hist_index(date; api_base = IEX_HIST_API, policy = RestPolicy()) -> Vector{Dict} | Nothing
 
 The files IEX publishes for `date` — one entry per feed with `feed`,

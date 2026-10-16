@@ -6,6 +6,13 @@ Notable changes to MarketTickStreamer. The format follows
 
 ## [Unreleased]
 
+### Added
+- `run_import` refuses to write a (symbol, day) that already exists in the
+  processed tree unless `replace = true`: the tree has no source dimension,
+  and an imported day would otherwise displace a capture of that day into a
+  safesave backup. `iex_hist_date` reads the session date off a HIST file
+  name, as `itch50_date` does for Nasdaq's.
+
 ### Fixed
 - A chunked download resumes from the bytes actually on disk when a request
   fails mid-body, and refuses a 206 whose range does not start at the
