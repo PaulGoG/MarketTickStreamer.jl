@@ -3541,6 +3541,48 @@ hostname = "$(gethostname())"
                 @test length(kept) in (1 << 20, 2 << 20) &&
                       kept == payload[1:length(kept)] &&
                       !isfile(pf)
+                # a connection that breaks mid-chunk resumes from its last byte
+                dropped = Ref(false)
+                drop_ranges = String[]
+                drop_port = freeport(8991)
+                drop_server = HTTP.serve!(
+                    "127.0.0.1",
+                    drop_port;
+                    stream = true,
+                    verbose = false,
+                ) do http::HTTP.Stream
+                    r = HTTP.header(http.message, "Range", "")
+                    lock(() -> push!(drop_ranges, r), ranges_lock)
+                    lo, hi = split(split(r, '=')[2], '-')
+                    from, to = parse(Int, lo), min(parse(Int, hi), length(payload) - 1)
+                    body = payload[(from+1):(to+1)]
+                    HTTP.setstatus(http, 206)
+                    HTTP.setheader(
+                        http,
+                        "Content-Range" => "bytes $from-$to/$(length(payload))",
+                    )
+                    HTTP.setheader(http, "Content-Length" => string(length(body)))
+                    HTTP.startwrite(http)
+                    if from == 2 << 20 && !dropped[]
+                        dropped[] = true
+                        write(http, body[1:(length(body)÷2)])
+                        close(http.stream)
+                    else
+                        write(http, body)
+                    end
+                end
+                try
+                    pd = joinpath(dir, "dropped.bin")
+                    @test MarketTickStreamer._download_resumable(
+                        "http://127.0.0.1:$drop_port/f/dropped.gz",
+                        pd,
+                        MarketTickStreamer.RestPolicy(10, 5, 2; download_connections = 3);
+                        chunk_bytes = 1 << 20,
+                    ).found && read(pd) == payload
+                    @test dropped[] && "bytes=2621440-3145727" in drop_ranges
+                finally
+                    close(drop_server)
+                end
                 slow = MarketTickStreamer.RestPolicy(10, 5, 1; max_download_rate = 10_000)
                 @test MarketTickStreamer._chunk_timeout(slow, 8 << 20) ==
                       cld(8 << 20, 10_000)
