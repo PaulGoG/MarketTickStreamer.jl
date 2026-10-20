@@ -157,7 +157,8 @@ consumers are developed offline (see `docs/src/architecture.md`).
 | Crash-only session lifecycle (running/completed/interrupted/failed sidecars + startup reconciliation) | working, tested |
 | Page-streaming, per-day resumable backfill | working, tested |
 | Bulk backfill from the venue's daily files (Binance `aggTrades` and `trades` dumps: checksum-verified, kept as the vendor record, same raw/compaction/resume path; `keep_raw = false` drops the NDJSON copy) | working, tested |
-| Vendor day-file import (Nasdaq ITCH 5.0 executions priced off the book, crosses, odd lots, breaks; IEX HIST pcap/pcapng, IEX-TP sessions, trade reports and breaks) through the raw/compaction/sidecar path | working, tested on synthetic files; validated on a real ITCH prefix (every execution resolved) and a full IEX day (print-for-print against the SIP) |
+| Vendor day-file import (Nasdaq ITCH 5.0 executions priced off the book, crosses, odd lots, breaks; IEX HIST pcap/pcapng, IEX-TP sessions, trade reports and breaks) through the raw/compaction/sidecar path | working, tested on synthetic files; validated on full days of both: ITCH prints equal the SIP's Nasdaq prints apart from the official opening and closing cross reports (and a rare zero-size print), IEX prints equal the SIP's IEX prints in order |
+| Vendor file download (ITCH and IEX day files, Binance dumps): bounded Range requests resumed from a `.partial` prefix, announced size or CRC-32C checked, optional rate cap, several connections per file, progress logged | working, tested against mock; used on full vendor days of up to 18 GB |
 | Spill compaction (bounded memory for arbitrarily large raw inputs) | working, tested |
 | Single-instance lock per data tree | working, tested |
 | Capture-coverage cross-check against the historical tape (`coverage_report`) | working |
