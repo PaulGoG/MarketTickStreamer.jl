@@ -229,7 +229,7 @@ Citation metadata is in [`CITATION.cff`](CITATION.cff). BibTeX:
 @software{MarketTickStreamer_jl,
   author  = {Gogîță, Paul-Adrian},
   title   = {MarketTickStreamer.jl: provider-agnostic tick-by-tick market data acquisition and paced replay in Julia},
-  version = {0.7.0},
+  version = {0.8.0},
   year    = {2026},
   url     = {https://github.com/PaulGoG/MarketTickStreamer.jl}
 }

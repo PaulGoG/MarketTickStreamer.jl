@@ -6,6 +6,14 @@ Notable changes to MarketTickStreamer. The format follows
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-20
+
+Vendor downloads that suit a shared link and a lossy path. A cap on the
+download rate leaves room for other traffic, several connections per file
+lift a transfer that a long path with packet loss limits per connection,
+and a progress line every five minutes makes a transfer of hours visible.
+Nothing changes by default: no cap, one connection.
+
 ### Added
 - `[rest] max_download_mb_s` caps the download rate of vendor files —
   Binance dumps, ITCH and IEX day files — in MB/s, so a multi-gigabyte
@@ -615,7 +623,8 @@ against the historical SIP tape.
 - An offline test suite driven by an in-process mock of the Alpaca REST and
   WebSocket APIs, with Aqua static quality assurance.
 
-[Unreleased]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.4.1...v0.5.0
