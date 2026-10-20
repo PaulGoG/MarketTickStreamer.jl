@@ -1733,10 +1733,12 @@ hostname = "$(gethostname())"
                 cfg.rest_connect_timeout_s,
                 cfg.rest_max_retries,
                 cfg.rest_max_download_mb_s,
-            ) == (30, 10, 5, 0.0)
+                cfg.rest_download_connections,
+            ) == (30, 10, 5, 0.0, 1)
             @test MarketTickStreamer.RestPolicy(cfg).max_download_rate == Inf
-            write(p, base * "[rest]\nmax_download_mb_s = 5\n")
+            write(p, base * "[rest]\nmax_download_mb_s = 5\ndownload_connections = 4\n")
             @test MarketTickStreamer.RestPolicy(load_config(p)).max_download_rate == 5e6
+            @test MarketTickStreamer.RestPolicy(load_config(p)).download_connections == 4
             @test cfg.max_open_spill_files == 256
             @test cfg.compact_mem_fraction == 0.5
             @test cfg.spill_headroom == 1.1
@@ -1759,6 +1761,9 @@ hostname = "$(gethostname())"
                 "[rest]\nmax_download_mb_s = -1.0\n",
                 "[rest]\nmax_download_mb_s = inf\n",
                 "[rest]\nmax_download_mb_s = \"5\"\n",
+                "[rest]\ndownload_connections = 0\n",
+                "[rest]\ndownload_connections = 9\n",
+                "[rest]\ndownload_connections = 2.0\n",
                 "[limits]\nmax_open_spill_files = 0\n",
                 "[limits]\ncompact_mem_fraction = 0.0\n",
                 "[limits]\ncompact_mem_fraction = 1.5\n",
@@ -1806,6 +1811,16 @@ hostname = "$(gethostname())"
             max_download_rate = 0,
         )
         @test MarketTickStreamer.RestPolicy(30, 10, 5; max_download_rate = 1e6) !=
+              MarketTickStreamer.RestPolicy()
+        for n in (0, 9)
+            @test_throws ArgumentError MarketTickStreamer.RestPolicy(
+                30,
+                10,
+                5;
+                download_connections = n,
+            )
+        end
+        @test MarketTickStreamer.RestPolicy(30, 10, 5; download_connections = 3) !=
               MarketTickStreamer.RestPolicy()
         # A server that accepts the request and goes silent once, then answers.
         port = freeport(8961)
@@ -3270,6 +3285,7 @@ hostname = "$(gethostname())"
         crc_b64 =
             base64encode([UInt8((crc32c(payload) >> (8 * (3 - k))) & 0xff) for k in 0:3])
         ranges = String[]
+        ranges_lock = ReentrantLock()
         port = freeport(8981)
         router = HTTP.Router()
         HTTP.register!(
@@ -3292,7 +3308,11 @@ hostname = "$(gethostname())"
                 name = HTTP.getparams(req)["name"]
                 name == "missing.gz" && return HTTP.Response(404, "Not Found")
                 r = HTTP.header(req, "Range", "")
-                push!(ranges, r)
+                lock(() -> push!(ranges, r), ranges_lock)
+                # a host that fails for good past 2 MiB
+                name == "failing.gz" &&
+                    parse(Int, split(split(r, '=')[2], '-')[1]) >= 2 << 20 &&
+                    return HTTP.Response(403, "Forbidden")
                 # a host that ignores the requested start: the client must not splice
                 name == "misaligned.gz" && return HTTP.Response(
                     206,
@@ -3455,6 +3475,64 @@ hostname = "$(gethostname())"
                 )
                 @test r4.found && read(joinpath(dir, "capped.bin")) == payload
                 @test t >= length(payload) / 4e6
+                # several connections: the first chunk alone (it names the
+                # length), the rest claimed concurrently and appended in order
+                par = MarketTickStreamer.RestPolicy(10, 5, 1; download_connections = 3)
+                empty!(ranges)
+                pp = joinpath(dir, "parallel.bin")
+                r5 = MarketTickStreamer._download_resumable(
+                    url,
+                    pp,
+                    par;
+                    chunk_bytes = 1 << 20,
+                )
+                @test r5.found && read(pp) == payload && !isfile(pp * ".partial")
+                @test ranges[1] == "bytes=0-1048575"
+                @test sort(ranges[2:end]) == [
+                    "bytes=1048576-2097151",
+                    "bytes=2097152-3145727",
+                    "bytes=3145728-3145850",
+                ]
+                # a partial file left by a sequential transfer resumes in parallel
+                pr = joinpath(dir, "parallel-resumed.bin")
+                write(pr * ".partial", payload[1:1_000_000])
+                empty!(ranges)
+                @test MarketTickStreamer._download_resumable(
+                    url,
+                    pr,
+                    par;
+                    chunk_bytes = 1 << 20,
+                ).found && read(pr) == payload
+                @test ranges[1] == "bytes=1000000-2048575" && length(ranges) == 3
+                # the cap bounds the sum of the connections
+                cappar = MarketTickStreamer.RestPolicy(
+                    10,
+                    5,
+                    1;
+                    max_download_rate = 4e6,
+                    download_connections = 2,
+                )
+                t = @elapsed MarketTickStreamer._download_resumable(
+                    url,
+                    joinpath(dir, "capped-parallel.bin"),
+                    cappar;
+                    chunk_bytes = 1 << 20,
+                )
+                @test read(joinpath(dir, "capped-parallel.bin")) == payload
+                @test t >= length(payload) / 4e6
+                # a connection that fails for good ends the transfer; what was
+                # appended is a prefix of the file, whole chunks only
+                pf = joinpath(dir, "failing.bin")
+                @test_throws ErrorException MarketTickStreamer._download_resumable(
+                    "http://127.0.0.1:$port/f/failing.gz",
+                    pf,
+                    par;
+                    chunk_bytes = 1 << 20,
+                )
+                kept = read(pf * ".partial")
+                @test length(kept) in (1 << 20, 2 << 20) &&
+                      kept == payload[1:length(kept)] &&
+                      !isfile(pf)
                 slow = MarketTickStreamer.RestPolicy(10, 5, 1; max_download_rate = 10_000)
                 @test MarketTickStreamer._chunk_timeout(slow, 8 << 20) ==
                       cld(8 << 20, 10_000)

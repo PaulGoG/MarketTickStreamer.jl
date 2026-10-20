@@ -64,6 +64,7 @@ struct Config
     rest_connect_timeout_s::Int
     rest_max_retries::Int
     rest_max_download_mb_s::Float64
+    rest_download_connections::Int
     # [rng]
     rng_seed::Int
     # [monitor]
@@ -151,8 +152,13 @@ const CONFIG_KEYS = Dict{String,Vector{String}}(
         "resume",
         "keep_raw",
     ],
-    "rest" =>
-        ["request_timeout_s", "connect_timeout_s", "max_retries", "max_download_mb_s"],
+    "rest" => [
+        "request_timeout_s",
+        "connect_timeout_s",
+        "max_retries",
+        "max_download_mb_s",
+        "download_connections",
+    ],
     "rng" => ["seed"],
     "monitor" => ["refresh_s", "top_symbols", "rate_window_s"],
     "logging" => ["level", "log_to_file", "log_dir"],
@@ -512,6 +518,12 @@ function load_config(path::AbstractString = _default_config_path())
             "rest.max_download_mb_s must be a finite number >= 0 (0 = no cap), got $rest_max_download",
         ),
     )
+    rest_download_connections = _cfg_value(rst, "rest", "download_connections", Int, 1)
+    1 <= rest_download_connections <= MAX_DOWNLOAD_CONNECTIONS || throw(
+        ArgumentError(
+            "rest.download_connections must be in 1:$MAX_DOWNLOAD_CONNECTIONS, got $rest_download_connections",
+        ),
+    )
 
     rng_seed = _cfg_value(tbl("rng"), "rng", "seed", Int, _draw_seed())
     rng_seed >= 0 || throw(ArgumentError("rng.seed must be >= 0, got $rng_seed"))
@@ -614,6 +626,7 @@ function load_config(path::AbstractString = _default_config_path())
         rest_connect_timeout,
         rest_max_retries,
         rest_max_download,
+        rest_download_connections,
         rng_seed,
         mon_refresh,
         mon_top,
