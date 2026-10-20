@@ -17,10 +17,13 @@ Notable changes to MarketTickStreamer. The format follows
 - `[rest] download_connections` (1 to 8, default 1) fetches a vendor file on
   that many Range requests at once, for hosts whose path limits each TCP
   connection: across a 150 ms path the ITCH host gave 0.6–0.75 MB/s on one
-  connection and 1.6–2.1 MB/s on four. Chunks are appended in order, so the partial
-  file stays a prefix of the remote one and resumes as before; the rate cap
-  applies to the sum. It reaches the downloader as
+  connection and 1.6–2.1 MB/s on four. Chunks are appended in order, so the
+  partial file stays a prefix of the remote one and resumes as before; the
+  rate cap applies to the sum. It reaches the downloader as
   `RestPolicy(...; download_connections)`.
+- Vendor-file downloads log their progress — bytes received, total, rate over
+  the interval — every five minutes, so a transfer of hours is visible in its
+  log.
 
 ## [0.7.0] - 2026-10-16
 

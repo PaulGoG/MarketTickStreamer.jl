@@ -296,7 +296,8 @@ _get_with_retry(url, headers; query = nothing, policy::RestPolicy = RestPolicy()
 # written; 416 past the end means the partial file is already complete.
 # The body is read at no more than the policy's `max_download_rate`. With
 # `download_connections > 1`, once a 206 has named the total length the rest
-# is fetched on that many connections (`_download_parallel!`).
+# is fetched on that many connections (`_download_parallel!`). Progress is
+# logged every `progress_s` seconds.
 # Returns `(; found, headers)`, the headers of the last response, for the
 # caller's integrity check.
 function _download_resumable(
@@ -304,17 +305,28 @@ function _download_resumable(
     path::AbstractString,
     policy::RestPolicy;
     chunk_bytes::Integer = 8 << 20,
+    progress_s::Real = 300,
 )
     chunk_bytes >= 1 || throw(ArgumentError("chunk_bytes must be >= 1, got $chunk_bytes"))
     tmp = path * ".partial"
     found = true
     resp_headers = Pair{String,String}[]
     total = Int64(-1)                   # from Content-Range, once a 206 names it
+    mark = Ref((time(), isfile(tmp) ? filesize(tmp) : Int64(0)))
+    progress(bytes) = _log_progress!(mark, path, bytes, total, progress_s)
     while true
         before = isfile(tmp) ? filesize(tmp) : Int64(0)
         total >= 0 && before >= total && break
         if total >= 0 && policy.download_connections > 1 && total - before > chunk_bytes
-            _download_parallel!(url, tmp, before, total, policy, Int64(chunk_bytes))
+            _download_parallel!(
+                url,
+                tmp,
+                before,
+                total,
+                policy,
+                Int64(chunk_bytes);
+                progress,
+            )
             continue
         end
         done = false
@@ -368,6 +380,7 @@ function _download_resumable(
         end
         done && break
         filesize(tmp) > before || error("no progress downloading $url at byte $before")
+        progress(filesize(tmp))
     end
     if !found
         rm(tmp; force = true)
@@ -386,13 +399,15 @@ end
 # which bounds the memory held at about `3n` chunks. The rate cap is shared
 # out evenly. The first failure (after the policy's retries) ends the
 # transfer and is rethrown; requests in flight finish on their own.
+# `progress` is called with the length of `tmp` after each append.
 function _download_parallel!(
     url::AbstractString,
     tmp::AbstractString,
     have::Int64,
     total::Int64,
     policy::RestPolicy,
-    chunk_bytes::Int64,
+    chunk_bytes::Int64;
+    progress = _ -> nothing,
 )
     n = policy.download_connections
     rate = policy.max_download_rate / n
@@ -438,6 +453,7 @@ function _download_parallel!(
             open(f -> write(f, chunk), tmp, "a")
             written[] = k
             notify(cond)
+            progress(starts[k] + length(chunk))
         end
     catch e
         failure[] === nothing && (failure[] = e)
@@ -495,6 +511,20 @@ function _fetch_range(
     end
     position(buf) == len || error("$url sent more than bytes $a-$b")
     return take!(buf)
+end
+
+# Log a transfer's progress once `every` seconds have passed since the last
+# report, whose time and byte count `mark` holds.
+function _log_progress!(mark, path, bytes::Integer, total::Integer, every::Real)
+    t0, b0 = mark[]
+    t = time()
+    t - t0 >= every || return nothing
+    received_gb = round(bytes / 1e9; digits = 2)
+    total_gb = total < 0 ? missing : round(total / 1e9; digits = 2)
+    mb_s = round((bytes - b0) / max(t - t0, 1e-3) / 1e6; digits = 2)
+    @info "downloading" file = basename(path) received_gb total_gb mb_s
+    mark[] = (t, bytes)
+    return nothing
 end
 
 # The request timeout of one chunk: the policy's, or longer when the chunk

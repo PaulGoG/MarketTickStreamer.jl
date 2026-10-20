@@ -3504,6 +3504,14 @@ hostname = "$(gethostname())"
                     chunk_bytes = 1 << 20,
                 ).found && read(pr) == payload
                 @test ranges[1] == "bytes=1000000-2048575" && length(ranges) == 3
+                # a transfer reports its progress every `progress_s` seconds
+                @test_logs (:info, "downloading") match_mode = :any MarketTickStreamer._download_resumable(
+                    url,
+                    joinpath(dir, "progress.bin"),
+                    par;
+                    chunk_bytes = 1 << 20,
+                    progress_s = 0,
+                )
                 # the cap bounds the sum of the connections
                 cappar = MarketTickStreamer.RestPolicy(
                     10,
