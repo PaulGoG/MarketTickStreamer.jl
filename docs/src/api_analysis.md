@@ -17,11 +17,11 @@ Modules = [MarketTickStreamer]
 Pages = ["resample.jl"]
 ```
 
-## Replay
+## Replay and following
 
 ```@autodocs
 Modules = [MarketTickStreamer]
-Pages = ["replay.jl"]
+Pages = ["replay.jl", "follow.jl"]
 ```
 
 ## Corpus access

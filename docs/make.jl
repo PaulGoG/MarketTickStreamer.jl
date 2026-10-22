@@ -18,6 +18,7 @@ makedocs(
         "Architecture" => "architecture.md",
         "Usage & Configuration" => "usage.md",
         "Replay & Analysis Interfaces" => "replay.md",
+        "Files & Provenance" => "files.md",
         "Unattended Operation" => "deployment.md",
         "API Reference" => [
             "Acquisition and storage" => "api.md",

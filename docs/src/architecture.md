@@ -8,33 +8,45 @@ the reasoning behind each decision; the README covers usage.
 ## 1. Data flow
 
 ```
-                       ┌────────────────────────────────────────────────────┐
- config/config.toml ──▶│                 MarketTickStreamer                 │
- .env (credentials) ──▶│                                                    │
-                       │   AbstractProvider  (Alpaca today; adapter per     │
-                       │        │            provider, multiple dispatch)   │
-                       │        ▼                                           │
-                       │   ┌─ live_source ──── WebSocket, reconnect,        │
-                       │   │                   watchdog, session deadline   │
-                       │   ├─ replay_source ── recorded NDJSON, paced       │
-                       │   └─ historical_trades ── REST, paginated          │
-                       │        │                                           │
-                       │        ▼   Channel{Trade}  (bounded, typed)        │
-                       │   ┌────┴────── tee (fan-out, lossless) ───────┐    │
-                       │   ▼                                           ▼    │
-                       │  run_sink! ─▶ data/raw/*.jsonl      analysis taps  │
-                       │  (batched, append-only)             (future)       │
-                       │        │                                           │
-                       │        ▼ compact_raw                               │
-                       │  data/processed/SYMBOL/DATE.csv|.arrow             │
-                       └────────────────────────────────────────────────────┘
+                       ┌──────────────────────────────────────────────────────────────────┐
+ config/config.toml ──▶│                        MarketTickStreamer                        │
+ .env (credentials) ──▶│                                                                  │
+                       │  AbstractProvider: the Alpaca and Binance adapters, by dispatch  │
+                       │      ▼                                         ▼                 │
+                       │  live_source                      historical_trades, bulk_trades │
+                       │  WebSocket                        REST pages or daily dumps      │
+                       │      │                            itch50_trades, iex_hist_trades │
+                       │      ▼                            vendor day files               │
+                       │  Channel{Trade}  bounded, typed                │                 │
+                       │      │                                         │ pages           │
+                       │      ▼                                         │                 │
+                       │     tee ──────────▶ analysis taps              │                 │
+                       │      │                                         │                 │
+                       │      ▼                                         ▼                 │
+                       │  run_sink!                               write_batch!            │
+                       │      │                                         │                 │
+                       │      └─────────────────▶ raw/ ◀────────────────┘                 │
+                       │             NDJSON parts + <id>.meta.toml                        │
+                       │                           │                                      │
+                       │           ┌───────────────┼───────────────┐                      │
+                       │           ▼               ▼               ▼                      │
+                       │     replay_source    compact_raw    follow_source                │
+                       │   ▶ Channel{Trade}        ▼        ▶ Channel{Trade} in           │
+                       │                      processed/      another process             │
+                       │                SYMBOL/DATE.csv|.arrow                            │
+                       │                           │                                      │
+                       │                           ▼                                      │
+                       │        eachday, read_processed, replay_source                    │
+                       └──────────────────────────────────────────────────────────────────┘
 ```
 
-The load-bearing abstraction is `Channel{Trade}`: live, replay, and (via a
-trivial wrapper) backfill all produce the same typed stream, so a real-time
-analysis consumer developed against `replay_source` runs unchanged against
-the live feed. Backpressure is intrinsic — bounded channels block producers
-instead of dropping or buffering unboundedly.
+The load-bearing abstraction is `Channel{Trade}`: live, replay and follow
+produce the same typed stream, so a real-time analysis consumer developed
+against `replay_source` runs unchanged against the live feed or against a
+capture running in another process. Backfill and import write through the
+same sink as a capture, so everything downstream of the raw layer is one
+path. Backpressure is intrinsic: bounded channels block producers instead
+of dropping or buffering unboundedly.
 
 ## 2. Canonical schema
 
@@ -45,11 +57,11 @@ instead of dropping or buffering unboundedly.
   `Dates.DateTime` is millisecond-resolution and would silently truncate the
   nanosecond RFC 3339 timestamps Alpaca sends; a custom parser
   (`rfc3339_to_ns`) round-trips losslessly (tested at every fractional
-  width). This representation maps directly onto Arrow `Timestamp(ns)` and
-  DuckDB `TIMESTAMP_NS` later.
+  width). This representation maps directly onto Arrow `Timestamp(ns)`.
 - Two clocks per tick: `time_ns` (exchange event time) and `recv_ns` (local
-  receipt). Their difference measures pipeline latency; replay pacing uses
-  `recv_ns` (the flux as experienced); `recv_ns = 0` marks backfilled rows.
+  receipt). Their difference measures pipeline latency; replay paces on its
+  clock, receipt time when every record has one and exchange time otherwise,
+  either forced by `clock`; `recv_ns = 0` marks backfilled rows.
 - The venue's own resolution is recorded, not assumed: the SIP delivers
   nanoseconds; Binance delivers milliseconds unless asked for microseconds,
   which the adapter asks for. Every session sidecar carries
@@ -63,10 +75,10 @@ instead of dropping or buffering unboundedly.
    one tick, and `read_raw` skips it with a warning — tested) and
    human-inspectability. Writes are batched (`flush_max_ticks` /
    `flush_interval_s`) to keep I/O off the hot path.
-2. **Processed** — per-symbol, per-trading-day (America/New_York calendar)
-   CSV or Arrow, time-sorted, produced by `compact_raw`. CSV is the default
-   per project convention; Arrow is one config switch away when volume
-   demands it. A rewrite never destroys a result: the new file takes the
+2. **Processed** — per-symbol, per-trading-day (the provider's calendar: New
+   York for Alpaca, UTC for Binance) CSV or Arrow, time-sorted, produced by
+   `compact_raw`. CSV is the default; Arrow is one config switch away when
+   volume demands it. A rewrite never destroys a result: the new file takes the
    canonical name and the file it displaces is kept as a numbered backup,
    `_#1`, `_#2`, …, so the canonical path is always the newest data. These
    are the semantics of DrWatson's `safesave`, implemented in a dozen lines
@@ -91,7 +103,7 @@ vendor's record, and streams its rows through the same per-day raw sink and
 compaction as a REST page walk, so the raw layer remains the one source of
 truth every reader understands. The copy costs disk, not correctness.
 
-Scale-up path (not yet needed at a-few-symbols IEX volume): swap the raw
+Scale-up path, when needed: swap the raw
 layer to `Arrow.append` on stream-format files and query with DuckDB.jl —
 the `Trade`-channel interface isolates that change to `sinks.jl`.
 
@@ -116,25 +128,25 @@ path — no data is lost on interrupt (tested).
   alone would only test it between connections.
 - **Fatal vs retryable**: Alpaca error codes 401–411 (bad auth, connection
   limit, bad subscription) abort immediately — retrying them is a ban risk,
-  not resilience. The fatal signal is carried out of the WebSocket handler
-  by value, not by throw: exceptions crossing HTTP.jl's internal task
-  boundary arrive wrapped, which would defeat `isa` dispatch (this was a
-  real bug, caught by the mock-server tests).
+  not resilience. The Alpaca adapter carries the fatal signal out of the
+  WebSocket handler by value and throws it after the connection returns;
+  the Binance adapter throws inside the handler. Both paths are tested
+  against the mocks.
 - **Stale connections**: HTTP.jl 1.x websockets have no read-idle timeout, so
   a watchdog task force-closes the socket after `stream.stale_timeout_s`
   without a frame, triggering the normal reconnect path.
-- **Market-hours railings**: `/v2/clock` gates connection
+- **Market-hours guards**: `/v2/clock` gates connection
   (`stream.require_market_open`); `stream.wait_for_open` sleeps until the
   next open instead of exiting; `stream.stop_at_market_close` schedules a
   graceful stop at `next_close` so an unattended session doesn't idle on a
   dead overnight connection. Half-days and holidays are handled implicitly
   because the clock endpoint, not a local calendar, is authoritative
   (early-close behavior is tested end-to-end against a mock clock).
-  Delayed feeds (`delayed_sip`, 15 min) shift both railings by the feed
+  Delayed feeds (`delayed_sip`, 15 min) shift both guards by the feed
   delay via `feed_delay_ns`: the open-wait extends past the silent
   post-open window and the close guard runs to `next_close + delay + 60 s`
   so the delayed tape tail is captured, not truncated.
-- **Shutdown robustness**: `close(ws)` is a handshake; a peer that never
+- **Shutdown**: `close(ws)` is a handshake; a peer that never
   acks the CLOSE frame would hang the read loop, so `stop!` severs the raw
   transport after a 5 s grace if the graceful close has not completed.
 - **Resource guards**: free-disk check before and during a session
@@ -167,25 +179,23 @@ path — no data is lost on interrupt (tested).
   `<session_id>.meta.toml` sidecar at START (`status = "running"`; git
   commit + dirty flag, versions, hostname, pid, hardware fingerprint —
   CPU model/cores, memory, thread and BLAS-thread counts, `versioninfo` —
-  and the full config snapshot) and
-  finalizes it at exit (`completed` / `interrupted` / `failed`, counts:
-  prints received, and for a backfill the prints stored after compaction
-  removed duplicates). A
-  copy of the resolved `Manifest.toml` is written beside it as
-  `<session>.manifest.toml` and named under `provenance.manifest`: no manifest
-  is tracked in the repository, so this copy is what pins the dependency
-  versions a session ran with. Startup
-  reconciliation relabels sidecars of dead processes `aborted` and reports
-  zero-byte raw stubs — provenance survives SIGKILL and power loss, which
-  graceful-path handling alone cannot (threaded Ctrl-C delivery is
-  best-effort in Julia).
+  and the full config snapshot) and finalizes it at exit (`completed` /
+  `interrupted` / `failed`, counts: prints received, and for a backfill the
+  prints stored after compaction removed duplicates). A copy of the resolved
+  `Manifest.toml` is written beside it as `<session>.manifest.toml` and
+  named under `provenance.manifest`: no manifest is tracked in the
+  repository, so this copy is what pins the dependency versions a session
+  ran with. Startup reconciliation relabels sidecars of dead processes
+  `aborted` and reports zero-byte raw stubs — provenance survives SIGKILL
+  and power loss, which graceful-path handling alone cannot (threaded
+  Ctrl-C delivery is best-effort in Julia).
 - **Reproducible randomness**: the package's only random draws are the
   jitter of its backoff schedules, REST retries and stream reconnects. Both
   generators derive from one seed, `[rng] seed`, drawn from the OS at load
   when the configuration names none and recorded in the sidecar's config
   snapshot, so a session's retry and reconnect schedule can be replayed
   from its sidecar.
-- **Backfill robustness**: per-(symbol, trading-day) download loop with
+- **Backfill**: per-(symbol, trading-day) download loop with
   page-streamed sink writes — memory is bounded by one REST page plus the
   configured heap ceiling (`limits.max_live_heap_mb`, auto-GC then loud
   stop); `backfill.resume` skips pairs already processed, so a rerun after
@@ -199,14 +209,15 @@ path — no data is lost on interrupt (tested).
   sessions from interleaving on one raw directory; stale locks from dead
   processes break automatically.
 
-## 6. Dependency decisions (verified 2026-07-30)
+## 6. Dependency decisions
 
 | Choice | Rationale |
 |---|---|
-| `HTTP.jl` pinned to 1.x (resolved 1.11) | 2.x is a weeks-old breaking rewrite (Reseau.jl backend). For unattended capture, battle-tested wins. Migration path documented: kwarg renames (`readtimeout`→`read_idle_timeout` etc.); our watchdog becomes redundant on 2.x. |
-| `JSON.jl` 1.x (since 0.3.0; JSON3 before) | JSON3 is deprecated in General and caps Parsers at 2, which blocks CSV 1.x. Measured 2026-10-06 against JSON.jl 1.10, on one core: a raw line parses straight into `Trade` four times faster, with no `SubString` penalty, and a 10 000-trade REST page about 80 times faster, the JSON3 cost being quadratic in page length. |
+| `HTTP.jl` pinned to 1.x | 2.x is a rewrite on a new transport (Reseau.jl backend). The stale-connection watchdog exists because 1.x WebSockets have no read-idle timeout, and the chunked downloads because 1.x bounds a whole request by one timeout; both go with the migration, which otherwise renames keyword arguments (`readtimeout`→`read_idle_timeout` etc.). |
+| `JSON.jl` 1.x (since 0.3.0; JSON3 before) | JSON3 is deprecated in General and caps Parsers at 2, which blocks CSV 1.x. Measured against JSON.jl 1.10, on one core: a raw line parses straight into `Trade` four times faster, with no `SubString` penalty, and a 10 000-trade REST page about 80 times faster, the JSON3 cost being quadratic in page length. |
 | No `WebSockets.jl` | Abandoned (last release 2022). `HTTP.WebSockets` is the ecosystem standard. |
-| No `AlpacaMarkets.jl` | REST-only, single maintainer, pins that conflict with a modern stack. Direct HTTP+JSON is ~200 lines and fully under test. |
+| No `AlpacaMarkets.jl` | REST-only, single maintainer, pins that conflict with a modern stack. Direct HTTP+JSON is a few hundred lines and fully under test. |
+| `PrecompileTools.jl` | The consumer-facing paths are compiled with the package; the first `compact_raw` and the first processed-file replay cost seconds of compilation before. |
 | `DotEnv.jl` 1.0 (`load!`) | Registered, stable, zero-issue scope. |
 | Custom ns timestamps over `NanoDates.jl` | One regex + integer math, zero deps on the hot path; NanoDates remains an option as a display layer. |
 | Hand-rolled backoff | `Base.retry`/Retry.jl don't fit a stateful reconnect loop with attempt-reset semantics. |
@@ -217,12 +228,19 @@ path — no data is lost on interrupt (tested).
 
 `test/mock_alpaca.jl` implements the Alpaca REST + WebSocket v2 protocol
 in-process (scriptable per-connection behavior: batches, then fatal codes),
-so the full pipeline — connect, auth, subscribe, stream, reconnect, fatal
-stop, batched persistence, compaction, replay — runs end-to-end in CI with
-no credentials and no network. Unit tests cover timestamp round-trips at
-every fractional width, offset normalization, config validation, sink
+and `test/mock_binance.jl` the Binance REST and WebSocket APIs and the
+daily bulk files with their checksums, so the full pipeline — connect,
+auth, subscribe, stream, reconnect, fatal stop, batched persistence,
+backfill, compaction, replay — runs end-to-end on both venues with no
+credentials and no network. The vendor readers and the import run on
+synthetic ITCH 5.0 and IEX HIST files built by the suite, and the resumable
+downloader against a mock file host. Unit tests cover timestamp round-trips
+at every fractional width, offset normalization, config validation, sink
 rolling/never-reopen, corrupt-line recovery, safesave compaction, `tee`
-fan-out, and replay pacing.
+fan-out, replay pacing, and following a running session through torn lines,
+rolls and the sidecar's end. The three worked examples under `examples/`
+are executed, and static QA runs with the suite: Aqua, JET, ExplicitImports
+and AllocCheck.
 
 ## 8. Visualization
 
@@ -261,12 +279,12 @@ tree with symbol/date filters).
 process tails the session's raw NDJSON part files (incremental offsets,
 torn-line carries, roll-aware) and renders an in-terminal dashboard: tick
 totals and rate, tape-head timestamp and lag, per-symbol counts. The
-dashboard is text; with UnicodePlots loaded a second package extension adds a
-rate-history plot and draws the counts as a bar chart (headless-safe). Attaching from outside the producer
-was chosen over an in-process panel because it cannot interfere with the
-capture, its logging, or its progress output (a §9 requirement of the
-project standards), it works identically for live capture and backfill,
-and it can attach to or detach from a session at any point — including
-sessions started by another process. Refresh cadence and panel sizing come
+dashboard is text; with UnicodePlots loaded a second package extension adds
+a rate-history plot and draws the counts as a bar chart (headless-safe).
+Attaching from outside the producer was chosen over an in-process panel
+because it cannot interfere with the capture, its logging, or its progress
+output, it works identically for live capture and backfill, and it can
+attach to or detach from a session at any point — including sessions
+started by another process. Refresh cadence and panel sizing come
 from the `[monitor]` config table; `scripts/monitor.jl` is the entry point.
 

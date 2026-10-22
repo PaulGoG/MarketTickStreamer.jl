@@ -1,8 +1,11 @@
 # MarketTickStreamer
 
 Provider-agnostic tick-by-tick market data acquisition in pure Julia: live
-WebSocket streaming, historical REST backfill, append-only raw persistence,
-compaction to analysis-ready files, and paced replay of recorded sessions.
+WebSocket streaming, historical backfill from REST pages or the venue's
+daily dumps, import of vendor day files (Nasdaq TotalView-ITCH 5.0, IEX
+HIST), append-only raw persistence, compaction to analysis-ready files,
+paced replay of recorded sessions, and following a running session from
+another process.
 
 ![Per-session diagnostic: price path, trade rate, and the survival functions of inter-arrival time and trade size](assets/session_diagnostic.png)
 
@@ -32,6 +35,11 @@ cross-checked against the historical SIP tape and matched exactly for 22 of
 24 symbols, and to better than 99.9996 % for the remaining two — evidence
 that Alpaca's free `delayed_sip` feed carries the complete consolidated
 tape, merely 15 minutes late, which for offline science is no delay at all.
+
+The vendor archives were checked the same way, on full days against the
+consolidated tape: the prints read from an ITCH file equal the SIP's Nasdaq
+prints apart from the official opening and closing cross reports, and those
+read from an IEX HIST capture equal the SIP's IEX prints, in order.
 
 ## Installation
 
@@ -70,6 +78,9 @@ Three properties shape everything else:
 - [Replay & Analysis Interfaces](replay.md) — how an external analysis
   pipeline consumes live or recorded ticks, and what is guaranteed about
   ordering, completion and backpressure.
+- [Files & Provenance](files.md) — the on-disk contract: raw parts,
+  sidecars, processed day files and vendor files, for a consumer in any
+  language.
 - API reference — the public functions and types:
   [acquisition and storage](api.md), [providers](api_providers.md),
   [analysis interfaces](api_analysis.md).

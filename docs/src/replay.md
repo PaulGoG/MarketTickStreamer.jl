@@ -6,20 +6,20 @@ stream without a market being open. This page is that contract.
 
 The pipelines this was built to feed — exact waiting-time distributions of
 scalar series, long-memory estimation, criticality in tick arrival — live in
-separate packages of their own, not yet released. Nothing here depends on
-them, and the contract below is what any consumer gets. Two worked consumers
-ship under `examples/`, and the test suite executes both, so they cannot
-drift from what this page promises.
+packages of their own. Nothing here depends on them, and the contract below
+is what any consumer gets. Three worked consumers ship under `examples/`,
+and the test suite executes all three, so they cannot drift from what this
+page promises.
 
 ![A recorded session replayed tick by tick, the price path drawing itself against exchange time](assets/replay.gif)
 
-## One interface, two sources
+## One interface, three sources
 
-[`live_source`](@ref) and [`replay_source`](@ref) both hand back a
-`Channel{Trade}`. A consumer written against one works unchanged against the
-other, which is the point: a real-time method is developed and validated on
-recorded flux — reproducible, repeatable, free, available at three in the
-morning — and only then pointed at the wire.
+[`live_source`](@ref), [`replay_source`](@ref) and [`follow_source`](@ref)
+all hand back a `Channel{Trade}`. A consumer written against one works
+unchanged against the others: a real-time method is developed and validated
+on recorded flux, reproducible and repeatable, and only then pointed at the
+wire.
 
 ```julia
 using MarketTickStreamer
@@ -72,6 +72,32 @@ trades around the clock in the same way. If a later day cannot be read, the
 channel closes with that error and the consumer's loop rethrows it, after
 every earlier print has been delivered.
 
+### Following a running session
+
+The third source reads a session while it is being written, from another
+process:
+
+```julia
+# Another process: follow the capture as it is flushed; ends with the session.
+for trade in follow_source(cfg.raw_dir)
+    # ...
+end
+```
+
+[`follow_source`](@ref) tails the session's raw parts and delivers their
+prints in file order, which is the arrival order of the capture, as the sink
+flushes them. A torn final line is carried until its newline arrives, and
+when the sink rolls to a new part the follower moves on to it. The channel
+closes once the sidecar's status leaves `running`, after every line flushed
+until then has been delivered, so a finished session is read whole and the
+loop ends at its last print. `idle_timeout_s` bounds how long the files may
+stay unchanged while the sidecar still says `running`; past it the channel
+closes with an error, so a follower of a process that died unreconciled
+does not wait forever. The capture never learns of its follower and never
+waits for it: they share nothing but the files. The
+[files page](files.md) sets this streaming consumer beside the stationary
+one that reads the processed tree.
+
 ## What a `Trade` means
 
 | Field | Type | Meaning |
@@ -113,9 +139,9 @@ normal. Any method that needs monotone exchange time must sort or reject
 explicitly; [`session_report`](@ref) quantifies how often it happens in a
 given capture.
 
-**Completion.** Both sources close the channel when the stream ends — the
+**Completion.** Every source closes the channel when the stream ends — the
 recording exhausted, the session deadline reached, the market closed, a
-fatal protocol error. A `for t in ch` loop therefore terminates on its own,
+fatal protocol error, the followed session finished. A `for t in ch` loop therefore terminates on its own,
 and a consumer needs no separate shutdown signal.
 
 **Backpressure.** The channel is bounded (`limits.channel_capacity`). A slow
@@ -171,9 +197,9 @@ refresh interval is a display cadence and is not a snapshot clock.
 ## A worked consumer
 
 `examples/waiting_times.jl` is this page in code: it replays a recorded
-session, splits it with [`tee`](@ref) into a lossless consumer and a lossy
-analysis tap, accumulates inter-arrival times in a single pass, and stops
-when the channel closes — no shutdown protocol of its own.
+session, splits it with [`tee`](@ref) into two consumers, both on lossless
+outputs, accumulates inter-arrival times in a single pass, and stops when
+the channel closes — no shutdown protocol of its own.
 
 ```bash
 julia examples/waiting_times.jl data/raw/<session>_part001.jsonl
@@ -188,18 +214,21 @@ price-forming only       n=   408793  mean=  0.1409 s  median=  0.0005 s  p99=  
 ```
 
 A median of 0.7 ms against a mean of 47 ms is the distribution announcing
-itself. Note also that excluding odd lots raises the mean roughly threefold
+itself. Excluding odd lots raises the mean roughly threefold
 while leaving the median where it was: it thins the dense clusters and
 stretches the tail rather than rescaling the whole distribution.
 
-Both `tee` outputs in the example are lossless, deliberately. At maximum
+Both `tee` outputs in the example are lossless. At maximum
 replay rate a lossy tap lost 85 000 of those prints — and it does not thin a
 sample evenly, it removes the bursts, which is where a waiting-time
 distribution lives. Backpressure costs nothing offline, since a blocked
 output only slows the replay.
 
 The suite executes the example, so it cannot drift from the interface it
-documents.
+documents. A third, `examples/follow_session.jl`, follows a running session
+from another process with [`follow_source`](@ref) and applies
+[`snapshots`](@ref) to it: one row per minute of exchange time and a final
+row when the session ends.
 
 ## Which prints count as trades
 
@@ -263,7 +292,7 @@ three, the value clock is the one that survives a change of scale — it is
 invariant to splits and roughly invariant to price drift, so a threshold
 chosen on one sample still means something on another.
 
-Two choices are yours and are not incidental. Whether to filter to
+Two choices are yours. Whether to filter to
 price-forming prints first changes the bar count by a factor of three on a
 high-priced name. And the bars carry `recv_ns = 0`, the same marker the raw
 layer uses for records that never crossed the wire, because a derived bar has

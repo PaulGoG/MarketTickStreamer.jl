@@ -27,13 +27,15 @@ the paper endpoint, as the shipped configuration does.
 Every script activates and instantiates the scripts environment itself
 (`scripts/Project.toml`: the package by path, plus CairoMakie and UnicodePlots
 for the figures and the dashboard plots), so a fresh clone needs no
-preparation, and each accepts an alternative config path as its first
-argument.
+preparation. Each reads `config/config.toml` unless given another
+configuration: `stream.jl` and `backfill.jl` take its path as the first
+argument; `compact.jl`, `replay.jl`, `visualize.jl`, `inventory.jl` and
+`monitor.jl` take `--config <path>`; `import.jl` takes `--config=<path>`.
 
 ```bash
 julia --threads=auto scripts/stream.jl   # live capture
 julia scripts/backfill.jl                # historical download over the configured window
-julia scripts/import.jl itch50 data/bulk/12302019.NASDAQ_ITCH50.gz --symbols=AAPL,MSFT   # a vendor day file → processed/
+julia scripts/import.jl itch50 data/bulk/itch50/12302019.NASDAQ_ITCH50.gz --symbols=AAPL,MSFT   # a vendor day file → processed/
 julia scripts/compact.jl  data/raw/<session>_part001.jsonl
 julia scripts/replay.jl   data/raw/<session>_part001.jsonl
 julia scripts/visualize.jl data/raw/<session>_part001.jsonl
@@ -134,8 +136,8 @@ cutoffs — no threshold is hardcoded elsewhere in the pipeline.
 
 | Key | Meaning |
 | --- | --- |
-| `start_date`, `end_date` | Inclusive exchange dates (America/New_York). Either an ISO date `"YYYY-MM-DD"` or a sentinel: `"today"`, or `"today-<N>d"` for N calendar days back. |
-| `feed` | Historical feed. Alpaca: `"iex"` or `"sip"`; free accounts have full SIP history back to 2016, minus the trailing 15 minutes. Binance: `"aggTrade"` by REST; `"aggTrade"` or `"trade"` from the daily bulk files. |
+| `start_date`, `end_date` | Inclusive exchange dates on the provider's calendar (America/New_York for Alpaca, UTC for Binance). Either an ISO date `"YYYY-MM-DD"` or a sentinel: `"today"`, or `"today-<N>d"` for N calendar days back. |
+| `feed` | Historical feed. Alpaca: `"iex"` or `"sip"`; free accounts have full SIP history back to 2016, minus the most recent 15 minutes. Binance: `"aggTrade"` by REST; `"aggTrade"` or `"trade"` from the daily bulk files. |
 | `source` | `"rest"` walks the provider's historical endpoint page by page; `"bulk"` downloads the venue's daily file for each day — Binance only — verifies its checksum and keeps it. Everything after that is the same run: raw parts per day, compaction, resume. |
 | `page_limit` | Rows per REST page, from 1 to the provider maximum (Alpaca 10000, Binance 1000), which is also the default. A larger value is rejected: Binance clamps it without an error, and a clamped page reads as the end of the tape. |
 | `rate_limit_sleep_s` | Pause between pages. The free tier allows 200 requests per minute. |
@@ -163,7 +165,8 @@ rather than an error.
 disqualify a print from a price path. Tapes `"A"` and `"B"` are
 CTA-processed, `"C"` is UTP-processed, `"O"` is the OTC tape; the same
 character means different things across them, which is why the lists are
-separate. The shipped defaults are the provider's own published lists.
+separate. The shipped defaults are derived from the tape plans'
+sale-condition matrices.
 
 This is used only by [`price_forming`](@ref), [`filter_price_forming`](@ref)
 and the `n_price_forming` column of [`session_report`](@ref). **Capture is
@@ -224,7 +227,7 @@ The adapter requests microsecond timestamps — the REST header
 `X-MBX-TIME-UNIT` and the stream parameter `timeUnit` — which is the clock
 of the bulk files; rows and frames in milliseconds are read as well. Every
 session sidecar records `provenance.timestamp_unit`. A Binance capture whose
-sidecar lacks the key predates 0.4.0 and is millisecond-quantized.
+sidecar lacks the key was recorded in milliseconds.
 
 ## Importing vendor day files
 

@@ -1,7 +1,7 @@
 # Unattended capture under systemd
 
 A capture host runs the live session as a systemd user service started by
-a timer before the open. The package's own railings do the rest: the
+a timer before the open. The package's own market-hours guards do the rest: the
 session waits for the bell, stops at the close, and writes its provenance
 whether it ends by the clock, by a signal, or by a crash.
 

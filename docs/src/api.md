@@ -2,7 +2,7 @@
 
 The public surface, grouped by pipeline stage. Each group is generated from
 one source file, so everything carrying a docstring appears here. The
-provider interface and the two adapters are on the
+provider interface and the adapters are on the
 [providers page](api_providers.md); the analysis side — data quality,
 activity clocks, replay, corpus access and the diagnostic figures — on the
 [analysis page](api_analysis.md).
