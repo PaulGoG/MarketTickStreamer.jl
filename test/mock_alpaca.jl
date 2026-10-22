@@ -1,7 +1,8 @@
 # In-process mock of the Alpaca REST + WebSocket APIs, so the full pipeline
 # is exercised end-to-end without credentials or network access.
 #
-# REST  : /v2/clock, /v2/stocks/{symbol}/trades (two pages, token-paginated)
+# REST  : /v2/clock, /v2/stocks/{symbol}/trades (two pages, token-paginated),
+#         /v2/stocks/meta/conditions/{ticktype}
 # WS    : full v2 protocol — connected → auth → authenticated → subscribe →
 #         subscription → trade batch → close. Per-connection behavior is
 #         scripted via `MockPlan` to test reconnection and fatal errors.
@@ -113,14 +114,16 @@ end
 
 """
     start_mock_rest(; port, trades_per_page = 3, close_in_s = 3600.0,
-                    is_open = true, open_in_s = 64800.0) -> server
+                    is_open = true, open_in_s = 64800.0, hits = Ref(0),
+                    fail_after = typemax(Int)) -> server
 
 REST mock: `/v2/clock` and `/v2/stocks/{symbol}/trades` with two pages linked
 by `next_page_token = "page2"`. The clock reports `is_open`, a close
 `close_in_s` from each query (shrink it to simulate a half-day's early close)
 and an open `open_in_s` from each query — negative to place the opening bell
-in the past, which is how the `wait_for_open` railing is exercised without
-waiting.
+in the past, which is how the `wait_for_open` guard is exercised without
+waiting. `hits[]` counts trades requests; every one past `fail_after` answers
+404.
 """
 function start_mock_rest(;
     port::Integer,
@@ -151,8 +154,7 @@ function start_mock_rest(;
             )
         end,
     )
-    # Condition decoder: the real endpoint returns a different map per tape,
-    # which is the whole reason the package fetches rather than hardcodes it.
+    # Condition decoder: the real endpoint returns a different map per tape.
     HTTP.register!(
         router,
         "GET",

@@ -1,5 +1,6 @@
 # Benchmarks for the acquisition hot paths: timestamp parsing, per-line
-# serialization, sink throughput, compaction, replay and the quality report.
+# serialization, sink throughput, compaction, replay, the corpus read
+# (`read_processed`) and the quality report.
 # These live outside the test suite so the suite stays fast.
 #
 #     julia bench/benchmarks.jl
@@ -30,9 +31,8 @@ const DUPED = vcat(TRADES, TRADES[1:1000])
 const STAMP = "2026-07-30T14:30:00.123456789Z"
 const STAMP_NS = rfc3339_to_ns(STAMP)
 const LINE = trade_to_json(TRADES[1])
-# The same content as a `SubString` of a large parent. JSON3 once parsed such
-# a SubString at roughly 2000x the per-line cost; JSON.jl parses both at the
-# same cost, and the pair keeps any return of that regression visible.
+# The same content as a `SubString` of a large parent. A `SubString` line must
+# parse at the cost of a `String`; the pair keeps a regression on that visible.
 const PARENT = join((trade_to_json(t) for t in TRADES), '\n')
 const SUBLINE = SubString(PARENT, 1, ncodeunits(LINE))
 
@@ -97,7 +97,7 @@ suite["quality"]["session_report_10k"] =
     @benchmarkable(session_report([$RAW_FILE]), samples = 10, evals = 1,)
 
 # Run only when invoked as a script; the benchmarked functions log, and that
-# chatter would drown the progress output.
+# output would drown the progress output.
 if abspath(PROGRAM_FILE) == @__FILE__
     println("Running benchmarks...")
     try

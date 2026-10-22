@@ -73,7 +73,7 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
     end
 
     @testset "static QA (ExplicitImports)" begin
-        # The owner and public-access checks are deliberately not asserted:
+        # The owner and public-access checks are not asserted:
         # a few stable non-public names are load-bearing here
         # (`HTTP.StatusError`, `Arrow.Table`, `Base.gc_live_bytes`).
         @test check_no_implicit_imports(MarketTickStreamer) === nothing
@@ -96,9 +96,9 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
         @test isempty(check_allocs(MarketTickStreamer.ns_to_datetime, (Int64,)))
         @test isempty(check_allocs(MarketTickStreamer.now_ns, ()))
         @test isempty(check_allocs(MarketTickStreamer.trading_date, (Int64,)))
-        # `rfc3339_to_ns` and `ns_to_rfc3339` are deliberately NOT asserted:
-        # the first matches a regular expression and validates through
-        # `DateTime`, the second builds a String. At 438 ns and 304 ns against
+        # `rfc3339_to_ns` and `ns_to_rfc3339` are not asserted: the first
+        # matches a regular expression and validates through `DateTime`, the
+        # second builds a String. At a few hundred nanoseconds each against
         # network-bound ingestion, hand-rolling either to reach zero is not
         # justified by measurement — see bench/benchmarks.jl.
     end
@@ -126,10 +126,8 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
         @test trading_date(rfc3339_to_ns("2026-07-30T20:30:00Z")) == Date(2026, 7, 30)
         @test trading_date(rfc3339_to_ns("2026-07-31T01:00:00Z")) == Date(2026, 7, 30)
         @test now_ns() > rfc3339_to_ns("2026-01-01T00:00:00Z")
-        # The last nanosecond of an exchange day must file under that day.
-        # Routing through `ns_to_datetime` divides by 1e9 in floating point and
-        # rounds to the millisecond, which pushed this instant into the next
-        # date; `trading_date` floors in integer arithmetic instead.
+        # The last nanosecond of an exchange day files under that day:
+        # `trading_date` floors in integer arithmetic, never rounding up a date.
         @test trading_date(rfc3339_to_ns("2026-07-31T03:59:59.999999999Z")) ==
               Date(2026, 7, 30)                      # 23:59:59.999999999 EDT
         @test trading_date(rfc3339_to_ns("2026-07-31T04:00:00Z")) == Date(2026, 7, 31)
@@ -139,11 +137,8 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
     end
 
     @testset "backfill window follows exchange dates, not UTC days" begin
-        # The request window has to use the convention `trading_date` files
-        # rows under. A UTC calendar day equals an exchange date only while
-        # New York is UTC-4, so from November to March a UTC-day request
-        # returned the previous date's last post-market hour and stopped an
-        # hour short of its own — splitting each date across two requests.
+        # The request window of a date spans exactly the instants
+        # `trading_date` files under it, in every offset regime.
         alpaca = AlpacaProvider("k", "s", "sip", "", "", "")
         bounds(d) = (
             MarketTickStreamer.exchange_day_start_ns(alpaca, d),
@@ -380,8 +375,8 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
                 format = "arrow",
                 compression = :gzip,
             )
-            # Empty text: CSV.jl 1.x quotes it, and a file CSV.jl 0.10 wrote
-            # left it unquoted, which reads back as `missing`. Both read as "".
+            # Empty text reads back as "", whether the file quotes it or leaves
+            # it unquoted, which CSV.jl reads as `missing`.
             t1 = Trade(
                 "AAPL",
                 1_753_886_600_000_000_000,
@@ -487,7 +482,7 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             @test 0.45 <= span <= 1.0               # 25 gaps of 20 ms
             @test_throws ArgumentError replay_source(bsink.path; clock = "recv")
             # Absolute schedule: 400 gaps of 2.5 ms take 1 s. Sleeping each gap
-            # on its own adds one timer overshoot per gap and runs ~50 % long.
+            # on its own adds one timer overshoot per gap and runs markedly long.
             dsink = open_raw_sink(dir, "d")
             write_batch!(dsink, spaced(400, 2_500_000))
             close_sink!(dsink)
@@ -844,7 +839,7 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
         @test deduplicate_trades(dup_set) == trades                # order preserved, first kept
         mktempdir() do dir
             sink = open_raw_sink(dir, "q")
-            # AAPL: 4 dupes, one 120 s gap, one out-of-order pair, one negative latency
+            # AAPL: 4 duplicates, one 120 s gap, one out-of-order pair, one negative latency
             aapl = vcat(trades, trades[1:4])
             push!(aapl, mk(21; dt = 1_000_000_000))
             aapl[end] = Trade(
@@ -878,7 +873,7 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             # compaction deduplicates by default
             files = compact_raw([sink.path], joinpath(dir, "p"); format = "csv")
             df = CSV.read(files[findfirst(contains("AAPL"), files)], DataFrame)
-            @test nrow(df) == 21                             # 26 raw AAPL rows − 5 dupes
+            @test nrow(df) == 21                             # 26 raw AAPL rows − 5 duplicates
             # over-budget inputs reroute through spill compaction transparently
             spill_files =
                 compact_raw([sink.path], joinpath(dir, "p2"); mem_fraction = 1e-12)
@@ -1063,8 +1058,8 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
         @test diff([e.time_ns for e in ev]) == [150, 150]
         # Exchange time decides the events, arrival order the fill sequence
         # within one: a tie split across the input is still one event.
-        split = [ts[4], ts[1], ts[5], ts[2], ts[6], ts[3]]
-        @test event_bars(split) == ev
+        parts = [ts[4], ts[1], ts[5], ts[2], ts[6], ts[3]]
+        @test event_bars(parts) == ev
         @test event_bars(Trade[]) == Bar[]
         @test_throws ArgumentError event_bars([
             mk(1, 1, 1.0, 1.0),
@@ -1148,7 +1143,7 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
         @test isnan(observed_round_lot([mk(100.0, ["@"])]))
         @test isnan(observed_round_lot(Trade[]))
 
-        # It reaches the session report, which is the point: a redefinition
+        # It reaches the session report: a redefinition
         # that moves the price-forming population is otherwise invisible.
         mktempdir() do dir
             sink = open_raw_sink(dir, "rl")
@@ -1171,7 +1166,7 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
         wait(t)
         @test s.stop[]
         @test free_disk_gb(pwd()) > 0.0
-        # feed delay drives the delayed-tape railing shifts
+        # feed delay drives the delayed-tape market-hours guard shifts
         mk_provider(feed) = AlpacaProvider(MOCK_KEY, MOCK_SECRET, feed, "", "", "")
         @test MarketTickStreamer.feed_delay_ns(mk_provider("iex")) == 0
         @test MarketTickStreamer.feed_delay_ns(mk_provider("delayed_sip")) ==
@@ -1261,7 +1256,7 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
         )
     end
 
-    @testset "robustness: reconcile, lock, RAM guard, spill compaction, lossy tee" begin
+    @testset "reconcile, lock, RAM guard, spill compaction, lossy tee" begin
         mktempdir() do dir
             # crash-only reconciliation: a "running" sidecar from a dead process
             write(
@@ -1312,10 +1307,9 @@ hostname = "$(gethostname())"
                 @test CSV.read(m, DataFrame) == CSV.read(s, DataFrame)
             end
         end
-        # The spill copy is the size of the input, so it must never default to
-        # tempdir(): /tmp is a tmpfs sized at half of RAM on systemd
-        # distributions, and spilling a 26 GB corpus there took the machine
-        # down. It goes beside out_dir instead, and is refused without room.
+        # The spill copy is the size of the input, so it goes beside out_dir,
+        # never to tempdir() (a RAM-backed tmpfs on systemd distributions), and
+        # is refused without room.
         @test MarketTickStreamer._spill_parent("/data/processed", nothing) == "/data/"
         @test MarketTickStreamer._spill_parent("/data/processed/", nothing) == "/data/"
         @test MarketTickStreamer._spill_parent("/data/processed", "/mnt/scratch") ==
@@ -1579,7 +1573,7 @@ hostname = "$(gethostname())"
             @test_throws ArgumentError example_call(mod, :waiting_quantile, acc, 1.5)
             @test_throws ArgumentError example_call(mod, :LiveDiagnostics; n_bins = 2)
 
-            # The point of the example: once the histogram has filled its bin
+            # The example shows: once the histogram has filled its bin
             # budget the footprint stops growing, so a longer stream of the
             # same shape costs exactly the same state.
             foot = map((2000, 6000)) do n
@@ -2051,6 +2045,10 @@ hostname = "$(gethostname())"
                         @warn "own record"
                     end
                 end
+                # Terminal control sequences never reach the log file.
+                Base.CoreLogging.with_logger(lb) do
+                    @info "colour \e[31mred\e[0m" note = "\e[1mbold\e[0m"
+                end
             end
             close(ioa)
             close(iob)
@@ -2058,6 +2056,8 @@ hostname = "$(gethostname())"
             b = read(joinpath(cfg.log_dir, "b.log"), String)
             @test !occursin("socket teardown", a) && occursin("own record", a)
             @test occursin("socket teardown", b) && occursin("own record", b)
+            @test occursin("colour red", b) && occursin("note=bold", b)
+            @test !occursin("\e[", b)
         end
     end
 
@@ -2334,7 +2334,7 @@ hostname = "$(gethostname())"
         end
     end
 
-    @testset "live E2E: market-closed railing and wait_for_open" begin
+    @testset "live E2E: market-closed guard and wait_for_open" begin
         mktempdir() do dir
             ws_port, rest_port = freeport(9451), freeport(9471)
             plan = MockPlan([[mock_trade("AAPL", i) for i in 1:3]]; fatal_after = 1)
@@ -2377,7 +2377,7 @@ hostname = "$(gethostname())"
         end
     end
 
-    @testset "live E2E: delayed feed shifts the close railing" begin
+    @testset "live E2E: delayed feed shifts the close guard" begin
         mktempdir() do dir
             ws_port, rest_port = freeport(9551), freeport(9571)
             plan = MockPlan(
@@ -2429,11 +2429,9 @@ hostname = "$(gethostname())"
     end
 
 
-    @testset "provider registry and the second provider" begin
-        # The config layer must not know one vendor's vocabulary. Before this
-        # was dispatched, `provider.feed` was validated against Alpaca's feed
-        # names for every provider, and a 24-hour venue's days were cut at
-        # midnight in New York.
+    @testset "provider registry and a second provider" begin
+        # Feed names, calendar and credentials come from each provider's spec,
+        # never from one vendor's vocabulary.
         @test_throws ArgumentError provider_spec("kraken")
         @test provider_spec("alpaca").tz == tz"America/New_York"
         @test provider_spec("binance").tz == tz"UTC"
@@ -2463,6 +2461,13 @@ hostname = "$(gethostname())"
         @test n1 - n0 == 25 * 3600 * MarketTickStreamer.NS_PER_SEC
 
         @test market_clock(bp) == (; is_open = true, next_open = "", next_close = "")
+        # No countable historical tape: coverage_report is refused, not a MethodError.
+        @test_throws ArgumentError historical_trade_count(
+            bp,
+            "BTCUSDT",
+            "2026-01-01T00:00:00Z",
+            "2026-01-02T00:00:00Z",
+        )
 
         # An unknown provider must fail at construction with a message naming
         # it, not with a MethodError deep in the session. The fallback throws
@@ -3905,7 +3910,7 @@ using UnicodePlots: UnicodePlots
         @test E._rate_scale(800)[1] == 1.0
     end
 
-    @testset "figures: theme, layout smoke, session window, files" begin
+    @testset "figures: theme, layout, session window, files" begin
         theme = tick_theme()
         @test theme isa CairoMakie.Makie.Attributes
         @test theme.fontsize[] == 26

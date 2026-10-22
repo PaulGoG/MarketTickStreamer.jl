@@ -183,14 +183,14 @@ function _iex_segment(buf::Vector{UInt8}, i::Int, n::Int)
     return s, seglen
 end
 
-# Call `g(buf, m, len)` for each of the `count` message blocks of the segment
-# at `buf[s:s+seglen-1]`, `buf[m:m+len-1]` being the message. Stops early when
-# the payload ends; returns the number of blocks seen.
-function _iex_blocks(g, buf::Vector{UInt8}, s::Int, seglen::Int, count::Int)
+# Call `g(buf, m, len)` for each of the `n_messages` message blocks of the
+# segment at `buf[s:s+seglen-1]`, `buf[m:m+len-1]` being the message. Stops
+# early when the payload ends; returns the number of blocks seen.
+function _iex_blocks(g, buf::Vector{UInt8}, s::Int, seglen::Int, n_messages::Int)
     stop = s + min(seglen, 40 + Int(_le16(buf, s + 12)))
     m = s + 40
     k = 0
-    while k < count && m + 1 < stop
+    while k < n_messages && m + 1 < stop
         mlen = Int(_le16(buf, m))
         m + 2 + mlen <= stop || break
         g(buf, m + 2, mlen)
@@ -205,7 +205,7 @@ end
 # needs this before it emits anything.
 function _iex_voided(path::AbstractString)
     voided = Set{Int64}()
-    io = _itch50_open(path)
+    io = _open_day_file(path)
     try
         _iex_packets(io; name = basename(path)) do buf, i, n
             s, seglen = _iex_segment(buf, i, n)
@@ -341,7 +341,7 @@ function iex_hist_trades(
         return nothing
     end
 
-    io = _itch50_open(path)
+    io = _open_day_file(path)
     scan = try
         _iex_packets(io; name = basename(path)) do buf, i, n
             s, seglen = _iex_segment(buf, i, n)
@@ -350,8 +350,8 @@ function iex_hist_trades(
             protocol = _le16(buf, s + 2)
             haskey(IEX_PROTOCOLS, protocol) || return nothing
             session = _le32(buf, s + 8)
-            count = Int(_le16(buf, s + 14))
-            (session == 0 || count == 0) && return nothing
+            n_messages = Int(_le16(buf, s + 14))
+            (session == 0 || n_messages == 0) && return nothing
             if feed_id[] == 0x0000
                 feed_id[] = protocol
             elseif protocol != feed_id[]
@@ -370,9 +370,9 @@ function iex_hist_trades(
                     @warn "IEX sequence gap" session expected got
                 end
             end
-            next_seq[session] = got + count
+            next_seq[session] = got + n_messages
             segments[] += 1
-            messages[] += _iex_blocks(on_message, buf, s, seglen, count)
+            messages[] += _iex_blocks(on_message, buf, s, seglen, n_messages)
             return nothing
         end
     finally
@@ -479,9 +479,9 @@ function fetch_iex_hist(
     target = joinpath(dir, "iex")
     mkpath(target)
     path = joinpath(target, name)
-    size = parse(Int64, String(entry["size"]))
+    n_bytes = parse(Int64, String(entry["size"]))
     link = String(entry["link"])
-    if isfile(path) && filesize(path) == size
+    if isfile(path) && filesize(path) == n_bytes
         announced = _announced_crc32c(link, policy)
         (announced === nothing || _crc32c_hex(path) == announced) && return path
     end
@@ -499,9 +499,9 @@ function fetch_iex_hist(
         end
     end
     got = filesize(path)
-    if got != size
+    if got != n_bytes
         rm(path; force = true)
-        error("size mismatch for $name: listed $size bytes, got $got")
+        error("size mismatch for $name: listed $n_bytes bytes, got $got")
     end
     return path
 end

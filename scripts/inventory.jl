@@ -18,16 +18,24 @@ function main()
         end
     end
     cfg = load_config(cfg_path)
-    inv = corpus_inventory(cfg)
-    if size(inv, 1) == 0
+    inventory = corpus_inventory(cfg)
+    if size(inventory, 1) == 0
         println("No processed data under $(cfg.processed_dir).")
         return
     end
-    show(stdout, MIME("text/plain"), inv; allrows = true, allcols = true, summary = false)
+    show(
+        stdout,
+        MIME("text/plain"),
+        inventory;
+        allrows = true,
+        allcols = true,
+        summary = false,
+    )
     println()
     println(
-        "$(size(inv, 1)) symbol(s), $(sum(inv.n_days)) symbol-days, " *
-        "$(sum(inv.n_prints)) prints, $(round(sum(inv.bytes) / 2^30; digits = 2)) GiB",
+        "$(size(inventory, 1)) symbol(s), $(sum(inventory.n_days)) symbol-days, " *
+        "$(sum(inventory.n_prints)) prints, " *
+        "$(round(sum(inventory.bytes) / 2^30; digits = 2)) GiB",
     )
 end
 

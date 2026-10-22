@@ -247,7 +247,7 @@ now_ns() = round(Int64, time() * 1e6) * 1_000
 """
     ns_to_datetime(ns) -> DateTime
 
-Truncate a nanosecond epoch timestamp to a millisecond-resolution UTC
+Round a nanosecond epoch timestamp to a millisecond-resolution UTC
 `DateTime` (for display and coarse grouping only — not for storage).
 """
 ns_to_datetime(ns::Int64) = unix2datetime(ns / NS_PER_SEC)

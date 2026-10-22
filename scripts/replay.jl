@@ -1,6 +1,6 @@
-# Replay a recorded session as a live-like stream (smoke view).
+# Replay a recorded session as a live-like stream.
 #
-#   julia scripts/replay.jl <raw_file.jsonl>... [--config path/to/config.toml]
+#   julia scripts/replay.jl <raw_file.jsonl>... | <YYYY-MM-DD.csv|.arrow>... [--config path/to/config.toml]
 #
 # Prints each tick at the configured pace ([replay] in config.toml). This is
 # the template for attaching real-time analysis consumers: swap the printing
@@ -24,8 +24,12 @@ function main()
         end
     end
     cfg = load_config(cfg_path)
-    isempty(files) &&
-        (println("Usage: julia scripts/replay.jl <raw_file.jsonl>..."); return)
+    isempty(files) && (
+        println(
+            "Usage: julia scripts/replay.jl <raw_file.jsonl>... | <YYYY-MM-DD.csv|.arrow>...",
+        );
+        return
+    )
     ch = replay_source(
         files;
         pace = cfg.replay_pace,

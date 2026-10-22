@@ -19,7 +19,8 @@ function main()
         end
     end
     cfg = load_config(cfg_path)
-    if isempty(files)   # default: every raw file of the configured provider
+    # Default: every .jsonl under the configured raw directory, whatever the provider.
+    if isempty(files)
         files = filter(
             f -> endswith(f, ".jsonl"),
             readdir(cfg.raw_dir; join = true, sort = true),

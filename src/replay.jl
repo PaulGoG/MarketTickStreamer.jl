@@ -1,10 +1,7 @@
-# Recorded-session replay: re-emit persisted ticks as a live-like stream.
-#
-# This is the scientific workhorse — real-time analysis methods are developed
-# and validated against *recorded* flux (reproducible, repeatable, free)
-# before ever touching the live WebSocket. Live and replay sources feed the
-# identical `Channel{Trade}` interface, so downstream code cannot tell them
-# apart.
+# Recorded-session replay: re-emit persisted prints as a live-like stream
+# through the `Channel{Trade}` the live source feeds, so a consumer cannot
+# tell them apart and a real-time method is developed and validated on a
+# recording before it meets the wire.
 #
 # Two inputs: the raw files of a session, read whole, and the processed day
 # files of a corpus, streamed a day at a time so that a symbol-year replays in

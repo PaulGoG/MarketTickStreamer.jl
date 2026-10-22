@@ -17,8 +17,8 @@ function _hhmm_ticks(lo::Real, hi::Real)
     step =
         span > 16 ? 4.0 :
         span > 8 ? 2.0 : span > 3.5 ? 1.0 : span > 1.5 ? 0.5 : span > 0.7 ? 0.25 : 1 / 12
-    first = ceil(lo / step) * step
-    vals = collect(first:step:hi)
+    x_first = ceil(lo / step) * step
+    vals = collect(x_first:step:hi)
     return (vals, _hhmm.(vals))
 end
 
@@ -131,11 +131,10 @@ end
 _count_note(n::Integer) = replace(string(n), r"(?<=\d)(?=(\d{3})+$)" => " ")
 
 # `price_forming` for one row of a processed table, where the condition list
-# is stored joined by '|' and an empty list reads back as `missing` from CSV.
+# is stored joined by '|' and reads back as a string, an empty list as the
+# empty string.
 function _row_price_forming(tape, conditions, non_price::AbstractDict)
     (ismissing(tape) || ismissing(conditions)) && return true
-    # `string`, not `String`: CSV type detection reads an all-numeric column
-    # of codes ("4", "7") back as integers.
     excluded = get(non_price, string(tape), nothing)
     excluded === nothing && return true
     return !any(c -> c in excluded, eachsplit(string(conditions), '|'))

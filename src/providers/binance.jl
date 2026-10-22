@@ -18,8 +18,8 @@
 #                      Booleans "True"/"False"; timestamps in milliseconds
 #                      before 2025-01-01 and microseconds from it.
 #
-# Three things differ from an equity tape and shape everything below:
-#   * the venue never closes, so there are no market-hours railings and the
+# The adapter differs from the equity one in three respects:
+#   * the venue never closes, so there are no market-hours guards and the
 #     calendar is UTC;
 #   * prices and quantities arrive as STRINGS, and timestamps in
 #     MILLISECONDS by default — this adapter asks for MICROSECONDS (REST

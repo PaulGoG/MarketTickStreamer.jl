@@ -12,19 +12,17 @@ a distribution estimate must not be thinned by load. This file takes the
 `OnlineStats` accumulators, so memory is constant in the length of the stream
 and a slow consumer sheds prints instead of applying backpressure to
 acquisition. That is the right trade for a dashboard and the wrong one for an
-estimator, which is the whole point of having both files.
+estimator.
 
-What it demonstrates:
-
-  * single-pass accumulators whose footprint does not grow with the stream —
-    `Mean`, `Variance`, `Extrema`, `KHist`;
-  * why a diagnostic belongs on a lossy output: acquisition must never wait
-    for a consumer, and a dropped print costs a dashboard nothing;
-  * a size-weighted quantity (VWAP) accumulated as two running sums rather
-    than as a ratio of means, which is not the same number;
-  * drops reported rather than hidden, so a diagnostic that is quietly seeing
-    a third of the tape cannot be mistaken for one that is seeing all of it;
-  * and, below, that the choice of quantile sketch is not a detail.
+It shows single-pass accumulators whose footprint does not grow with the
+stream (`Mean`, `Variance`, `Extrema`, `KHist`) and why a diagnostic belongs
+on a lossy output: acquisition must never wait for a consumer, and a dropped
+print costs a dashboard nothing. A size-weighted quantity, the VWAP, is
+accumulated as two running sums rather than as a ratio of means, which is not
+the same number. Drops are reported rather than hidden, so a diagnostic
+quietly seeing a third of the tape cannot be mistaken for one seeing all of
+it. The section below shows that the choice of quantile sketch is not a
+detail.
 
 ## Not every constant-memory quantile survives this distribution
 
@@ -54,14 +52,14 @@ trusting it, because it fails quietly and returns a plausible number.
 
 On reservoir sampling: `StreamSampling.jl` attaches to a `tee` branch the same
 way, but buys little here. The raw layer already retains every print, so an
-offline analysis can simply read it, and uniform reservoir sampling destroys
+offline analysis can read it, and uniform reservoir sampling destroys
 the arrival ordering that waiting-time, long-memory and criticality methods
 consume. Where it does earn its place is a live tail sketch over a multi-hour
 session, and there a weighted (exponential-jump) scheme beats a uniform one,
 because the tail is exactly what uniform sampling under-represents. The
 deterministic sketches below cover the rest of the live diagnostic need.
 
-The estimators are deliberately ordinary: an external pipeline brings its own.
+The estimators are ordinary: an external pipeline brings its own.
 This file is about the plumbing and the memory discipline.
 """
 
@@ -165,8 +163,7 @@ log-binned histogram, in seconds. Returns `NaN` before anything is observed.
 
 Accurate to a few percent on a real session (see the header table); the
 returned value is a bin centre, so it cannot be more precise than the bin
-width, and that is the point — an exact order statistic needs the whole
-sample.
+width; an exact order statistic needs the whole sample.
 """
 function waiting_quantile(d::LiveDiagnostics, τ::Real)
     0 < τ < 1 || throw(ArgumentError("τ must lie in (0, 1), got $(τ)"))
@@ -294,8 +291,8 @@ function main(paths::Vector{String})
     return nothing
 end
 
-# Parenthesised rather than `cond && run_entrypoint(...)`: `@__FILE__` would
-# swallow the `&&` and everything after it as macro arguments.
+# An `if` block, not `cond && run_entrypoint(...)`: `@__FILE__` would swallow
+# the `&&` and everything after it as macro arguments.
 if abspath(PROGRAM_FILE) == @__FILE__
     run_entrypoint(() -> main(ARGS))
 end

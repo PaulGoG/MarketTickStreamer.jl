@@ -74,8 +74,8 @@ end
     itch50_date(name) -> Date
 
 The session date encoded in an emi.nasdaq.com file name:
-`MMDDYYYY.NASDAQ_ITCH50.gz` (2019–2020 files) or `SMMDDYY-v50.txt.gz`
-(2019–2026 files). Throws `ArgumentError` for any other name.
+`MMDDYYYY.NASDAQ_ITCH50.gz` or `SMMDDYY-v50.txt.gz`. Throws `ArgumentError`
+for any other name.
 """
 function itch50_date(name::AbstractString)
     base = basename(name)
@@ -93,7 +93,7 @@ function itch50_date(name::AbstractString)
 end
 
 # The file as a byte stream: gzip is detected by its magic, anything else is read raw.
-function _itch50_open(path::AbstractString)
+function _open_day_file(path::AbstractString)
     io = open(path, "r")
     magic = read(io, 2)
     seekstart(io)
@@ -187,7 +187,7 @@ end
 # prints needs this before it emits anything.
 function _itch50_voided(path::AbstractString)
     voided = Set{UInt64}()
-    io = _itch50_open(path)
+    io = _open_day_file(path)
     try
         _itch50_scan(io) do buf, m, len
             buf[m] == UInt8('B') && push!(voided, _be64(buf, m + 11))
@@ -314,7 +314,7 @@ function itch50_trades(
         return nothing
     end
 
-    io = _itch50_open(path)
+    io = _open_day_file(path)
     scan = try
         _itch50_scan(io) do buf, m, len
             t = buf[m]

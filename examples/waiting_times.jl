@@ -6,20 +6,17 @@ Worked consumer: waiting-time statistics from a live-like tick stream.
 This is the shape an external analysis pipeline takes against this package.
 It consumes a `Channel{Trade}` and never learns whether the ticks came from
 the wire or from a recording — swap `replay_source` for `live_source` and the
-consumer is unchanged, which is the point of the interface.
+consumer is unchanged.
 
-What it demonstrates, beyond the arithmetic:
+Beyond the arithmetic, it shows `tee` splitting one stream into two
+independent consumers, both lossless, as a waiting-time estimator requires;
+termination by channel close, with no shutdown protocol of its own;
+single-pass accumulation, which bounds memory by the state of the estimator
+rather than by the length of the stream; and the population choice, every
+execution or price-forming prints only, made where it changes the answer.
 
-  * `tee` splitting one stream into two independent consumers, and why this
-    estimator takes the lossless output rather than the lossy one;
-  * termination by channel close, with no shutdown protocol of its own;
-  * single-pass accumulation, so memory stays bounded by the state of the
-    estimator rather than by the length of the stream;
-  * the population choice — every execution, or price-forming prints only —
-    made explicitly at the point where it changes the answer.
-
-The estimator itself is deliberately minimal: an external pipeline brings its
-own. This file is about the plumbing.
+The estimator is minimal: an external pipeline brings its own; this file is
+about the plumbing.
 """
 
 # Activate the examples environment only when this file is run as a script.
@@ -76,13 +73,12 @@ function consume(paths::Vector{String}; price_forming_only::Bool = false, speed:
         speed > 0 ? replay_source(paths; pace = "recorded", speed = speed) :
         replay_source(paths; pace = "max")
 
-    # Both outputs are lossless, and that is the whole point for this
-    # estimator. A lossy tap drops ticks when it falls behind, which is the
+    # Both outputs are lossless. A lossy tap drops ticks when it falls behind, which is the
     # right trade for a live dashboard and precisely the wrong one for a
     # waiting-time distribution: dropping prints does not thin the sample
     # evenly, it removes the bursts, which is where the distribution lives.
     # Measured here at maximum replay rate, a lossy tap lost 85 000 of
-    # 1 225 831 prints — a 7 % bite out of exactly the wrong tail.
+    # 1 225 831 prints — 7 % of the sample, taken from the bursts.
     #
     # Backpressure is free offline: a blocked output just slows the replay. On
     # a live capture the calculus differs, and an estimator that cannot keep
@@ -128,9 +124,9 @@ end
 
 function main(paths::Vector{String})
     isempty(paths) && error("usage: julia examples/waiting_times.jl <raw .jsonl> ...")
-    all = consume(paths)
+    every = consume(paths)
     forming = consume(paths; price_forming_only = true)
-    report(all, "every execution")
+    report(every, "every execution")
     report(forming, "price-forming only")
     # The two populations answer different questions; see the manual's
     # "Replay & Analysis Interfaces" page. On a high-priced name the second
@@ -138,13 +134,13 @@ function main(paths::Vector{String})
     # in proportion.
     @printf(
         "non-positive gaps skipped: %d (late or same-instant prints)\n",
-        all.n_nonpositive
+        every.n_nonpositive
     )
     return nothing
 end
 
-# Parenthesised rather than `cond && run_entrypoint(...)`: `@__FILE__` would
-# swallow the `&&` and everything after it as macro arguments.
+# An `if` block, not `cond && run_entrypoint(...)`: `@__FILE__` would swallow
+# the `&&` and everything after it as macro arguments.
 if abspath(PROGRAM_FILE) == @__FILE__
     run_entrypoint(() -> main(ARGS))
 end

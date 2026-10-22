@@ -8,13 +8,10 @@ coupled to the capture through the session's raw files and sidecar only, so
 the capture never waits on it, never learns it exists, and keeps running if
 it falls behind or dies.
 
-What it demonstrates:
-
-  * `follow_source` as a drop-in for `live_source` or `replay_source`;
-  * the `snapshots` convention applied to a followed stream: one row per
-    minute of exchange time and one when the stream ends;
-  * termination by channel close once the sidecar leaves `running`, with no
-    shutdown protocol of its own.
+It shows `follow_source` as a drop-in for `live_source` or `replay_source`,
+the `snapshots` convention applied to a followed stream (one row per minute of
+exchange time and one when the stream ends), and termination by channel close
+once the sidecar leaves `running`, with no shutdown protocol of its own.
 
 The same loop run on a finished session reads it whole and stops at its end.
 """
@@ -91,8 +88,8 @@ function main(args::Vector{String})
     return nothing
 end
 
-# Parenthesised rather than `cond && run_entrypoint(...)`: `@__FILE__` would
-# swallow the `&&` and everything after it as macro arguments.
+# An `if` block, not `cond && run_entrypoint(...)`: `@__FILE__` would swallow
+# the `&&` and everything after it as macro arguments.
 if abspath(PROGRAM_FILE) == @__FILE__
     run_entrypoint(() -> main(ARGS))
 end

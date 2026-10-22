@@ -1,5 +1,5 @@
-# Session visualization (CairoMakie package extension), publication-grade per
-# project standards.
+# Session visualization (CairoMakie package extension): Computer Modern, boxed
+# axes, no titles, decade log ticks.
 #
 # Two figure families, identical styling:
 #   session_figure   — one symbol, one trading day (price, activity, Δt/size CCDFs)

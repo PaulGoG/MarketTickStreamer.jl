@@ -153,7 +153,8 @@ function observed_round_lot(trades::AbstractVector{Trade}; code::AbstractString 
 end
 
 """
-    session_report(paths; gap_threshold_s = 60.0) -> DataFrame
+    session_report(paths; gap_threshold_s = 60.0,
+                   non_price = NON_PRICE_CONDITIONS) -> DataFrame
 
 Audit raw session files and return one row per symbol:
 
@@ -190,7 +191,7 @@ function session_report(
         ts = groups[sym]
         n = length(ts)
         ndup = n - length(deduplicate_trades(ts))
-        n_ooo = count(i -> ts[i].time_ns < ts[i-1].time_ns, 2:n)
+        n_out_of_order = count(i -> ts[i].time_ns < ts[i-1].time_ns, 2:n)
         sorted_ns = sort!([t.time_ns for t in ts])
         gaps = n < 2 ? Float64[] : diff(sorted_ns) ./ NS_PER_SEC
         big = filter(>(float(gap_threshold_s)), gaps)
@@ -205,7 +206,7 @@ function session_report(
                 round_lot = observed_round_lot(ts),
                 first_time = ns_to_datetime(sorted_ns[1]),
                 last_time = ns_to_datetime(sorted_ns[end]),
-                n_out_of_order = n_ooo,
+                n_out_of_order,
                 max_gap_s = isempty(gaps) ? 0.0 : round(maximum(gaps); digits = 3),
                 n_gaps = length(big),
                 median_latency_ms = isempty(lats) ? NaN : round(median(lats); digits = 3),
@@ -221,7 +222,9 @@ session_report(path::AbstractString; kwargs...) = session_report([path]; kwargs.
 """
     free_disk_gb(path) -> Float64
 
-Free disk space (GiB) on the filesystem containing `path`.
+Free bytes available on the filesystem holding `path`, in GiB. The disk guard
+of a session compares it with `limits.min_free_disk_gb` at startup and, in a
+live capture, after every flush.
 """
 free_disk_gb(path::AbstractString) = Base.diskstat(path).available / 2^30
 

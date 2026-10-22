@@ -1,5 +1,8 @@
-# Session orchestration: wire a tick source to sinks (and future analysis
-# taps), with structured logging and graceful shutdown.
+# Session orchestration: wire a tick source to sinks and analysis taps, with
+# structured logging and graceful shutdown.
+
+# A log file holds plain text: CSI escape sequences (colour, cursor control) are removed.
+_strip_ansi(s) = replace(string(s), r"\e\[[0-9;?]*[ -/]*[@-~]" => "")
 
 """
     setup_logging(cfg; session_id, shutting_down = Threads.Atomic{Bool}(false))
@@ -46,9 +49,9 @@ function setup_logging(
             "Z] ",
             args.level,
             " ",
-            args.message,
+            _strip_ansi(args.message),
             isempty(args.kwargs) ? "" :
-            " | " * join(("$k=$v" for (k, v) in args.kwargs), " "),
+            " | " * join(("$k=$(_strip_ansi(v))" for (k, v) in args.kwargs), " "),
         )
     end
     return quiet(TeeLogger(console, MinLevelLogger(file, level))), io
@@ -239,21 +242,21 @@ _session_raw_files(cfg::Config, sid::AbstractString) =
 
 One session per data tree: takes a PID-file lock at
 `<data_dir>/.session.lock` and throws with a precise message if another
-live process already holds it (observed failure mode: two backfills
-interleaving on one raw directory). Stale locks from dead processes are
+live process already holds it: two backfills interleaving on one raw
+directory would corrupt both. Stale locks from dead processes are
 broken automatically; release with `close(lock)`.
 """
 function acquire_session_lock(data_dir::AbstractString)
     mkpath(data_dir)
     path = joinpath(data_dir, ".session.lock")
-    lock = Pidfile.trymkpidlock(path; stale_age = 600.0)
-    lock === false && error(
+    pidlock = Pidfile.trymkpidlock(path; stale_age = 600.0)
+    pidlock === false && error(
         "another session already holds $path — one capture/backfill per data " *
         "tree (stale locks from dead processes clear automatically)",
     )
     # `trymkpidlock` returns `Union{LockMonitor,Bool}`; the guard above settles
     # it, but only an assertion narrows the binding for callers of `close`.
-    return lock::Pidfile.LockMonitor
+    return pidlock::Pidfile.LockMonitor
 end
 
 _git_commit() =
@@ -514,7 +517,8 @@ function _run_stream(
     started_utc = Dates.now(UTC)
     provider === nothing && (provider = _provider_from_config(cfg))
     delay = feed_delay_ns(provider)
-    delay > 0 && @info "delayed feed — railings shifted" delay_s = delay ÷ NS_PER_SEC
+    delay > 0 &&
+        @info "delayed feed — market-hours guards shifted" delay_s = delay ÷ NS_PER_SEC
 
     mkpath(cfg.raw_dir)
     slock = acquire_session_lock(cfg.data_dir)
@@ -529,7 +533,7 @@ function _run_stream(
         # stop at; the session deadline is the only bound that applies.
         always_open(provider) &&
             (cfg.require_market_open || cfg.stop_at_market_close) &&
-            @info "venue trades continuously — market-hours railings do not apply"
+            @info "venue trades continuously — market-hours guards do not apply"
         if !always_open(provider) && (cfg.require_market_open || cfg.stop_at_market_close)
             clock = market_clock(provider)
             if !clock.is_open && cfg.require_market_open
@@ -606,7 +610,8 @@ function _run_stream(
         end
         files = _session_raw_files(cfg, sid)
         finalize_session_meta(meta_path, status; ticks, raw_files = files)
-        @info "session finished" status ticks files = length(files) meta = meta_path
+        @info "session finished" status ticks files = length(files) meta = meta_path frames =
+            session.stats[].frames reconnects = session.stats[].reconnects
         return (; ticks, raw_files = files)
     finally
         close(slock)
@@ -641,8 +646,8 @@ That granularity is what makes `backfill.resume` mean anything on a long
 download. The skip test asks whether a day is already present under
 `processed/`, so a day must land there the moment it is complete and not
 before: a run killed after eight of twelve hours resumes at hour eight.
-Compacting only at the end — as this did until 2026-09-13 — left a killed run
-with raw data that resume could not see, and the rerun started from nothing.
+Compacting only at the end would leave a killed run with raw data that resume
+cannot see, and the rerun would start from nothing.
 
 An interrupted day is not compacted and is therefore downloaded again; its
 partial raw file is left on disk rather than deleted, and compaction

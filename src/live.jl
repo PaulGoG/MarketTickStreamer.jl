@@ -15,10 +15,10 @@ for the name it answers to, [`exchange_tz`](@ref), [`stream_protocol!`](@ref),
 parsing. It overrides [`always_open`](@ref), [`session_days`](@ref) and
 [`feed_delay_ns`](@ref) where the venue departs from the defaults.
 
-Two adapters ship: `providers/alpaca.jl` (US equities, New York calendar,
-credentialed, closes overnight and at weekends) and `providers/binance.jl`
-(crypto spot, UTC calendar, public, never closes). They differ on every one of
-those axes, which is what keeps the interface honest.
+The adapters that ship are `providers/alpaca.jl` (US equities, New York
+calendar, credentialed, closes overnight and at weekends) and
+`providers/binance.jl` (crypto spot, UTC calendar, public, never closes). They
+differ on every one of those axes.
 """
 abstract type AbstractProvider end
 
@@ -31,10 +31,9 @@ object exists: which feed names it accepts, the calendar its tape is filed
 under, whether it needs credentials at all, the largest REST page the venue
 serves, and the venue's regular session.
 
-Without this the config layer has to hard-code one vendor's vocabulary, which
-is how `provider.feed` came to be validated against Alpaca's feed names for
-every provider, and how a 24-hour venue would have had its days cut at
-midnight in New York.
+Without it the config layer would have to hard-code one vendor's vocabulary:
+`provider.feed` would be validated against Alpaca's feed names for every
+provider, and a 24-hour venue would have its days cut at midnight in New York.
 
 `bulk_feeds` names the feeds the venue also publishes as daily bulk files,
 which [`bulk_trades`](@ref) downloads; it is empty for a venue without such
@@ -46,8 +45,9 @@ page of the tape.
 
 `regular_session` is `(open, close)` in exchange-local hours, `(0.0, 24.0)`
 for a venue that never closes. The multi-day figures lay their days out on
-it; nothing in acquisition depends on it, since session railings come from
-the venue's own clock.
+it, and `window = :regular` in [`eachday`](@ref) and
+[`read_processed`](@ref) selects it. Nothing in acquisition depends on it,
+since the market-hours guards come from the venue's own clock.
 
 `price_unit` and `size_unit` are what the venue's prices and sizes are
 denominated in, as the figure axes should name them: dollars and shares on a
@@ -76,6 +76,7 @@ end
 const KNOWN_PROVIDERS = ("alpaca", "binance")
 
 """
+    provider_spec(name::AbstractString) -> ProviderSpec
     provider_spec(::Val{name}) -> ProviderSpec
 
 Static description of the provider called `name`. Implemented per adapter.
@@ -97,8 +98,7 @@ Implemented per adapter.
 
 The fallback throws rather than returning anything: a fallback with a value
 would widen every caller's inferred provider type to include it, and then
-each provider method downstream would carry a branch with no matching method
-— which is how JET found this the first time it was written otherwise.
+each provider method downstream would carry a branch with no matching method.
 """
 make_provider(::Val{P}, ::Config, ::AbstractString, ::AbstractString) where {P} = throw(
     ArgumentError(
@@ -123,7 +123,7 @@ the epoch.
 A request window and the key its rows are bucketed by must come from the same
 clock. Building the window on UTC days while filing rows on exchange dates
 agrees only while the exchange sits at UTC-4, and silently loses an hour a day
-otherwise — the defect fixed in 0.2.0. `ZonedDateTime` resolves the offset per
+otherwise. `ZonedDateTime` resolves the offset per
 date, including across the 23- and 25-hour transition days.
 """
 function exchange_day_start_ns(p::AbstractProvider, d::Date)
@@ -569,7 +569,7 @@ end
 """
     always_open(p::AbstractProvider) -> Bool
 
-Whether the venue never closes. `true` suppresses the market-hours railings:
+Whether the venue never closes. `true` suppresses the market-hours guards:
 there is no open to wait for and no close to stop at, and a 24-hour venue
 asked for its `next_close` can only answer with a fiction. The session is then
 bounded by `limits.max_session_hours` alone.
@@ -583,8 +583,8 @@ The dates in `[start_date, end_date]` on which the venue trades, in order.
 
 Defaults to every calendar date. A venue that rests must opt out, never the
 reverse: requesting a day the venue was shut costs one empty response, while
-skipping a day it traded loses that day's tape silently — which is what a
-hard-coded weekday filter did to a 24-hour venue before this was dispatched.
+skipping a day it traded loses that day's tape silently, as a hard-coded
+weekday filter would for a 24-hour venue.
 """
 session_days(::AbstractProvider, start_date::Date, end_date::Date) =
     collect(start_date:Day(1):end_date)
@@ -610,11 +610,31 @@ bulk_trades(p::AbstractProvider, ::AbstractString, ::Date; kwargs...) =
     throw(ArgumentError("provider $(nameof(typeof(p))) publishes no bulk files"))
 
 """
+    historical_trade_count(p::AbstractProvider, symbol, start_str, end_str; kwargs...) -> Int
+
+Provider interface: count the prints of the historical tape for `symbol` over
+the inclusive RFC 3339 window `[start_str, end_str]`, the reference side of
+[`coverage_report`](@ref). The Alpaca adapter implements it against the
+consolidated tape; a provider without a countable tape throws `ArgumentError`.
+"""
+historical_trade_count(
+    p::AbstractProvider,
+    symbol::AbstractString,
+    start_str::AbstractString,
+    end_str::AbstractString;
+    kwargs...,
+) = throw(
+    ArgumentError(
+        "$(nameof(typeof(p))) has no countable historical tape: coverage_report checks a capture against Alpaca's consolidated tape; a Binance day is verified by its vendor checksum and the continuity of its trade ids",
+    ),
+)
+
+"""
     feed_delay_ns(p::AbstractProvider) -> Int64
 
 Intrinsic delay of the provider's configured feed (ns): the wall-clock lag
 between an exchange event and its earliest possible arrival on the wire.
-Zero for real-time feeds. Market-hours railings shift by this amount so a
+Zero for real-time feeds. Market-hours guards shift by this amount so a
 delayed session waits out the silent post-open window and captures the
 delayed tape tail after the close.
 """
@@ -681,7 +701,7 @@ function stop!(s::LiveSession)
 end
 
 # Guard task: gracefully stop the session once the wall clock passes `stop_ns`
-# (ns since epoch). Shared by the market-close railing and the session
+# (ns since epoch). Shared by the market-hours guard and the session
 # deadline. Returns the task; it exits early if the session stops first.
 function _stop_at!(s::LiveSession, stop_ns::Int64, message::AbstractString)
     return Threads.@spawn begin

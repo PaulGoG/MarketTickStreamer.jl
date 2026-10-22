@@ -340,7 +340,7 @@ function corpus_inventory(
         symbols === nothing ?
         filter(s -> isdir(joinpath(processed_dir, s)), readdir(processed_dir)) :
         symbols isa AbstractString ? [String(symbols)] : collect(String, symbols)
-    inv = DataFrame(
+    inventory = DataFrame(
         symbol = String[],
         format = String[],
         n_days = Int[],
@@ -359,7 +359,7 @@ function corpus_inventory(
             Date(something(something(match(PROCESSED_FILE, basename(f)))[1])) for f in files
         ]
         push!(
-            inv,
+            inventory,
             (
                 s,
                 length(exts) == 1 ? only(exts) : "mixed",
@@ -371,7 +371,7 @@ function corpus_inventory(
             ),
         )
     end
-    return inv
+    return inventory
 end
 
 corpus_inventory(cfg::Config; kwargs...) = corpus_inventory(cfg.processed_dir; kwargs...)

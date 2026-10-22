@@ -49,7 +49,7 @@ function _activity_bars(
         volume = 0.0
         notional = 0.0
         accumulated = 0.0
-        count = 0
+        n_prints = 0
         j = i
         while j <= n
             t = ordered[j]
@@ -57,7 +57,7 @@ function _activity_bars(
             low = min(low, t.price)
             volume += t.size
             notional += t.price * t.size
-            count += 1
+            n_prints += 1
             accumulated += increment(t)
             j += 1
             # The print that crosses the threshold belongs to the bar it
@@ -77,7 +77,7 @@ function _activity_bars(
                     low,
                     ordered[j-1].price,
                     volume,
-                    count,
+                    n_prints,
                     volume > 0 ? notional / volume : NaN,
                 ),
             )
@@ -95,7 +95,7 @@ Resample `trades` onto a transaction clock: one [`Bar`](@ref) per `n` prints.
 The count is of prints as recorded, so whether odd lots and other
 non-price-forming records count towards it is decided before the call — pass
 `filter_price_forming(trades)` to exclude them. On a high-priced name that
-choice changes the bar count by a factor of three, so it is not incidental.
+choice changes the bar count by a factor of three.
 
 Sampling by transaction count is the oldest of these clocks: Mandelbrot and Taylor (1967)
 [doi:10.1287/opre.15.6.1057](https://doi.org/10.1287/opre.15.6.1057) proposed price changes
@@ -180,7 +180,7 @@ and `close` follow the fill sequence the venue reported.
 
 Only identical timestamps are merged, so the result is as fine as the
 capture's clock: a capture quantized to milliseconds (a Binance session
-before 0.4.0, see `provenance.timestamp_unit` in its sidecar) merges
+recorded in milliseconds; see `provenance.timestamp_unit` in its sidecar) merges
 distinct events that fell in one millisecond. On a consolidated equity tape
 identical nanosecond stamps across venues are rare, and an event is nearly
 always one venue's sweep.
@@ -199,7 +199,7 @@ function event_bars(trades::AbstractVector{Trade})
         high = low = first_print.price
         volume = 0.0
         notional = 0.0
-        count = 0
+        n_prints = 0
         j = i
         while j <= n && ordered[j].time_ns == stamp
             t = ordered[j]
@@ -207,7 +207,7 @@ function event_bars(trades::AbstractVector{Trade})
             low = min(low, t.price)
             volume += t.size
             notional += t.price * t.size
-            count += 1
+            n_prints += 1
             j += 1
         end
         push!(
@@ -222,7 +222,7 @@ function event_bars(trades::AbstractVector{Trade})
                 low,
                 ordered[j-1].price,
                 volume,
-                count,
+                n_prints,
                 volume > 0 ? notional / volume : NaN,
             ),
         )

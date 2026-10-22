@@ -51,6 +51,7 @@ using LoggingExtras:
     Logging,
     MinLevelLogger,
     TeeLogger
+using PrecompileTools: @compile_workload, @setup_workload
 using ProgressMeter: ProgressMeter, Progress, next!
 using TimeZones:
     TimeZones, @tz_str, Date, DateTime, TimeZone, UTC, ZonedDateTime, astimezone, now
@@ -119,5 +120,53 @@ include("pipeline.jl")
 include("import.jl")
 include("diagnostics.jl")
 include("figures.jl")
+
+# The consumer-facing paths are compiled when the package is, so a session's
+# first call costs the work and not the compiler: measured before this
+# workload, the first `compact_raw` took 5 s and the first replay of a
+# processed file 4 s. Logging is muted: the workload's own messages would
+# otherwise appear as precompilation output.
+@setup_workload begin
+    trades = [
+        Trade(
+            "AAPL",
+            1_753_886_600_000_000_000 + i * 1_000_000,
+            1_753_886_600_100_000_000 + i * 1_000_000,
+            100.0 + i,
+            10.0,
+            "V",
+            i == 3 ? ["@", "I"] : ["@"],
+            "C",
+            i,
+        ) for i in 1:20
+    ]
+    @compile_workload begin
+        Logging.with_logger(Logging.NullLogger()) do
+            load_config(DEFAULT_CONFIG)
+            json_to_trade.(trade_to_json.(trades))
+            rfc3339_to_ns("2026-01-02T14:30:00.123456789Z")
+            ns_to_rfc3339(trades[1].time_ns)
+            trading_date(trades[1].time_ns)
+            mktempdir() do dir
+                sink = open_raw_sink(dir, "precompile")
+                write_batch!(sink, trades)
+                close_sink!(sink)
+                read_raw(sink.path)
+                for format in ("csv", "arrow")
+                    files = compact_raw([sink.path], joinpath(dir, format); format)
+                    collect(replay_source(files; pace = "max"))
+                end
+                collect(replay_source(sink.path; pace = "max"))
+                session_report([sink.path])
+            end
+            filter_price_forming(trades)
+            tick_bars(trades, 5)
+            volume_bars(trades, 50.0)
+            dollar_bars(trades, 5000.0)
+            event_bars(trades)
+            deduplicate_trades(trades)
+        end
+    end
+end
 
 end # module

@@ -4,6 +4,8 @@
 # REST : /api/v3/aggTrades — id-seeded pagination, the shape the real endpoint
 #        forces (a startTime/endTime pair spanning an hour or more is
 #        rejected, so the client seeds on time and walks on `fromId`).
+# Bulk : /data/spot/daily/** — daily aggTrades/trades zip files and their
+#        .CHECKSUM files, built from the same tape.
 # WS   : /stream?streams=a@aggTrade/b@aggTrade — combined-stream frames
 #        wrapped as {"stream":name,"data":{...}}. No auth, no subscribe
 #        handshake: the URL is the subscription.

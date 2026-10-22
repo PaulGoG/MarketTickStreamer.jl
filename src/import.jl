@@ -17,9 +17,10 @@ configured provider's calendar, and the sidecar records the file (name,
 size, SHA-256, format) and the reader's statistics under `session.source`,
 beside the usual provenance. Returns the processed files written.
 
-`format` is `"itch50"` ([`itch50_trades`](@ref); `date` is the session
-date, read from the file name with [`itch50_date`](@ref) when not given) or
-`"iex"` ([`iex_hist_trades`](@ref); the timestamps carry their date).
+`format` is `"itch50"` ([`itch50_trades`](@ref)) or `"iex"`
+([`iex_hist_trades`](@ref)). For either format `date` is the session date,
+read from the file name ([`itch50_date`](@ref), [`iex_hist_date`](@ref)) when
+not given; ITCH timestamps count from midnight and are dated by it.
 `symbols` defaults to the configured basket; `nothing` imports every symbol
 in the file. `broken` and `tape` pass to the reader. With `keep_raw = false`
 the day's raw parts are deleted once the day is under `processed/`, the

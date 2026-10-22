@@ -362,11 +362,11 @@ function stream_protocol!(
                 last_frame[] = time()
                 bump!(s; frames = 1)
                 for msg in JSON.parse(raw)::AbstractVector
-                    T = String(get(msg, :T, ""))
-                    if T == "t"
+                    frame_type = String(get(msg, :T, ""))
+                    if frame_type == "t"
                         put!(ch, parse_alpaca_trade(msg, now_ns()))
                         bump!(s; ticks = 1)
-                    elseif T == "success"
+                    elseif frame_type == "success"
                         m = String(get(msg, :msg, ""))
                         if m == "connected"
                             HTTP.WebSockets.send(ws, auth_payload(p))
@@ -377,17 +377,17 @@ function stream_protocol!(
                                 subscribe_payload(p, cfg.symbols, cfg.channels),
                             )
                         end
-                    elseif T == "subscription"
+                    elseif frame_type == "subscription"
                         @info "subscription confirmed" trades = get(msg, :trades, [])
-                    elseif T == "error"
+                    elseif frame_type == "error"
                         code = Int(get(msg, :code, 0))
                         m = String(get(msg, :msg, "unknown"))
                         code in FATAL_WS_CODES &&
                             (fatal[] = FatalStreamError("Alpaca error $code: $m"))
                         fatal[] === nothing && error("Alpaca stream error $code: $m")   # retryable
-                    elseif T == "q"
+                    elseif frame_type == "q"
                         on_quote === nothing || on_quote(parse_alpaca_quote(msg, now_ns()))
-                    elseif T == "b"
+                    elseif frame_type == "b"
                         on_bar === nothing || on_bar(parse_alpaca_bar(msg, now_ns()))
                     end
                 end

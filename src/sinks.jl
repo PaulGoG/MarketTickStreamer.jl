@@ -119,7 +119,8 @@ end
 """
     close_sink!(s::RawSink)
 
-Flush and close the sink's file handle.
+Flush and close the sink's file handle. The file is never reopened: a later
+write goes to the next part.
 """
 close_sink!(s::RawSink) = (flush(s.io); close(s.io); nothing)
 
@@ -146,7 +147,7 @@ function run_sink!(
     buf = Trade[]
     last_flush = time()
     total = 0
-    dowrite = () -> begin
+    write_buffer = () -> begin
         write_batch!(sink, buf)
         total += length(buf)
         on_flush === nothing || on_flush(length(buf), total)
@@ -159,14 +160,14 @@ function run_sink!(
         end
         if length(buf) >= flush_max_ticks ||
            (!isempty(buf) && time() - last_flush >= flush_interval_s)
-            dowrite()
+            write_buffer()
         end
         if !isready(ch)
             isopen(ch) || break
             sleep(0.05)          # idle poll; granularity ≪ flush interval
         end
     end
-    isempty(buf) || dowrite()
+    isempty(buf) || write_buffer()
     return total
 end
 
@@ -179,7 +180,7 @@ Load one or more raw NDJSON files into memory, skipping (and counting via a
 function read_raw(paths::AbstractVector{<:AbstractString})
     trades = Trade[]
     for p in paths
-        nbad = 0
+        n_corrupt = 0
         for line in eachline(p)
             isempty(strip(line)) && continue
             try
@@ -187,10 +188,10 @@ function read_raw(paths::AbstractVector{<:AbstractString})
             catch e
                 # An interrupt landing mid-parse is not a corrupt line.
                 e isa InterruptException && rethrow()
-                nbad += 1
+                n_corrupt += 1
             end
         end
-        nbad > 0 && @warn "skipped corrupt lines" file = p count = nbad
+        n_corrupt > 0 && @warn "skipped corrupt lines" file = p count = n_corrupt
     end
     return trades
 end
@@ -620,7 +621,7 @@ function _compact_spill(
     # be boxed.
     rows = mktempdir(parent; prefix = "compact_spill_") do spill
         pool = SpillPool(spill, max_open_spill_files)
-        nbad = 0
+        n_corrupt = 0
         try
             for p in raw_paths, line in eachline(p)
                 isempty(strip(line)) && continue
@@ -628,7 +629,7 @@ function _compact_spill(
                     json_to_trade(line)
                 catch e
                     e isa InterruptException && rethrow()
-                    nbad += 1
+                    n_corrupt += 1
                     continue
                 end
                 key = (t.symbol, trading_date(t.time_ns; tz))
@@ -637,7 +638,7 @@ function _compact_spill(
         finally
             _close_all!(pool)
         end
-        nbad > 0 && @warn "skipped corrupt lines" count = nbad
+        n_corrupt > 0 && @warn "skipped corrupt lines" count = n_corrupt
         n = 0
         for key in sort!(collect(pool.seen))
             sym, date = key
