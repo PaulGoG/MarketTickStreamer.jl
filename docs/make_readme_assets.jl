@@ -12,8 +12,8 @@ what a reader sees is what the tool produces rather than a mock-up:
     figure cannot show.
 
 The GIF is assembled with the system `ffmpeg`; without it the script skips
-that asset and says so rather than failing. Committed PNG/GIF are kept small
-deliberately: they are documentation, not data.
+that asset and says so rather than failing. Committed PNG/GIF are kept small:
+they are documentation, not data.
 """
 
 include(joinpath(@__DIR__, "activate.jl"))
@@ -22,6 +22,8 @@ using MarketTickStreamer
 using CairoMakie
 using Printf: @printf, @sprintf
 const M = MarketTickStreamer
+# The figure extension, loaded with CairoMakie above.
+const E = Base.get_extension(M, :MarketTickStreamerMakieExt)
 
 const ASSETS = joinpath(@__DIR__, "src", "assets")
 const OKABE_BLUE = "#0072B2"
@@ -125,7 +127,7 @@ function replay_gif(raw_paths; n_frames::Int = 96, fps::Int = 12)
                     text = @sprintf("%s   %s prints", sym, _grp(seen[c])),
                     space = :relative,
                     align = (:left, :top),
-                    fontsize = M.ANNOTATION_FONTSIZE,
+                    fontsize = E.ANNOTATION_FONTSIZE,
                 )
                 text!(
                     ax,
@@ -134,7 +136,7 @@ function replay_gif(raw_paths; n_frames::Int = 96, fps::Int = 12)
                     text = "replayed from a recording",
                     space = :relative,
                     align = (:right, :bottom),
-                    fontsize = M.ANNOTATION_FONTSIZE,
+                    fontsize = E.ANNOTATION_FONTSIZE,
                     color = OKABE_GREY,
                 )
                 save(joinpath(tmp, @sprintf("f%04d.png", k)), fig; px_per_unit = 1)
@@ -169,8 +171,7 @@ end
 _grp(n::Integer) = replace(string(n), r"(?<=\d)(?=(\d{3})+$)" => " ")
 
 function main(raw_paths)
-    isempty(raw_paths) &&
-        error("usage: julia --project=docs docs/make_readme_assets.jl <raw .jsonl> ...")
+    isempty(raw_paths) && error("usage: julia docs/make_readme_assets.jl <raw .jsonl> ...")
     mkpath(ASSETS)
     static_figure(raw_paths)
     replay_gif(raw_paths)

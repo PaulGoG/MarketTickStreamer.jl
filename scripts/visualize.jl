@@ -12,6 +12,7 @@
 include(joinpath(@__DIR__, "activate.jl"))
 using CairoMakie: CairoMakie   # activates the figure extension
 using MarketTickStreamer
+using Dates: Date
 
 function main()
     cfg_path = joinpath(@__DIR__, "..", "config", "config.toml")
