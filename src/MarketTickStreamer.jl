@@ -9,7 +9,7 @@ replay of recorded sessions.
 Everything is driven by a TOML configuration (`config/config.toml` in a clone);
 credentials come from the environment file it names.
 Entry points: [`run_stream`](@ref), [`run_backfill`](@ref),
-[`replay_source`](@ref), [`compact_raw`](@ref), [`read_processed`](@ref).
+[`replay_source`](@ref), [`follow_source`](@ref), [`compact_raw`](@ref), [`read_processed`](@ref).
 
 Plotting is optional. The diagnostic figures ([`session_figure`](@ref),
 [`overview_figure`](@ref) and their `save_*` drivers) are implemented by a
@@ -59,24 +59,15 @@ using ZipArchives: ZipReader, zip_names, zip_readentry
 export Config, load_config, load_credentials!
 export Trade, Quote, Bar
 export rfc3339_to_ns, ns_to_rfc3339, ns_to_datetime, now_ns, trading_date
-export RawSink,
-    open_raw_sink,
-    write_batch!,
-    close_sink!,
-    run_sink!,
-    trade_to_json,
-    json_to_trade,
-    read_raw,
-    compact_raw
-export deduplicate_trades, session_report, free_disk_gb, check_live_heap, coverage_report
+export trade_to_json, json_to_trade, read_raw, compact_raw
+export deduplicate_trades, session_report, coverage_report
 export NON_PRICE_CONDITIONS, price_forming, filter_price_forming, observed_round_lot
 export tick_bars, volume_bars, dollar_bars, event_bars
 export monitor_raw
-export replay_source, processed_files
+export replay_source, follow_source, processed_files
 export corpus_inventory, eachday, read_processed, trades_table, ProcessedDays
 export RestPolicy
-export AbstractProvider,
-    LiveSession, FatalStreamError, live_source, stop!, schedule_close_stop!, tee, snapshots
+export AbstractProvider, LiveSession, FatalStreamError, live_source, stop!, tee, snapshots
 export AlpacaProvider, BinanceProvider
 export market_clock, historical_trades, historical_trade_count, bulk_trades, condition_map
 export itch50_trades,
@@ -87,25 +78,35 @@ export itch50_trades,
     fetch_iex_hist,
     iex_hist_index
 export ProviderSpec, provider_spec, make_provider, exchange_tz, always_open, session_days
-export run_stream,
-    run_backfill,
-    run_import,
+export run_stream, run_backfill, run_import, run_entrypoint
+export tick_theme,
+    session_figure, save_session_figures, overview_figure, save_overview_figures
+
+# The session plumbing: documented and stable under the package's versioning,
+# reached qualified. A consumer or an operator never calls it; the entry
+# points above do.
+public RawSink,
+    open_raw_sink,
+    write_batch!,
+    close_sink!,
+    run_sink!,
+    free_disk_gb,
+    check_live_heap,
+    schedule_close_stop!,
     session_id,
     setup_logging,
     write_session_meta,
     start_session_meta,
     finalize_session_meta,
     reconcile_sessions!,
-    acquire_session_lock,
-    run_entrypoint
-export tick_theme,
-    session_figure, save_session_figures, overview_figure, save_overview_figures
+    acquire_session_lock
 
 include("schema.jl")
 include("config.jl")
 include("sinks.jl")
 include("quality.jl")
 include("resample.jl")
+include("follow.jl")
 include("monitor.jl")
 include("corpus.jl")
 include("replay.jl")

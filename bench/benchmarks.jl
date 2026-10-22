@@ -8,6 +8,7 @@ include(joinpath(@__DIR__, "activate.jl"))
 using BenchmarkTools
 using Logging: NullLogger, with_logger
 using MarketTickStreamer
+using MarketTickStreamer: open_raw_sink, write_batch!, close_sink!
 
 const suite = BenchmarkGroup()
 

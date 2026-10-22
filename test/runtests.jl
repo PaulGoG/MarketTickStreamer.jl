@@ -14,6 +14,22 @@ using Base64: base64encode
 using CRC32c: crc32c
 using CodecZlib: GzipCompressorStream
 using MarketTickStreamer
+using MarketTickStreamer:
+    RawSink,
+    open_raw_sink,
+    write_batch!,
+    close_sink!,
+    run_sink!,
+    free_disk_gb,
+    check_live_heap,
+    schedule_close_stop!,
+    session_id,
+    setup_logging,
+    write_session_meta,
+    start_session_meta,
+    finalize_session_meta,
+    reconcile_sessions!,
+    acquire_session_lock
 
 include("mock_alpaca.jl")
 include("mock_binance.jl")
@@ -1578,6 +1594,43 @@ hostname = "$(gethostname())"
         end
     end
 
+    @testset "example: following a session from its files" begin
+        mktempdir() do dir
+            cfg = load_config(mock_config_toml(dir; ws_port = 1, rest_port = 1))
+            raw = cfg.raw_dir
+            mkpath(raw)
+            sid = "follow_example"
+            meta = start_session_meta(cfg, sid; started_utc = Dates.now(UTC))
+            # Two prints before 10:01 and one after, size 10 throughout, so each
+            # row's VWAP is the mean of the prices folded so far.
+            prints = [
+                Trade("AAPL", rfc3339_to_ns(ts), 0, price, 10.0, "V", ["@"], "C", i) for
+                (i, (ts, price)) in enumerate([
+                    ("2026-01-05T10:00:30Z", 100.0),
+                    ("2026-01-05T10:00:45Z", 102.0),
+                    ("2026-01-05T10:01:10Z", 104.0),
+                ])
+            ]
+            part = joinpath(raw, "$(sid)_part001.jsonl")
+            write(part, join(trade_to_json.(prints) .* "\n"))
+            finalize_session_meta(meta, "completed"; ticks = 3, raw_files = [part])
+
+            mod = Module(:FollowSessionExample)
+            Base.include(mod, joinpath(@__DIR__, "..", "examples", "follow_session.jl"))
+            buf = IOBuffer()
+            n = example_call(mod, :follow, raw; session = sid, io = buf, poll_s = 0.02)
+            @test n == 3
+            out = String(take!(buf))
+            rows = filter(!isempty, split(out, '\n'))
+            @test length(rows) == 2
+            @test occursin("2026-01-05T10:01:00", rows[1])
+            @test occursin("prints=2", rows[1]) && occursin("vwap=101.0000", rows[1])
+            @test occursin("2026-01-05T10:01:10", rows[2])
+            @test occursin("prints=3", rows[2]) && occursin("vwap=102.0000", rows[2])
+            @test occursin("final", rows[2])
+        end
+    end
+
     @testset "monitor: attach-mode tailing" begin
         mktempdir() do dir
             sink = open_raw_sink(dir, "mon")
@@ -1623,6 +1676,74 @@ hostname = "$(gethostname())"
             # default attach starts at end of file
             st2 = monitor_raw(dir; refresh_s = 0.01, iterations = 1, io = IOBuffer())
             @test st2.total == 0
+        end
+    end
+
+    @testset "follow: a running session's raw parts, torn lines, roll, end by sidecar" begin
+        mktempdir() do dir
+            cfg = load_config(mock_config_toml(dir; ws_port = 1, rest_port = 1))
+            raw = cfg.raw_dir
+            mkpath(raw)
+            line(i) = trade_to_json(sample_trade(i)) * "\n"
+            append(path, s) = open(io -> write(io, s), path, "a")
+            sid = "follow_unit"
+            meta = start_session_meta(cfg, sid; started_utc = Dates.now(UTC))
+
+            # Three prints and the first half of a fourth: the torn line is held.
+            p1 = joinpath(raw, "$(sid)_part001.jsonl")
+            l4 = line(4)
+            cut = length(l4) ÷ 2
+            write(p1, line(1) * line(2) * line(3) * l4[1:cut])
+            ch = follow_source(raw; session = sid, poll_s = 0.02)
+            @test [take!(ch) for _ in 1:3] == [sample_trade(i) for i in 1:3]
+            # Its newline arrives with the next flush.
+            append(p1, l4[(cut+1):end] * line(5))
+            @test take!(ch) == sample_trade(4)
+            @test take!(ch) == sample_trade(5)
+            # The sink rolls to a second part.
+            p2 = joinpath(raw, "$(sid)_part002.jsonl")
+            write(p2, line(6) * line(7) * line(8))
+            @test [take!(ch) for _ in 1:3] == [sample_trade(i) for i in 6:8]
+            # A line that does not parse is skipped.
+            append(p2, "{not json}\n" * line(9))
+            @test take!(ch) == sample_trade(9)
+            # The sidecar leaves `running`: the channel closes after the drain.
+            finalize_session_meta(meta, "completed"; ticks = 9, raw_files = [p1, p2])
+            @test collect(ch) == Trade[]
+            @test !isopen(ch)
+
+            # A finished session is read whole; from the end it is empty; the
+            # default session is the latest one.
+            @test collect(follow_source(raw; session = sid, poll_s = 0.02)) ==
+                  [sample_trade(i) for i in 1:9]
+            @test collect(
+                follow_source(raw; session = sid, from_start = false, poll_s = 0.02),
+            ) == Trade[]
+            @test length(collect(follow_source(raw; poll_s = 0.02))) == 9
+
+            @test_throws ArgumentError follow_source(raw; session = "nobody")
+            @test_throws ArgumentError follow_source(raw; session = sid, poll_s = 0)
+
+            # A backfill day file carries symbol and date after the session id;
+            # its sidecar is found either way.
+            sid2 = "follow_backfill"
+            meta2 = start_session_meta(cfg, sid2; started_utc = Dates.now(UTC))
+            finalize_session_meta(meta2, "completed"; ticks = 2, raw_files = String[])
+            write(joinpath(raw, "$(sid2)_AAPL_2026-01-02_part001.jsonl"), line(1) * line(2))
+            @test length(
+                collect(follow_source(raw; session = "$(sid2)_AAPL_2026-01-02")),
+            ) == 2
+            @test length(collect(follow_source(raw; session = sid2))) == 2
+
+            # A session still marked running whose files stop growing: the
+            # channel closes with an error past the idle timeout.
+            sid3 = "follow_idle"
+            start_session_meta(cfg, sid3; started_utc = Dates.now(UTC))
+            write(joinpath(raw, "$(sid3)_part001.jsonl"), line(1))
+            ch3 = follow_source(raw; session = sid3, poll_s = 0.02, idle_timeout_s = 0.1)
+            @test take!(ch3) == sample_trade(1)
+            @test_throws Exception collect(ch3)
+            @test !isopen(ch3)
         end
     end
 
@@ -2092,6 +2213,9 @@ hostname = "$(gethostname())"
                 files = compact_raw(result.raw_files, joinpath(dir, "proc"); format = "csv")
                 @test !isempty(files)
                 @test length(collect(replay_source(result.raw_files; pace = "max"))) == 14
+                # A finished session read through the file-following source: same prints,
+                # file order.
+                @test collect(follow_source(cfg.raw_dir)) == trades
                 # provenance sidecar written next to the raw files
                 metas = filter(endswith(".meta.toml"), readdir(cfg.raw_dir; join = true))
                 @test length(metas) == 1

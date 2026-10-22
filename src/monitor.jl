@@ -9,87 +9,41 @@
 """
     MonitorState
 
-Incremental tail state over one session's raw part files: per-file byte
-offsets and partial-line carries, cumulative per-symbol counters, a tick-rate
-history window, and the latest exchange timestamp seen (the tape head).
+Incremental tail state over one session's raw part files — a
+[`RawTail`](@ref) for the per-file offsets and carries — with cumulative
+per-symbol counters, a tick-rate history window, the latest exchange
+timestamp seen (the tape head), and the count of lines that did not parse.
 Counters cover data ingested since attach (see `from_start`).
 """
 mutable struct MonitorState
-    dir::String
-    prefix::String
-    offsets::Dict{String,Int64}
-    carries::Dict{String,String}
+    tail::RawTail
     total::Int64
     per_symbol::Dict{String,Int64}
     window::Vector{Tuple{Float64,Int64}}   # (wall clock, new ticks per refresh)
     last_time_ns::Int64
     last_growth::Float64
+    corrupt::Int64
 end
 
 MonitorState(dir, prefix) = MonitorState(
-    String(dir),
-    String(prefix),
-    Dict{String,Int64}(),
-    Dict{String,String}(),
+    RawTail(dir, prefix),
     0,
     Dict{String,Int64}(),
     Tuple{Float64,Int64}[],
     0,
     time(),
+    0,
 )
 
-_session_parts(dir, prefix) = [
-    joinpath(dir, f) for
-    f in sort(readdir(dir)) if startswith(f, prefix) && endswith(f, ".jsonl")
-]
-
-"""
-    latest_session_prefix(dir) -> String
-
-Prefix (session id) of the most recently modified raw part file in `dir`.
-Throws if none exist.
-"""
-function latest_session_prefix(dir::AbstractString)
-    best, best_m = nothing, -Inf
-    for f in readdir(dir)
-        m = match(r"^(.*)_part\d+\.jsonl$", f)
-        m === nothing && continue
-        t = mtime(joinpath(dir, f))
-        t > best_m && ((best, best_m) = (m[1], t))
-    end
-    best === nothing && throw(ArgumentError("no raw session files found in $dir"))
-    return String(best)
-end
-
-# Read bytes appended since the previous call, parse complete NDJSON lines,
-# and update counters. Incomplete trailing lines are carried per file until
-# their newline arrives (a mid-write attach or kill leaves torn lines).
+# Read what was appended since the previous call and update the counters.
+# Torn lines are carried and unparsable ones counted by `_drain!`.
 function _ingest!(st::MonitorState)
-    new_ticks = 0
-    for path in _session_parts(st.dir, st.prefix)
-        off = get(st.offsets, path, Int64(0))
-        sz = filesize(path)
-        sz <= off && continue
-        chunk = open(path) do io
-            seek(io, off)
-            String(read(io))
-        end
-        st.offsets[path] = off + sizeof(chunk)
-        lines = split(get(st.carries, path, "") * chunk, '\n')
-        st.carries[path] = String(lines[end])
-        for ln in @view lines[1:(end-1)]
-            isempty(ln) && continue
-            t = try
-                json_to_trade(ln)
-            catch
-                continue
-            end
-            st.total += 1
-            new_ticks += 1
-            st.per_symbol[t.symbol] = get(st.per_symbol, t.symbol, 0) + 1
-            t.time_ns > st.last_time_ns && (st.last_time_ns = t.time_ns)
-        end
+    new_ticks, corrupt = _drain!(st.tail) do t
+        st.total += 1
+        st.per_symbol[t.symbol] = get(st.per_symbol, t.symbol, 0) + 1
+        t.time_ns > st.last_time_ns && (st.last_time_ns = t.time_ns)
     end
+    st.corrupt += corrupt
     new_ticks > 0 && (st.last_growth = time())
     push!(st.window, (time(), new_ticks))
     return new_ticks
@@ -106,8 +60,8 @@ function _render(
     filter!(w -> w[1] >= cutoff, st.window)
     rates = [w[2] / refresh_s for w in st.window]
     buf = IOBuffer()
-    println(buf, "Session: ", st.prefix)
-    bytes = sum(get(st.offsets, p, 0) for p in _session_parts(st.dir, st.prefix); init = 0)
+    println(buf, "Session: ", st.tail.prefix)
+    bytes = sum(get(st.tail.offsets, p, 0) for p in _session_parts(st.tail); init = 0)
     println(
         buf,
         "Ticks (since attach): ",
@@ -131,6 +85,7 @@ function _render(
     end
     stall = time() - st.last_growth
     stall > 3 * refresh_s && println(buf, "! no new data for ", round(Int, stall), " s")
+    st.corrupt > 0 && println(buf, "! ", st.corrupt, " corrupt lines skipped")
     top = sort(collect(st.per_symbol); by = last, rev = true)
     top = top[1:min(top_symbols, length(top))]
     plots = Base.get_extension(@__MODULE__, :MarketTickStreamerUnicodePlotsExt)
@@ -178,11 +133,7 @@ function monitor_raw(
     refresh_s > 0 || throw(ArgumentError("refresh_s must be positive"))
     prefix = session === nothing ? latest_session_prefix(dir) : String(session)
     st = MonitorState(dir, prefix)
-    if !from_start
-        for p in _session_parts(dir, prefix)
-            st.offsets[p] = filesize(p)
-        end
-    end
+    from_start || _skip_to_end!(st.tail)
     clear = io === stdout && iterations === nothing
     n = 0
     while iterations === nothing || n < iterations
