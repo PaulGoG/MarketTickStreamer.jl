@@ -6,6 +6,60 @@ Notable changes to MarketTickStreamer. The format follows
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-22
+
+The first stable release. It fixes what is public and versioned from here
+on: the exported API, the file contract a capture leaves on disk, the
+configuration schema and the entry-point scripts, so that a change to any of
+them which alters what a consumer reads waits for a major release. It also
+adds the third way a consumer meets a capture: beside the live channel and
+the replay of a recording, a process of its own can follow a running
+session through its files.
+
+### Added
+- `follow_source(dir; session, from_start, poll_s, idle_timeout_s,
+  capacity)` returns a `Channel{Trade}` that tails a session's raw NDJSON
+  parts as they are flushed: it carries a torn final line until its newline
+  arrives, follows the roll to a new part, and closes once the sidecar's
+  `session.status` leaves `running`, after everything flushed until then has
+  been delivered. A finished session is read whole. A consumer in another
+  process is coupled to the capture through the files and the sidecar only,
+  so the capture never waits on it. `idle_timeout_s` ends the wait on a
+  session whose process died unreconciled.
+- `examples/follow_session.jl` applies `snapshots` to a followed stream, one
+  row per minute of exchange time and a final row when the session ends; the
+  suite executes it.
+- A manual page, "Files and provenance", that specifies the on-disk contract
+  for consumers in any language: the raw line, the sidecar, the processed
+  day files, the vendor files, the lock, the two consumer classes and what
+  counts as a breaking change.
+- `CONTRIBUTING.md`.
+- A PrecompileTools workload: the first `compact_raw` and the first replay
+  of processed files no longer cost seconds of compilation.
+- `run_stream`'s closing log line reports the frames received and the
+  reconnections.
+- The monitor reports the lines it could not parse; it shares its tailing
+  with `follow_source`.
+
+### Changed
+- **Breaking.** Fifteen names of the session plumbing are no longer
+  exported: `RawSink`, `open_raw_sink`, `write_batch!`, `close_sink!`,
+  `run_sink!`, `free_disk_gb`, `check_live_heap`, `schedule_close_stop!`,
+  `session_id`, `setup_logging`, `write_session_meta`, `start_session_meta`,
+  `finalize_session_meta`, `reconcile_sessions!` and `acquire_session_lock`.
+  They are declared `public`, documented and versioned as before, and are
+  reached as `MarketTickStreamer.<name>`.
+- `historical_trade_count` on a provider without a countable tape throws an
+  `ArgumentError` with a message that names the check. `coverage_report` is
+  therefore an Alpaca check; a Binance day is verified
+  by its vendor checksum and trade-id continuity.
+- Session log files are stripped of terminal control sequences.
+
+### Fixed
+- `scripts/visualize.jl --from/--to` failed: `Date` was not imported.
+- `docs/make_readme_assets.jl` reads the annotation font size from the
+  extension again.
+
 ## [0.8.0] - 2026-10-20
 
 Vendor downloads that suit a shared link and a lossy path. A cap on the
@@ -466,7 +520,6 @@ suite, a Documenter manual and two executed consumer examples arrive with it.
   functions are excluded by measurement rather than by oversight: they
   allocate by construction, and at a few hundred nanoseconds against
   network-bound ingestion, hand-rolling them is not justified.
-
 - Resampling onto activity clocks: `tick_bars`, `volume_bars` and
   `dollar_bars` turn a capture into `Bar`s sampled once per fixed count of
   prints, of shares, or of traded value, rather than per interval of the
@@ -623,7 +676,8 @@ against the historical SIP tape.
 - An offline test suite driven by an in-process mock of the Alpaca REST and
   WebSocket APIs, with Aqua static quality assurance.
 
-[Unreleased]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.8.0...v1.0.0
 [0.8.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.5.0...v0.6.0
