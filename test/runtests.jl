@@ -13,6 +13,10 @@ end
 using Aqua
 using ExplicitImports
 using JET
+# JET follows the compiler and loads as empty stubs on Julia versions it does
+# not support yet. The pre-release leg then skips its analyses; on a release
+# they run regardless, so an unsupported JET fails instead of passing silently.
+const JET_ENABLED = JET.JET_AVAILABLE || isempty(VERSION.prerelease)
 using OnlineStats: OnlineStats
 using Dates
 using TimeZones
@@ -96,7 +100,11 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
         # findings of its own, none of them actionable here. JET follows the
         # compiler, so a Julia upgrade may surface new reports — which is the
         # reason to run it.
-        JET.test_package(MarketTickStreamer; target_modules = (MarketTickStreamer,))
+        if JET_ENABLED
+            JET.test_package(MarketTickStreamer; target_modules = (MarketTickStreamer,))
+        else
+            @test_skip "JET package analysis (JET unavailable)"
+        end
     end
 
     @testset "static QA (allocation-free hot paths)" begin
@@ -3881,23 +3889,27 @@ using UnicodePlots: UnicodePlots
     @testset "static QA (JET)" begin
         # `report_package` does not reach extension modules, so their entry
         # points are analysed call by call.
-        trades = [sample_trade(i) for i in 1:60]
-        JET.@test_call target_modules = (makie_ext,) tick_theme()
-        JET.@test_call target_modules = (makie_ext,) session_figure(trades)
-        JET.@test_call target_modules = (makie_ext,) save_session_figures(
-            String[],
-            mktempdir(),
-        )
-        JET.@test_call target_modules = (plots_ext,) plots_ext.draw_rate_history(
-            IOBuffer(),
-            [1.0, 2.0],
-            300.0,
-        )
-        JET.@test_call target_modules = (plots_ext,) plots_ext.draw_symbol_counts(
-            IOBuffer(),
-            ["AAPL"],
-            [1],
-        )
+        if JET_ENABLED
+            trades = [sample_trade(i) for i in 1:60]
+            JET.@test_call target_modules = (makie_ext,) tick_theme()
+            JET.@test_call target_modules = (makie_ext,) session_figure(trades)
+            JET.@test_call target_modules = (makie_ext,) save_session_figures(
+                String[],
+                mktempdir(),
+            )
+            JET.@test_call target_modules = (plots_ext,) plots_ext.draw_rate_history(
+                IOBuffer(),
+                [1.0, 2.0],
+                300.0,
+            )
+            JET.@test_call target_modules = (plots_ext,) plots_ext.draw_symbol_counts(
+                IOBuffer(),
+                ["AAPL"],
+                [1],
+            )
+        else
+            @test_skip "JET analyses of the extensions (JET unavailable)"
+        end
     end
 
     @testset "figures: axis labelling" begin

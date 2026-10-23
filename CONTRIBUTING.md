@@ -17,13 +17,17 @@ julia -e 'include("activate.jl"); using Pkg; Pkg.test()'
 ```
 
 The suite includes Aqua, JET, ExplicitImports and AllocCheck, and its
-mock servers need no network or credentials. CI runs it on the latest Julia
-release, on the `[compat]` floor and, without blocking, on the current
-pre-release. AllocCheck depends on LLVM bindings that trail each new Julia
-release, so the pre-release leg runs without it and skips the three
-allocation assertions; anywhere else a missing AllocCheck fails the suite. Every change lands with a
+mock servers need no network or credentials. Every change lands with a
 green suite, and new behaviour comes with a test. Floating-point
 comparisons use `isapprox` with explicit tolerances.
+
+CI runs the suite on the latest Julia release, on the `[compat]` floor and,
+without blocking, on the current pre-release. Two of its tools trail new
+Julia versions: AllocCheck depends on LLVM bindings built per release, and
+JET loads as empty stubs on versions it does not support yet. The
+pre-release leg therefore runs without AllocCheck and skips the analyses
+that cannot run there; on a release, a missing AllocCheck or an unsupported
+JET fails the suite.
 
 ## Formatting
 
