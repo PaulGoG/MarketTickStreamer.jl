@@ -1559,9 +1559,9 @@ hostname = "$(gethostname())"
             @test example_call(mod, :vwap, d) ≈ 101.0 + (seen - 1) / 2
             @test OnlineStats.value(d.volume) ≈ 10.0 * seen
 
-            # Gaps swept log-uniformly over five decades (100 µs … 10 s), the
-            # shape that breaks a P² sketch and the reason the example bins in
-            # log10. Deterministic, so the expected quantiles are exact.
+            # Gaps swept log-uniformly over five orders of magnitude
+            # (100 µs … 10 s), the shape that breaks a P² sketch and the reason
+            # the example bins in log10. Deterministic, so the expected quantiles are exact.
             spread_trades(n) = begin
                 gaps_ns = [round(Int64, 10^(-4 + 5 * (i - 1) / (n - 1)) * 1e9) for i in 1:n]
                 t = 1_753_886_600_000_000_000
@@ -1584,8 +1584,8 @@ hostname = "$(gethostname())"
             for τ in (0.5, 0.9, 0.99)
                 got = example_call(mod, :waiting_quantile, acc, τ)
                 want = exact[max(1, round(Int, τ * length(exact)))]
-                # Bin centres over five decades: accurate to a bin width, not
-                # to the digit. A P² sketch on these gaps misses by 10x+.
+                # Bin centres over five orders of magnitude: accurate to a bin
+                # width, not to the digit. A P² sketch on these gaps misses by 10x+.
                 @test 0.8 * want <= got <= 1.25 * want
             end
             # Both calls go through invokelatest: the example's methods are
@@ -3923,13 +3923,13 @@ using UnicodePlots: UnicodePlots
         v, l = E._log_ticks(1e-7, 10.0)
         @test "1" in l && "10" in l                          # 10^0 and 10^1 collapse
         @test any(x -> occursin("10^{-6}", string(x)), l)
-        # intermediates carry their own mantissa, never the rounded decade
+        # intermediates carry their own mantissa, never the rounded power of ten
         v, l = E._log_ticks(3e-6, 2e-4)
         @test allunique(string.(l))
         @test any(x -> occursin("2\\times10^{-5}", string(x)), l)
         @test E._pow10_label(5, 0) == "5" && E._pow10_label(2, 1) == "20"
         @test E._pow10_label(2, -1) == "0.2" && E._pow10_label(1, 1) == "10"
-        v, l = E._log_ticks(1.3e-4, 1.0)                     # four decades: decades only
+        v, l = E._log_ticks(1.3e-4, 1.0)                     # four orders: 10^k only
         @test length(v) == 4 && allunique(string.(l))
         # one exponent per axis: the rate is rescaled, not the tick labels
         @test E._rate_scale(2.2e4)[1] == 1e3

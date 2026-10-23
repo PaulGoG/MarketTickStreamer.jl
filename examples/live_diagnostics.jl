@@ -38,9 +38,9 @@ positive gaps) against exact order statistics:
 | 0.999 | 5.511254 s | 8.048441 s   | 5.276499 s    | 5.199836 s            |
 
 P² assumes a smooth, roughly unimodal density and adapts five markers to it.
-Waiting times on a consolidated tape span six decades with most of the mass in
-the first millisecond, so the markers sit in the wrong place and the estimate
-is off by 31x at the ninth decile. Taking logs first fixes the median and
+Waiting times on a consolidated tape span six orders of magnitude with most of
+the mass in the first millisecond, so the markers sit in the wrong place and
+the estimate is off by 31x at the ninth decile. Taking logs first fixes the median and
 still fails at the shoulder. A histogram binned in log₁₀ tracks every quantile
 here to within a few percent, for 100 kB of state rather than 280 bytes —
 constant either way, which is the property that matters.
@@ -144,8 +144,9 @@ function observe!(d::LiveDiagnostics, t::Trade)
             fit!(d.Δt_mean, Δt)
             fit!(d.Δt_var, Δt)
             fit!(d.Δt_extrema, Δt)
-            # Binned in log10: the gaps span six decades, and a sketch that
-            # bins them linearly puts almost every observation in one bin.
+            # Binned in log10: the gaps span six orders of magnitude, and a
+            # sketch that bins them linearly puts almost every observation in
+            # one bin.
             fit!(d.Δt_log_hist, log10(Δt))
         else
             d.n_nonpositive += 1

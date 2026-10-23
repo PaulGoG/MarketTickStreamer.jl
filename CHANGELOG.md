@@ -304,9 +304,10 @@ which in turn opens the way to CSV.jl 1.1.
   corrupt line and compaction continued.
 - `docs/make_readme_assets.jl` relied on CairoMakie being installed in the
   global environment.
-- Log axes of up to four decades outside the plain-decimal range labelled
-  their 2× and 5× ticks with the rounded decade, so a tick at 0.2 read
-  `10⁻¹` and one at 0.5 read `1`. Intermediate ticks now carry their mantissa.
+- Log axes spanning up to four orders of magnitude outside the plain-decimal
+  range labelled their 2× and 5× ticks with the rounded power of ten, so a
+  tick at 0.2 read `10⁻¹` and one at 0.5 read `1`. Intermediate ticks now
+  carry their mantissa.
 - Parsing an Alpaca REST page cost time quadratic in its length: converting
   each trade's condition list from a JSON3 array scanned the whole page, so a
   10 000-trade page (the default `page_limit`) took 1 to 2 s of CPU, about 80
@@ -414,7 +415,7 @@ which in turn opens the way to CSV.jl 1.1.
   distributions still count every print. Both take `non_price`.
 - Figures follow one layout standard: 26 pt labels over 22 pt ticks, 3-wide
   data lines, 1600 × 1100 canvas, a single exponent per axis, survival
-  functions anchored on a labelled decade, a logarithmic activity color scale,
+  functions anchored on a labelled power of ten, a logarithmic activity color scale,
   and overview panels aligned on one grid.
 - JSON is read and written with JSON.jl 1.x in place of JSON3, which is
   deprecated in the General registry and held CSV below 1.0 through its
@@ -564,8 +565,8 @@ suite, a Documenter manual and two executed consumer examples arrive with it.
   It also records a result worth knowing before trusting a sketch: on one
   AAPL session `P2Quantile` misses the ninth decile of the waiting-time
   distribution by a factor of 31, and taking logarithms first rescues the
-  median but not the shoulder. The gaps span six decades with most of the
-  mass in the first millisecond, which is not the smooth unimodal density P²
+  median but not the shoulder. The gaps span six orders of magnitude with
+  most of the mass in the first millisecond, which is not the smooth unimodal density P²
   assumes. A histogram binned in log₁₀ holds every quantile to within a few
   percent for 100 kB of state, and that is what the example uses.
 - A second provider, `BinanceProvider`: crypto spot market data over the

@@ -251,8 +251,8 @@ functions (`src/figures.jl`) and keeps the plotting-free numerics
 decimation, the Hill estimator.
 
 Two figure families with identical styling (Computer Modern, boxed axes,
-no titles, `HH:MM` exchange-time axes, decade log ticks with 2×/5×
-intermediates and `10⁰ → 1`, `10¹ → 10` collapse, in-axis count and fitted
+no titles, `HH:MM` exchange-time axes, log ticks at powers of ten with
+2×/5× intermediates and `10⁰ → 1`, `10¹ → 10` collapse, in-axis count and fitted
 tail-exponent annotations):
 
 - **Session figures** — one 2×2 panel per (symbol, trading day) from raw

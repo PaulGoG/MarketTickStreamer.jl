@@ -10,8 +10,8 @@ another process.
 ![Per-session diagnostic: price path, trade rate, and the survival functions of inter-arrival time and trade size](assets/session_diagnostic.png)
 
 One trading day of one symbol, as `scripts/visualize.jl` renders it. The
-inter-arrival distribution spans seven decades; the size distribution carries
-a fitted tail exponent.
+inter-arrival distribution spans seven orders of magnitude; the size
+distribution carries a fitted tail exponent.
 
 ## Purpose
 

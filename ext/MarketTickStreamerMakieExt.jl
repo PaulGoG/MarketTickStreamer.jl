@@ -1,5 +1,5 @@
 # Session visualization (CairoMakie package extension): Computer Modern, boxed
-# axes, no titles, decade log ticks.
+# axes, no titles, log ticks at powers of ten.
 #
 # Two figure families, identical styling:
 #   session_figure   — one symbol, one trading day (price, activity, Δt/size CCDFs)
@@ -70,30 +70,30 @@ function _pow10_label(m::Integer, k::Integer)
     return L"%$m\times10^{%$k}"
 end
 
-# Log-axis ticks: decades, with 2× and 5× intermediates while decades are
-# sparse (up to three); plain decimals throughout on short spans near unity,
-# exponent labels otherwise.
+# Log-axis ticks at powers of ten, with 2× and 5× intermediates while the axis
+# spans at most three orders of magnitude; plain decimals throughout on short
+# spans near unity, exponent labels otherwise.
 function _log_ticks(lo::Real, hi::Real)
     lo = max(float(lo), 1e-300)
     hi = max(float(hi), lo * 10)
     klo = floor(Int, log10(lo) + 1e-9)
     khi = ceil(Int, log10(hi) - 1e-9)
-    ndec = khi - klo
-    mantissas = ndec <= 3 ? (1, 2, 5) : (1,)
+    n_orders = khi - klo
+    mantissas = n_orders <= 3 ? (1, 2, 5) : (1,)
     ticks = [(m, k) for k in klo:khi for m in mantissas if 0.999lo <= m * 10.0^k <= 1.001hi]
-    plain = klo >= -3 && khi <= 4 && ndec <= 4
+    plain = klo >= -3 && khi <= 4 && n_orders <= 4
     labels = AbstractString[
         plain ? @sprintf("%g", m * 10.0^k) : _pow10_label(m, k) for (m, k) in ticks
     ]
     return ([m * 10.0^k for (m, k) in ticks], labels)
 end
 
-# y-axis of a survival function: from the decade below the smallest
+# y-axis of a survival function: from the power of ten below the smallest
 # probability up to 1, so the floor of the curve sits on a labelled tick.
 function _survival_yaxis!(ax, pmin::Real)
-    floor_decade = 10.0^floor(Int, log10(pmin) + 1e-9)
-    ax.yticks = _log_ticks(floor_decade, 1.0)
-    ylims!(ax, 0.7 * floor_decade, 1.6)
+    floor_pow10 = 10.0^floor(Int, log10(pmin) + 1e-9)
+    ax.yticks = _log_ticks(floor_pow10, 1.0)
+    ylims!(ax, 0.7 * floor_pow10, 1.6)
     return nothing
 end
 
@@ -359,8 +359,8 @@ function MarketTickStreamer.overview_figure(
         xticks = _hhmm_ticks(session_open, session_close),
         yticks = (1:nd, [Dates.format(d, dateformat"mm-dd") for (d, _) in days]),
     )
-    # Activity spans decades between the opening auction and midday, so the
-    # color scale is logarithmic; empty minutes are left blank.
+    # Activity spans orders of magnitude between the opening auction and
+    # midday, so the color scale is logarithmic; empty minutes are left blank.
     act[act .== 0] .= NaN
     busy = filter(!isnan, act)
     crange =

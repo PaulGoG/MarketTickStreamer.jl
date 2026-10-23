@@ -173,7 +173,7 @@ real-time analysis consumers are developed offline (see
 | Historical backfill (paginated REST) | working, tested against mock |
 | Compaction to CSV/Arrow with duplicate removal (Arrow dictionary-encoded, optional zstd/lz4) | working, tested |
 | Session QA report (duplicates/gaps/ordering/latency) | working, tested |
-| Diagnostic figures (price, activity, Δt & size CCDFs; HH:MM axes, decade log ticks, tail-exponent annotations) | working, inspected |
+| Diagnostic figures (price, activity, Δt & size CCDFs; HH:MM axes, log ticks at powers of ten, tail-exponent annotations) | working, inspected |
 | Multi-day overview figures (trading-time price, activity heatmap, intra-session waiting-time CCDF) | working, inspected |
 | Live monitoring dashboard (attach-mode; text, plots with UnicodePlots loaded) | working, tested |
 | Paced replay (absolute schedule; receive or exchange clock; optional cap on gaps; a session from raw files, a corpus streamed day by day from the processed tree) | working, tested |
@@ -214,7 +214,8 @@ release.
 <sub>One trading day of one symbol, rendered by `scripts/visualize.jl`: price
 path and trade rate over exchange-local time, and the survival functions of
 inter-arrival time and trade size. The inter-arrival distribution spans seven
-decades, from sub-microsecond bursts to gaps of tens of seconds.</sub>
+orders of magnitude, from sub-microsecond bursts to gaps of tens of
+seconds.</sub>
 
 ![Animation of a recorded session replayed tick by tick, the price path drawing itself against exchange time](docs/src/assets/replay.gif)
 
