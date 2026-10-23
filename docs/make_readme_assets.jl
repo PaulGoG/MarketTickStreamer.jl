@@ -61,12 +61,18 @@ end
 # ----------------------------------------------------------------- gif
 
 """
-    replay_gif(raw_paths; n_frames = 96, fps = 12)
+    replay_gif(raw_paths; n_frames = 120, fps = 12, hold_s = 2.0)
 
 Draw a paced replay as it arrives. The consumer here is the ordinary one: it
 reads a `Channel{Trade}` and cannot tell that the source is a recording.
+
+Frames are spaced uniformly in exchange time, as a paced replay delivers the
+ticks: the cursor sweeps at constant speed and the print counter climbs with
+the trading rate. Spacing them by print count instead crawls through the busy
+regular session and crosses the sparse extended hours in a frame or two. The
+completed path is held for `hold_s` seconds before the loop restarts.
 """
-function replay_gif(raw_paths; n_frames::Int = 96, fps::Int = 12)
+function replay_gif(raw_paths; n_frames::Int = 120, fps::Int = 12, hold_s::Real = 2.0)
     Sys.which("ffmpeg") === nothing &&
         (@warn "ffmpeg not found — skipping replay.gif"; return nothing)
 
@@ -77,45 +83,46 @@ function replay_gif(raw_paths; n_frames::Int = 96, fps::Int = 12)
         push!(trades, t)
     end
     isempty(trades) && error("replay produced no ticks")
-    # The path is drawn from price-forming prints, as in `session_figure`; the
-    # counter still counts every print replayed.
     sort!(trades; by = t -> t.time_ns)
-    seen = cumsum(ones(Int, length(trades)))
-    keep = [price_forming(t) for t in trades]
-    any(keep) || fill!(keep, true)
-    trades, seen = trades[keep], seen[keep]
     sym = trades[1].symbol
     tz = M.tz"America/New_York"
-    hours = [M._local_hour(t.time_ns; tz) for t in trades]
-    prices = [t.price for t in trades]
-    n = length(trades)
-    cuts = round.(Int, range(max(2, n ÷ n_frames), n; length = n_frames))
+    # The counter counts every print replayed; the path is drawn from the
+    # price-forming ones, as in `session_figure`.
+    hours_all = [M._local_hour(t.time_ns; tz) for t in trades]
+    keep = [price_forming(t) for t in trades]
+    any(keep) || fill!(keep, true)
+    hours = hours_all[keep]
+    prices = [t.price for t in trades[keep]]
+    t₀, t₁ = extrema(hours)
+    frame_hours = range(t₀, t₁; length = n_frames + 1)[2:end]
 
     mktempdir() do tmp
         # Frames are rendered at the standard canvas and type sizes and scaled
         # down when the GIF is assembled, so the proportions are those of the
         # static figures.
         with_theme(tick_theme()) do
-            for (k, c) in enumerate(cuts)
+            for (k, tₖ) in enumerate(frame_hours)
+                c = searchsortedlast(hours, tₖ)
                 fig = Figure(size = (1200, 600))
                 ax = Axis(
                     fig[1, 1];
                     xlabel = "Exchange time [HH:MM]",
                     ylabel = "Price [USD]",
-                    xticks = M._hhmm_ticks(extrema(hours)...),
+                    xticks = M._hhmm_ticks(t₀, t₁),
                 )
                 # Fixed limits: a rescaling axis reads as motion that is not
                 # in the data.
-                xlims!(ax, extrema(hours)...)
+                xlims!(ax, t₀, t₁)
                 ylims!(ax, extrema(prices)...)
-                lines!(
+                c >= 2 && lines!(
                     ax,
                     M._decimate_minmax(hours[1:c], prices[1:c])...;
                     color = OKABE_BLUE,
                 )
-                vlines!(
+                # The cursor marks the replay clock; the completed path has none.
+                k < n_frames && vlines!(
                     ax,
-                    [hours[c]];
+                    [tₖ];
                     color = OKABE_VERMILION,
                     linewidth = 1.5,
                     linestyle = :dash,
@@ -124,7 +131,11 @@ function replay_gif(raw_paths; n_frames::Int = 96, fps::Int = 12)
                     ax,
                     0.015,
                     0.97;
-                    text = @sprintf("%s   %s prints", sym, _grp(seen[c])),
+                    text = @sprintf(
+                        "%s   %s prints",
+                        sym,
+                        _grp(searchsortedlast(hours_all, tₖ))
+                    ),
                     space = :relative,
                     align = (:left, :top),
                     fontsize = E.ANNOTATION_FONTSIZE,
@@ -154,15 +165,16 @@ function replay_gif(raw_paths; n_frames::Int = 96, fps::Int = 12)
             pipeline(
                 `ffmpeg -y -v error -framerate $fps
                       -i $(joinpath(tmp, "f%04d.png")) -i $pal
-                      -lavfi "[0:v]scale=$(GIF_WIDTH):-1:flags=lanczos[s];[s][1:v]paletteuse=dither=bayer:bayer_scale=3"
+                      -lavfi "[0:v]tpad=stop_mode=clone:stop_duration=$(hold_s),scale=$(GIF_WIDTH):-1:flags=lanczos[s];[s][1:v]paletteuse=dither=bayer:bayer_scale=3"
                       -loop 0 $out`,
             ),
         )
         @printf(
-            "replay.gif              %.0f kB  (%d frames at %d fps)\n",
+            "replay.gif              %.0f kB  (%d frames at %d fps, last held %.1f s)\n",
             filesize(out) / 1024,
-            length(cuts),
-            fps
+            n_frames,
+            fps,
+            hold_s
         )
         return out
     end
