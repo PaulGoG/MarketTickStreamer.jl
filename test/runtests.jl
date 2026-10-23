@@ -1,5 +1,15 @@
 using Test
-using AllocCheck
+# AllocCheck builds on GPUCompiler, whose LLVM bindings trail each new Julia
+# release; the CI pre-release leg therefore runs without it. Any other
+# environment missing it is a broken test setup.
+const ALLOCCHECK_AVAILABLE = Base.find_package("AllocCheck") !== nothing
+if ALLOCCHECK_AVAILABLE
+    using AllocCheck
+elseif isempty(VERSION.prerelease)
+    error(
+        "AllocCheck is missing from the test environment; only a Julia pre-release runs without it",
+    )
+end
 using Aqua
 using ExplicitImports
 using JET
@@ -93,9 +103,13 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
         # These three run once per print on the ingest and compaction paths.
         # Zero allocations is the measured state, asserted here so an
         # accidental boxing or a dynamic dispatch shows up as a test failure.
-        @test isempty(check_allocs(MarketTickStreamer.ns_to_datetime, (Int64,)))
-        @test isempty(check_allocs(MarketTickStreamer.now_ns, ()))
-        @test isempty(check_allocs(MarketTickStreamer.trading_date, (Int64,)))
+        if ALLOCCHECK_AVAILABLE
+            @test isempty(check_allocs(MarketTickStreamer.ns_to_datetime, (Int64,)))
+            @test isempty(check_allocs(MarketTickStreamer.now_ns, ()))
+            @test isempty(check_allocs(MarketTickStreamer.trading_date, (Int64,)))
+        else
+            @test_skip "allocation-free hot paths (AllocCheck unavailable)"
+        end
         # `rfc3339_to_ns` and `ns_to_rfc3339` are not asserted: the first
         # matches a regular expression and validates through `DateTime`, the
         # second builds a String. At a few hundred nanoseconds each against

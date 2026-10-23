@@ -41,6 +41,20 @@ jobs:
         with:
           version: ${{ matrix.version }}
       - uses: julia-actions/cache@v3
+      # AllocCheck builds on GPUCompiler, whose LLVM bindings trail each new
+      # Julia release, and a test environment holding it fails to precompile
+      # until they catch up. The pre-release leg drops it and the suite skips
+      # its three allocation assertions there; every other leg keeps it.
+      - name: Remove AllocCheck from the test environment
+        if: matrix.version == 'pre'
+        shell: julia --color=yes {0}
+        run: |
+          using TOML
+          path = joinpath("test", "Project.toml")
+          project = TOML.parsefile(path)
+          delete!(project["deps"], "AllocCheck")
+          delete!(project["compat"], "AllocCheck")
+          open(io -> TOML.print(io, project), path, "w")
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
         with:
