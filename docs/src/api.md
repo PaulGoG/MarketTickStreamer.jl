@@ -7,6 +7,10 @@ provider interface and the adapters are on the
 activity clocks, replay, corpus access and the diagnostic figures — on the
 [analysis page](api_analysis.md).
 
+Names with a leading underscore are internal. They are documented for the
+reader of the code and are not covered by the versioning policy of the
+README.
+
 ```@docs
 MarketTickStreamer
 ```

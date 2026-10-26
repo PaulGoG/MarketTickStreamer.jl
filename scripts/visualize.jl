@@ -70,6 +70,7 @@ function main()
             session,
             price_unit,
             size_unit,
+            non_price = cfg.non_price_conditions,
         )
         println("Wrote $(length(written)) overview figure file(s):")
         foreach(f -> println("  ", f), written)
@@ -86,10 +87,22 @@ function main()
     isempty(files) && (println("No raw files found."); return)
 
     println("Session QA report:")
-    show(session_report(files); allrows = true, allcols = true)
+    show(
+        session_report(files; non_price = cfg.non_price_conditions);
+        allrows = true,
+        allcols = true,
+    )
     println()
 
-    written = save_session_figures(files, out_dir; formats, tz, price_unit, size_unit)
+    written = save_session_figures(
+        files,
+        out_dir;
+        formats,
+        tz,
+        price_unit,
+        size_unit,
+        non_price = cfg.non_price_conditions,
+    )
     println("Wrote $(length(written)) figure file(s):")
     for f in written
         println("  ", f)

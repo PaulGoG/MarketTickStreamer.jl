@@ -275,6 +275,7 @@ function mock_binance_config_toml(
     stop_at_market_close = true,
     keep_raw = true,
     resume = true,
+    reconnect_max_retries::Integer = 1,
 )
     path = joinpath(dir, "binance.toml")
     write(
@@ -289,7 +290,7 @@ symbols = $(JSON.json(symbols))
 channels = ["trades"]
 require_market_open = $require_market_open
 stop_at_market_close = $stop_at_market_close
-reconnect_max_retries = 1
+reconnect_max_retries = $reconnect_max_retries
 reconnect_base_delay_s = 0.05
 reconnect_max_delay_s = 0.2
 stale_timeout_s = 30.0

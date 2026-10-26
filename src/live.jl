@@ -110,7 +110,7 @@ make_provider(::Val{P}, ::Config, ::AbstractString, ::AbstractString) where {P} 
     exchange_tz(p::AbstractProvider) -> TimeZone
 
 The calendar the provider's tape is filed under — the clock that decides which
-date a print belongs to. Defaults to the provider's [`ProviderSpec`](@ref).
+date a print belongs to. Implemented by each provider.
 """
 function exchange_tz end
 
@@ -336,6 +336,8 @@ function _download_resumable(
         _with_retry(policy) do
             have = isfile(tmp) ? filesize(tmp) : Int64(0)
             bad_start = Int64(-1)       # a 206 that did not start at `have`
+            bad_status = 0
+            bad_message = Ref{Any}(nothing)
             HTTP.open(
                 "GET",
                 url,
@@ -370,9 +372,15 @@ function _download_resumable(
                 elseif st == 416                    # nothing past `have`: complete
                     done = true
                 else
-                    throw(HTTP.StatusError(st, "GET", String(url), http.message))
+                    bad_status = st             # raised outside the handler, see below
+                    bad_message[] = http.message
                 end
             end
+            # Raised here and not inside the handler: an exception thrown there
+            # arrives wrapped as a transport failure and would be retried on
+            # every status, where `_with_retry` retries only RETRYABLE_STATUS.
+            bad_status != 0 &&
+                throw(HTTP.StatusError(bad_status, "GET", String(url), bad_message[]))
             bad_start >= 0 && error(
                 "$url answered the range from byte $bad_start, not the requested $have: " *
                 "refusing to splice",
@@ -650,9 +658,6 @@ struct FatalStreamError <: Exception
     msg::String
 end
 
-# Alpaca error codes that retrying cannot fix.
-const FATAL_WS_CODES = (401, 402, 403, 404, 405, 406, 409, 410, 411)
-
 """
     LiveSession
 
@@ -663,13 +668,21 @@ Obtain via [`live_source`](@ref); request shutdown with [`stop!`](@ref).
 producer, the watchdog and the guard tasks, which run on other threads. The
 logging layer reads the same flag to mute transport-teardown noise, so the flag
 belongs to one session and not to the process.
+
+`outcome` records how the producer ended: `:running` while it streams,
+`:completed` when it stopped on request, at the deadline or after the server
+closed the stream, `:failed` after a fatal stream error or exhausted
+reconnection attempts.
 """
 struct LiveSession
     channel::Channel{Trade}
     stop::Threads.Atomic{Bool}
     ws::Ref{Any}
     stats::Ref{NamedTuple{(:ticks, :frames, :reconnects),NTuple{3,Int}}}
+    outcome::Ref{Symbol}
 end
+
+LiveSession(channel, stop, ws, stats) = LiveSession(channel, stop, ws, stats, Ref(:running))
 
 """
     stop!(s::LiveSession)
@@ -684,7 +697,8 @@ function stop!(s::LiveSession)
     if ws !== nothing
         try
             close(ws)
-        catch
+        catch e
+            e isa InterruptException && rethrow()
         end
         # close() is a handshake; an unresponsive peer that never acks the
         # CLOSE frame would hang the read loop, so sever the transport after
@@ -693,7 +707,8 @@ function stop!(s::LiveSession)
             sleep(5.0)
             try
                 close(ws.io)
-            catch
+            catch e
+                e isa InterruptException && rethrow()
             end
         end
     end
@@ -769,7 +784,8 @@ function spawn_watchdog(
                 @warn "no frames for $(stale_timeout_s)s — closing stale connection"
                 try
                     close(ws)
-                catch
+                catch e
+                    e isa InterruptException && rethrow()
                 end
                 break
             end
@@ -856,6 +872,7 @@ function live_source(
                 attempt += 1
                 if attempt > cfg.reconnect_max_retries
                     @error "reconnection attempts exhausted" attempt
+                    session.outcome[] = :failed
                     break
                 end
                 bump!(session; reconnects = 1)
@@ -869,9 +886,11 @@ function live_source(
                 sleep(delay)
             end
         catch e
-            e isa FatalStreamError ? (@error "fatal stream error — aborting" e.msg) :
-            rethrow()
+            e isa FatalStreamError || rethrow()
+            session.outcome[] = :failed
+            @error "fatal stream error; aborting" e.msg
         finally
+            session.outcome[] === :running && (session.outcome[] = :completed)
             close(ch)
         end
     end

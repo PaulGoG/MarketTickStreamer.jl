@@ -483,13 +483,16 @@ end
 # server answers a HEAD with a Range header 416, so none is sent.
 function _announced_length(url::AbstractString, policy::RestPolicy)
     resp = _with_retry(policy) do
-        HTTP.head(
+        r = HTTP.head(
             url;
             retry = false,
             status_exception = false,
             readtimeout = policy.request_timeout_s,
             connect_timeout = policy.connect_timeout_s,
         )
+        r.status in RETRYABLE_STATUS &&
+            throw(HTTP.StatusError(r.status, "HEAD", String(url), r))
+        r
     end::HTTP.Response
     resp.status == 404 && return nothing
     resp.status == 200 || throw(HTTP.StatusError(resp.status, "HEAD", String(url), resp))

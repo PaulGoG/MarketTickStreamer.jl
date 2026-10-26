@@ -11,8 +11,8 @@
 # `recv_ns = 0`, so a recording without a complete receive clock can only be
 # replayed on exchange time.
 function _replay_clock(trades::Vector{Trade}, clock::AbstractString)
-    n_missing = count(t -> t.recv_ns <= 0, trades)
     clock == "exchange" && return "exchange"
+    n_missing = count(t -> t.recv_ns <= 0, trades)
     if clock == "recv"
         n_missing > 0 && throw(
             ArgumentError(

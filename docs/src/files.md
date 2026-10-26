@@ -149,9 +149,9 @@ The status is `running` when the sidecar is first written, at the start;
 that write is atomic. At the end it is rewritten as `completed`,
 `interrupted` or `failed`. A sidecar left `running` by a process that no
 longer exists is relabeled `aborted` by the next session that starts on the
-tree; its raw parts stay valid to the last flushed line. The sidecar is the
-one file that is rewritten in place, so a reader that catches it mid-rewrite
-finds it empty or truncated, and re-reads it.
+tree; its raw parts stay valid to the last flushed line. Every rewrite of
+the sidecar is atomic as well: the new content is written beside it and
+renamed into place, so a reader never finds it empty or truncated.
 
 ## Processed day files
 

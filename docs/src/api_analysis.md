@@ -47,7 +47,8 @@ Pages = ["figures.jl"]
 
 ## Numerics behind the figures
 
-These need no plotting package and work on their own.
+These need no plotting package and work on their own; as internals, their
+names are not covered by the versioning policy.
 
 ```@autodocs
 Modules = [MarketTickStreamer]

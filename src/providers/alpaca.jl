@@ -334,6 +334,9 @@ historical_trade_count(
     rate_sleep_s,
 )
 
+# Alpaca error codes that retrying cannot fix.
+const FATAL_WS_CODES = (401, 402, 403, 404, 405, 406, 409, 410, 411)
+
 # Alpaca v2 streaming protocol. Frames are JSON arrays of messages; the
 # server opens with {"T":"success","msg":"connected"}, we reply with auth,
 # then subscribe on {"T":"success","msg":"authenticated"}.

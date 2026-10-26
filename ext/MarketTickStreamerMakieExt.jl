@@ -446,6 +446,7 @@ function MarketTickStreamer.save_session_figures(
     min_trades::Integer = 10,
     price_unit::AbstractString = "USD",
     size_unit::AbstractString = "shares",
+    non_price::AbstractDict = NON_PRICE_CONDITIONS,
 )
     trades = deduplicate_trades(read_raw(raw_paths))
     isempty(trades) && return String[]
@@ -463,7 +464,7 @@ function MarketTickStreamer.save_session_figures(
                 @info "skipping sparse group" symbol = sym date n = length(g)
                 continue
             end
-            fig = MarketTickStreamer.session_figure(g; tz, price_unit, size_unit)
+            fig = MarketTickStreamer.session_figure(g; tz, price_unit, size_unit, non_price)
             for fmt in formats
                 path = _safesave(joinpath(out_dir, "$(sym)_$(date).$(fmt)")) do tmp
                     fmt == "png" ? save(tmp, fig; px_per_unit = 4) : save(tmp, fig)
@@ -490,6 +491,7 @@ function MarketTickStreamer.save_overview_figures(
     min_days::Integer = 2,
     price_unit::AbstractString = "USD",
     size_unit::AbstractString = "shares",
+    non_price::AbstractDict = NON_PRICE_CONDITIONS,
 )
     isdir(processed_dir) || throw(ArgumentError("no processed directory at $processed_dir"))
     mkpath(out_dir)
@@ -510,6 +512,7 @@ function MarketTickStreamer.save_overview_figures(
                 session,
                 price_unit,
                 size_unit,
+                non_price,
             )
             span = "$(days[1][1])_$(days[end][1])"
             for fmt in formats

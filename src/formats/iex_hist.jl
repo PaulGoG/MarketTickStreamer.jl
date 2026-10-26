@@ -429,7 +429,7 @@ function iex_hist_index(
 )
     url = "$(api_base)/hist"
     resp = _with_retry(policy) do
-        HTTP.get(
+        r = HTTP.get(
             url;
             query = ["date" => Dates.format(date, dateformat"yyyymmdd")],
             retry = false,
@@ -437,6 +437,9 @@ function iex_hist_index(
             readtimeout = policy.request_timeout_s,
             connect_timeout = policy.connect_timeout_s,
         )
+        r.status in RETRYABLE_STATUS &&
+            throw(HTTP.StatusError(r.status, "GET", url, r))
+        r
     end::HTTP.Response
     resp.status == 404 && return nothing
     resp.status == 200 || throw(HTTP.StatusError(resp.status, "GET", url, resp))
@@ -526,16 +529,21 @@ function _crc32c_from_headers(headers)
     return nothing
 end
 
-# HEAD the file host for its announced CRC-32C.
+# HEAD the file host for its announced CRC-32C. A retryable status is retried
+# on the policy's schedule and fails the call when it persists; without that,
+# a transient 5xx returned nothing and a cached file passed unverified.
 function _announced_crc32c(url::AbstractString, policy::RestPolicy)
     resp = _with_retry(policy) do
-        HTTP.head(
+        r = HTTP.head(
             url;
             retry = false,
             status_exception = false,
             readtimeout = policy.request_timeout_s,
             connect_timeout = policy.connect_timeout_s,
         )
+        r.status in RETRYABLE_STATUS &&
+            throw(HTTP.StatusError(r.status, "HEAD", String(url), r))
+        r
     end::HTTP.Response
     resp.status == 200 || return nothing
     return _crc32c_from_headers([String(k) => String(v) for (k, v) in resp.headers])

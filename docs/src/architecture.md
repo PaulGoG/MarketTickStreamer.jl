@@ -129,9 +129,10 @@ interrupt (tested).
   alone would only test it between connections.
 - **Fatal vs retryable**: Alpaca error codes 401–411 (bad auth, connection
   limit, bad subscription) abort immediately, since retrying them risks a
-  ban. The Alpaca adapter carries the fatal signal out of the WebSocket
-  handler by value and throws it after the connection returns; the Binance
-  adapter throws inside the handler. Both paths are tested against the mocks.
+  ban. Both adapters carry the fatal signal out of the WebSocket handler by
+  value and throw it after the connection returns, since an exception thrown
+  inside the handler arrives wrapped and would be retried as a disconnect.
+  Both paths are tested against the mocks.
 - **Stale connections**: HTTP.jl 1.x websockets have no read-idle timeout, so
   a watchdog task force-closes the socket after `stream.stale_timeout_s`
   without a frame, triggering the normal reconnect path.

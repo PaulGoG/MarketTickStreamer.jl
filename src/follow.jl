@@ -10,19 +10,16 @@ Incremental tail over one session's raw part files: the byte offset read so
 far and the partial-line carry of each file. Shared by [`monitor_raw`](@ref)
 and [`follow_source`](@ref).
 """
-mutable struct RawTail
-    const dir::String
-    const prefix::String
-    const offsets::Dict{String,Int64}
-    const carries::Dict{String,String}
+struct RawTail
+    dir::String
+    prefix::String
+    offsets::Dict{String,Int64}
+    carries::Dict{String,String}
 end
 RawTail(dir, prefix) =
     RawTail(String(dir), String(prefix), Dict{String,Int64}(), Dict{String,String}())
 
-_session_parts(dir, prefix) = [
-    joinpath(dir, f) for
-    f in sort(readdir(dir)) if startswith(f, prefix) && endswith(f, ".jsonl")
-]
+_session_parts(dir, prefix) = _raw_files_with_prefix(dir, prefix)
 _session_parts(t::RawTail) = _session_parts(t.dir, t.prefix)
 
 """

@@ -35,34 +35,6 @@ struct Trade
     id::Int64
 end
 
-# Value semantics: the default struct `==` compares the `conditions` vector
-# by identity, which breaks round-trip comparisons of otherwise equal ticks.
-Base.:(==)(a::Trade, b::Trade) =
-    a.symbol == b.symbol &&
-    a.time_ns == b.time_ns &&
-    a.recv_ns == b.recv_ns &&
-    a.price == b.price &&
-    a.size == b.size &&
-    a.exchange == b.exchange &&
-    a.conditions == b.conditions &&
-    a.tape == b.tape &&
-    a.id == b.id
-
-Base.hash(t::Trade, h::UInt) = hash(
-    (
-        t.symbol,
-        t.time_ns,
-        t.recv_ns,
-        t.price,
-        t.size,
-        t.exchange,
-        t.conditions,
-        t.tape,
-        t.id,
-    ),
-    h,
-)
-
 """
     Quote
 
@@ -90,38 +62,6 @@ struct Quote
     conditions::Vector{String}
     tape::String
 end
-
-# Value semantics, for the same reason as `Trade`: the default comparison
-# would compare `conditions` by identity.
-Base.:(==)(a::Quote, b::Quote) =
-    a.symbol == b.symbol &&
-    a.time_ns == b.time_ns &&
-    a.recv_ns == b.recv_ns &&
-    a.bid_price == b.bid_price &&
-    a.bid_size == b.bid_size &&
-    a.bid_exchange == b.bid_exchange &&
-    a.ask_price == b.ask_price &&
-    a.ask_size == b.ask_size &&
-    a.ask_exchange == b.ask_exchange &&
-    a.conditions == b.conditions &&
-    a.tape == b.tape
-
-Base.hash(q::Quote, h::UInt) = hash(
-    (
-        q.symbol,
-        q.time_ns,
-        q.recv_ns,
-        q.bid_price,
-        q.bid_size,
-        q.bid_exchange,
-        q.ask_price,
-        q.ask_size,
-        q.ask_exchange,
-        q.conditions,
-        q.tape,
-    ),
-    h,
-)
 
 """
     Bar
@@ -157,35 +97,18 @@ struct Bar
     vwap::Float64
 end
 
-Base.:(==)(a::Bar, b::Bar) =
-    a.symbol == b.symbol &&
-    a.time_ns == b.time_ns &&
-    a.close_ns == b.close_ns &&
-    a.recv_ns == b.recv_ns &&
-    a.open == b.open &&
-    a.high == b.high &&
-    a.low == b.low &&
-    a.close == b.close &&
-    a.volume == b.volume &&
-    a.trade_count == b.trade_count &&
-    a.vwap == b.vwap
-
-Base.hash(b::Bar, h::UInt) = hash(
-    (
-        b.symbol,
-        b.time_ns,
-        b.close_ns,
-        b.recv_ns,
-        b.open,
-        b.high,
-        b.low,
-        b.close,
-        b.volume,
-        b.trade_count,
-        b.vwap,
-    ),
-    h,
-)
+# Value semantics for the three record types: the default struct `==` compares
+# a `conditions` vector by identity, which breaks round-trip comparisons of
+# otherwise equal records, and the default `isequal` would then follow `==`,
+# so a `Bar` with a NaN `vwap` would not be equal to itself in a `Set`. All
+# three compare, hash and `isequal` field by field in declaration order.
+for T in (Trade, Quote, Bar)
+    n = fieldcount(T)
+    @eval _fields(x::$T) = ntuple(i -> getfield(x, i), Val($n))
+    @eval Base.:(==)(a::$T, b::$T) = _fields(a) == _fields(b)
+    @eval Base.isequal(a::$T, b::$T) = isequal(_fields(a), _fields(b))
+    @eval Base.hash(x::$T, h::UInt) = hash(_fields(x), h)
+end
 
 const NS_PER_SEC = 1_000_000_000
 

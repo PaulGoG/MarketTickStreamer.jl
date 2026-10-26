@@ -194,6 +194,9 @@ function snapshots(
     return n
 end
 
+# UTC start time, as stamped into every session id.
+const SESSION_STAMP = dateformat"yyyymmdd-HHMMSS"
+
 """
     session_id(cfg::Config; feed = cfg.feed) -> String
 
@@ -204,7 +207,7 @@ file the session produces.
 session_id(
     cfg::Config;
     feed::AbstractString = cfg.feed,
-) = "$(cfg.provider)_$(feed)_$(Dates.format(Dates.now(UTC), dateformat"yyyymmdd-HHMMSS"))"
+) = "$(cfg.provider)_$(feed)_$(Dates.format(Dates.now(UTC), SESSION_STAMP))"
 
 # Construct the configured provider. Credentials are loaded only for providers
 # that declare they need them: public crypto market data needs none, and
@@ -267,7 +270,8 @@ _git_commit() =
                 String,
             ),
         )
-    catch
+    catch e
+        e isa InterruptException && rethrow()
         "unknown"
     end
 
@@ -281,7 +285,8 @@ _git_dirty() =
                 ),
             ),
         )
-    catch
+    catch e
+        e isa InterruptException && rethrow()
         false
     end
 
@@ -400,6 +405,15 @@ killed process still leaves its provenance on disk.
 start_session_meta(cfg::Config, sid::AbstractString; started_utc::DateTime) =
     write_session_meta(cfg, sid; status = "running", started_utc)
 
+# Rewrite `path` through a sibling temporary file and a rename, so a reader
+# never sees a truncated sidecar.
+function _rewrite_atomic(write::Function, path::AbstractString)
+    tmp = path * ".partial"
+    open(write, tmp, "w")
+    mv(tmp, path; force = true)
+    return path
+end
+
 """
     finalize_session_meta(path, status; ticks, raw_files, ticks_processed = nothing, source = nothing) -> String
 
@@ -434,7 +448,7 @@ function finalize_session_meta(
         (s["source"] = Dict{String,Any}(String(k) => v for (k, v) in source))
     s["raw_files"] = [basename(f) for f in raw_files]
     s["finished_utc"] = string(Dates.now(UTC))
-    open(io -> TOML.print(io, meta), path, "w")
+    _rewrite_atomic(io -> TOML.print(io, meta), path)
     return path
 end
 
@@ -454,7 +468,9 @@ function reconcile_sessions!(raw_dir::AbstractString)
         endswith(f, ".meta.toml") || continue
         meta = try
             TOML.parsefile(f)
-        catch
+        catch e
+            e isa InterruptException && rethrow()
+            @warn "unreadable sidecar left as is" sidecar = basename(f)
             continue
         end
         s = get(meta, "session", nothing)
@@ -468,7 +484,7 @@ function reconcile_sessions!(raw_dir::AbstractString)
         samehost && pid > 0 && isdir("/proc/$pid") && continue   # genuinely running
         s["status"] = "aborted"
         s["reconciled_utc"] = string(Dates.now(UTC))
-        open(io -> TOML.print(io, meta), f, "w")
+        _rewrite_atomic(io -> TOML.print(io, meta), f)
         @warn "reconciled abruptly-ended session" sidecar = basename(f)
         n += 1
     end
@@ -591,27 +607,37 @@ function _run_stream(
         )
 
         ticks = 0
+        files = String[]
         try
             ticks = fetch(sink_task)
+            session.outcome[] === :failed && (status = "failed")
         catch e
             if e isa InterruptException
                 status = "interrupted"
-                @info "interrupt — shutting down gracefully"
+                @info "interrupt; shutting down"
             else
+                # The `finally` below finalizes the sidecar; without this the
+                # provenance of a crashed session would stay "running".
+                status = "failed"
                 rethrow()
             end
         finally
             stop!(session)                       # idempotent; unblocks the producer
-            try
-                ticks = fetch(sink_task)
-            catch
-            end   # final drain + flush
+            if !istaskfailed(sink_task)
+                try
+                    ticks = fetch(sink_task)     # final drain + flush
+                catch e
+                    e isa InterruptException && rethrow()
+                    status = "failed"
+                    @error "sink failed while draining" exception = (e, catch_backtrace())
+                end
+            end
             close_sink!(sink)
+            files = _session_raw_files(cfg, sid)
+            finalize_session_meta(meta_path, status; ticks, raw_files = files)
+            @info "session finished" status ticks files = length(files) meta = meta_path frames =
+                session.stats[].frames reconnects = session.stats[].reconnects
         end
-        files = _session_raw_files(cfg, sid)
-        finalize_session_meta(meta_path, status; ticks, raw_files = files)
-        @info "session finished" status ticks files = length(files) meta = meta_path frames =
-            session.stats[].frames reconnects = session.stats[].reconnects
         return (; ticks, raw_files = files)
     finally
         close(slock)
@@ -691,15 +717,9 @@ function _run_backfill(
         _ensure_free_disk(cfg)
         meta_path = start_session_meta(cfg, sid; started_utc)
         days = session_days(provider, cfg.backfill_start, cfg.backfill_end)
-        prog = Progress(
-            length(cfg.symbols) * length(days);
-            desc = "Backfill: ",
-            enabled = isinteractive(),
-        )
         for sym in cfg.symbols, day in days
             if cfg.backfill_resume && _processed_exists(cfg, sym, day)
                 @info "resume — already processed, skipping" symbol = sym day
-                next!(prog)
                 continue
             end
             # One raw part set per (symbol, day), compacted the moment the day
@@ -767,7 +787,6 @@ function _run_backfill(
             stored += n_stored
             cfg.backfill_source == "bulk" && sleep(cfg.backfill_rate_sleep_s)
             @info "backfilled" symbol = sym day trades = n stored = n_stored
-            next!(prog)
         end
     catch e
         if e isa InterruptException

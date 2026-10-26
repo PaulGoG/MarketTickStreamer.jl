@@ -160,20 +160,6 @@ function parse_binance_trade(msg, recv_ns::Int64; symbol::AbstractString = "")
     )
 end
 
-# REST /api/v3/aggTrades rows carry the same fields as the stream frame but
-# without `s`, since the symbol is in the request path.
-parse_binance_agg_rest(row, symbol::AbstractString) = Trade(
-    String(symbol),
-    _binance_ns(row.T::Integer),
-    0,
-    _num(row.p),
-    _num(row.q),
-    "BINANCE",
-    _aggressor(Bool(row.m::Bool)),
-    "SPOT",
-    Int64(row.a::Integer),
-)
-
 # Microsecond timestamps on request; the venue's default is milliseconds.
 const BINANCE_REST_HEADERS = ["X-MBX-TIME-UNIT" => "MICROSECOND"]
 
@@ -259,7 +245,7 @@ function historical_trades(
         last_id = 0
         done = false
         for row in rows
-            t = parse_binance_agg_rest(row, sym)
+            t = parse_binance_trade(row, Int64(0); symbol = sym)
             last_id = t.id
             if t.time_ns > stop_ns
                 done = true
@@ -494,6 +480,7 @@ function stream_protocol!(
 )
     (on_quote === nothing && on_bar === nothing) ||
         @debug "Binance adapter streams trades only; quote and bar callbacks are idle"
+    fatal = Ref{Union{Nothing,FatalStreamError}}(nothing)
     HTTP.WebSockets.open(ws_url(p, cfg.symbols)) do ws
         s.ws[] = ws
         last_frame = Threads.Atomic{Float64}(time())
@@ -512,14 +499,16 @@ function stream_protocol!(
                     bump!(s; ticks = 1)
                 elseif haskey(frame, :error)
                     # A malformed stream name is permanent: reconnecting with
-                    # the same configuration would loop forever.
+                    # the same configuration would loop forever. The error
+                    # leaves the handler by value, as in the Alpaca adapter: an
+                    # exception thrown inside it arrives wrapped and would be
+                    # retried as a disconnect.
                     err = frame.error
-                    throw(
-                        FatalStreamError(
-                            "Binance stream error $(get(err, :code, 0)): " *
-                            "$(get(err, :msg, "unknown"))",
-                        ),
+                    fatal[] = FatalStreamError(
+                        "Binance stream error $(get(err, :code, 0)): " *
+                        "$(get(err, :msg, "unknown"))",
                     )
+                    break
                 end
             end
         finally
@@ -527,4 +516,6 @@ function stream_protocol!(
             wait(watchdog)
         end
     end
+    fatal[] === nothing || throw(fatal[])
+    return nothing
 end

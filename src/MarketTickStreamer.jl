@@ -8,7 +8,7 @@ replay of recorded sessions.
 
 Everything is driven by a TOML configuration (`config/config.toml` in a clone);
 credentials come from the environment file it names.
-Entry points: [`run_stream`](@ref), [`run_backfill`](@ref),
+Entry points: [`run_stream`](@ref), [`run_backfill`](@ref), [`run_import`](@ref),
 [`replay_source`](@ref), [`follow_source`](@ref), [`compact_raw`](@ref), [`read_processed`](@ref).
 
 Plotting is optional. The diagnostic figures ([`session_figure`](@ref),
@@ -29,6 +29,7 @@ using Dates:
 using FileWatching: Pidfile
 using InteractiveUtils: InteractiveUtils
 using LinearAlgebra: LinearAlgebra
+using Logging: Logging, ConsoleLogger
 using Mmap: Mmap
 using Printf: @sprintf
 using Random: RandomDevice, Xoshiro
@@ -44,15 +45,8 @@ using DotEnv: DotEnv
 using HTTP: HTTP
 using JSON: JSON
 using LoggingExtras:
-    LoggingExtras,
-    ConsoleLogger,
-    EarlyFilteredLogger,
-    FormatLogger,
-    Logging,
-    MinLevelLogger,
-    TeeLogger
+    LoggingExtras, EarlyFilteredLogger, FormatLogger, MinLevelLogger, TeeLogger
 using PrecompileTools: @compile_workload, @setup_workload
-using ProgressMeter: ProgressMeter, Progress, next!
 using TimeZones:
     TimeZones, @tz_str, Date, DateTime, TimeZone, UTC, ZonedDateTime, astimezone, now
 using ZipArchives: ZipReader, zip_names, zip_readentry
@@ -120,6 +114,22 @@ include("pipeline.jl")
 include("import.jl")
 include("diagnostics.jl")
 include("figures.jl")
+
+# A call to a figure function without the extension would otherwise end in a
+# bare MethodError on a documented, exported name.
+function __init__()
+    Base.Experimental.register_error_hint(MethodError) do io, exc, _, _
+        if any(f -> exc.f === f, _FIGURE_FUNCTIONS) &&
+           Base.get_extension(@__MODULE__, :MarketTickStreamerMakieExt) === nothing
+            print(
+                io,
+                "\nThe figure functions are implemented by a package extension: ",
+                "load CairoMakie first (`using CairoMakie`).",
+            )
+        end
+    end
+    return nothing
+end
 
 # The consumer-facing paths are compiled when the package is, so a session's
 # first call costs the work and not the compiler: measured before this

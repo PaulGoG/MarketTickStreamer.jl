@@ -57,7 +57,7 @@ function run_import(
         ),
     )
     isfile(path) || throw(ArgumentError("no such file: $path"))
-    sid = "import_$(format)_$(Dates.format(Dates.now(UTC), dateformat"yyyymmdd-HHMMSS"))"
+    sid = "import_$(format)_$(Dates.format(Dates.now(UTC), SESSION_STAMP))"
     logger, log_io = setup_logging(cfg; session_id = sid)
     try
         return Logging.with_logger(logger) do

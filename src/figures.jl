@@ -72,7 +72,8 @@ function overview_figure end
     save_session_figures(raw_paths, out_dir;
                          formats = ("pdf", "png"), tz = tz"America/New_York",
                          min_trades = 10,
-                         price_unit = "USD", size_unit = "shares") -> Vector{String}
+                         price_unit = "USD", size_unit = "shares",
+                         non_price = NON_PRICE_CONDITIONS) -> Vector{String}
 
 Render one diagnostic figure per (symbol, trading day) found in the raw
 NDJSON `raw_paths`, saved as `out_dir/SYMBOL_YYYY-MM-DD.pdf|png` (safesave —
@@ -80,6 +81,9 @@ the new figure takes the canonical name, a displaced one is kept as `_#N`).
 Groups with fewer than `min_trades` ticks are skipped with an `@info`
 (distribution panels are meaningless). PNG output is written at
 `px_per_unit = 4`. Returns the files written.
+
+`non_price` is the sale-condition table of the price-forming population,
+forwarded to the figure.
 
 Implemented by the CairoMakie extension: `using CairoMakie` first.
 """
@@ -90,7 +94,8 @@ function save_session_figures end
                           symbols = nothing, from = nothing, to = nothing,
                           formats = ("pdf", "png"), tz = tz"America/New_York",
                           session = (9.5, 16.0), min_days = 2,
-                          price_unit = "USD", size_unit = "shares") -> Vector{String}
+                          price_unit = "USD", size_unit = "shares",
+                          non_price = NON_PRICE_CONDITIONS) -> Vector{String}
 
 Render one multi-day [`overview_figure`](@ref) per symbol from the processed
 tree (`processed_dir/SYMBOL/YYYY-MM-DD.csv|.arrow`; safesave `_#N` backups
@@ -99,6 +104,9 @@ and always the newest). `symbols`, `from`, and `to` restrict the sweep.
 Output: `out_dir/SYMBOL_<from>_<to>.pdf|png` (safesave). Days are loaded one
 symbol at a time, so memory stays bounded by one symbol's span. `session` is
 passed to [`overview_figure`](@ref).
+
+`non_price` is the sale-condition table of the price-forming population,
+forwarded to the figure.
 
 Implemented by the CairoMakie extension: `using CairoMakie` first.
 """
@@ -111,19 +119,3 @@ const _FIGURE_FUNCTIONS = (
     save_session_figures,
     save_overview_figures,
 )
-
-# A call to a figure function without the extension would otherwise end in a
-# bare MethodError on a documented, exported name.
-function __init__()
-    Base.Experimental.register_error_hint(MethodError) do io, exc, _, _
-        if any(f -> exc.f === f, _FIGURE_FUNCTIONS) &&
-           Base.get_extension(@__MODULE__, :MarketTickStreamerMakieExt) === nothing
-            print(
-                io,
-                "\nThe figure functions are implemented by a package extension: ",
-                "load CairoMakie first (`using CairoMakie`).",
-            )
-        end
-    end
-    return nothing
-end

@@ -6,6 +6,41 @@ Notable changes to MarketTickStreamer. The format follows
 
 ## [Unreleased]
 
+### Added
+- `save_session_figures` and `save_overview_figures` take `non_price`, the
+  sale-condition table of the price-forming population, and
+  `scripts/visualize.jl` passes the configured
+  `[quality.non_price_conditions]` to the session report and the figures;
+  the figures used the built-in lists before.
+
+### Changed
+- A live session that ends on a fatal stream error or on exhausted
+  reconnection attempts is recorded `failed` in its sidecar, and a session
+  whose sink fails is finalized `failed`; the first two read `completed` and
+  the last stayed `running` before.
+- The Binance adapter carries a stream error frame out of the WebSocket
+  handler and aborts the session at once; the error was retried as a
+  disconnect until the reconnection attempts ran out.
+- A retryable status (429, 5xx) on the HIST index request and on the HEAD
+  requests for a vendor file's announced size or checksum is retried on the
+  policy's schedule; a transient 5xx on the checksum request no longer lets a
+  cached file pass unverified. A status error on a Range request is raised
+  outside the handler, so it is no longer retried as a transport failure.
+- Sidecar rewrites at finalization and reconciliation are atomic: written
+  beside the file and renamed into place.
+- `isequal` and `hash` on `Trade`, `Quote` and `Bar` follow field-wise
+  `isequal`, so a `Bar` with a NaN `vwap` is equal to itself in a `Set` or a
+  `Dict`.
+
+### Removed
+- The backfill progress bar and the ProgressMeter dependency: the bar was
+  enabled only in an interactive session, where it interleaved with the
+  per-day log lines.
+
+### Fixed
+- `reconcile_sessions!` warns about a sidecar it cannot parse instead of
+  skipping it silently.
+
 ## [1.0.0] - 2026-10-22
 
 The first stable release. It fixes what is public and versioned from here

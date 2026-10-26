@@ -2443,6 +2443,13 @@ hostname = "$(gethostname())"
                 result = run_stream(cfg; provider = p)
                 @test result.ticks == 0
                 @test nconn[] == 1                         # 402 → FatalStreamError → no reconnect
+                meta = only(
+                    filter(
+                        f -> endswith(f, ".meta.toml"),
+                        readdir(cfg.raw_dir; join = true),
+                    ),
+                )
+                @test TOML.parsefile(meta)["session"]["status"] == "failed"
             finally
                 close(ws)
                 close(rest)
@@ -2956,6 +2963,34 @@ hostname = "$(gethostname())"
                 @test all(t -> t.symbol == "BTCUSDT", got)
                 @test all(t -> t.recv_ns > 0, got)     # live prints are stamped
                 @test [t.id for t in got] == collect(1:5)
+            finally
+                close(server)
+            end
+        end
+    end
+
+    @testset "binance: a stream error frame is fatal, no retry storm" begin
+        mktempdir() do dir
+            ws_port = freeport(9852)
+            frames = [mock_binance_frame("BTCUSDT", k) for k in 1:5]
+            server = start_mock_binance_ws(ws_port; frames = frames)
+            try
+                cfg = load_config(
+                    mock_binance_config_toml(
+                        dir;
+                        ws_port = ws_port,
+                        rest_port = 9999,
+                        symbols = ["BTCUSDT"],
+                        reconnect_max_retries = 3,
+                    ),
+                )
+                s = live_source(BinanceProvider(cfg), cfg)
+                got = collect(s.channel)
+                @test length(got) == 5
+                # The first connection closes after its frames (retryable); the
+                # second answers with the error frame: one reconnect, then abort.
+                @test s.stats[].reconnects == 1
+                @test s.outcome[] === :failed
             finally
                 close(server)
             end
