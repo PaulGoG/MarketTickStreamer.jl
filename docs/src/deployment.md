@@ -24,9 +24,9 @@ waits for the 09:30 bell and then has `max_session_hours` to the hard stop,
 so eight hours covers a regular session, its delayed-feed tail and a late
 close. On a holiday the clock reports the next trading day's open and the
 process sleeps to it; the timer's next firing finds the unit still active
-and does nothing, which is the intended outcome. Keep
-`[logging] log_to_file = true`: the journal holds the console stream and
-`logs/` the session file, both named by the session id.
+and does nothing, as intended. Keep `[logging] log_to_file = true`: the
+journal holds the console stream and `logs/` the session file, both named by
+the session id.
 
 ## Units
 
@@ -46,7 +46,7 @@ Type=simple
 WorkingDirectory=%h/MarketTickStreamer
 ExecStart=%h/.juliaup/bin/julia --threads=auto scripts/stream.jl config/config.toml
 # The package handles SIGINT as a clean interrupt: the sidecar is finalized
-# as "interrupted" and the raw files are flushed. SIGTERM would not be.
+# as "interrupted" and the raw files are flushed. SIGTERM is not handled this way.
 KillSignal=SIGINT
 TimeoutStopSec=120
 Restart=on-failure
@@ -91,8 +91,8 @@ journalctl --user -u markettickstreamer-capture -f
 A 24-hour venue needs no timer. Run the service alone with
 `Restart=always`, `RestartSec=5` and `max_session_hours = 24.0`: the
 deadline ends each day's session, the restart opens the next, and the gap
-between them is the seconds the process takes to come up — recorded, as
-every session boundary is, in the sidecars.
+between them, the seconds the process takes to come up, is recorded in the
+sidecars like every session boundary.
 
 ## Verifying a host
 

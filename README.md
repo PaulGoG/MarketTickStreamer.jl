@@ -7,12 +7,13 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 Provider-agnostic tick-by-tick market data acquisition in pure Julia, built
-for scientific time series research: live WebSocket streaming, historical
-backfill from REST pages or the venue's daily dumps, import of vendor day
-files (Nasdaq TotalView-ITCH 5.0, IEX HIST), append-only raw persistence,
-compaction to analysis-ready files, and paced replay of recorded sessions
-beside `follow_source`, which follows a running session from another
-process, for reproducible development of real-time analysis methods.
+for scientific time series research. It streams trades live over WebSocket,
+backfills history from REST pages or the venue's daily dumps, imports vendor
+day files (Nasdaq TotalView-ITCH 5.0, IEX HIST), persists raw prints
+append-only and compacts them to analysis-ready files. A recorded session
+replays at its original pace, and `follow_source` follows a running session
+from another process, so real-time analysis methods can be developed offline
+and reproducibly.
 
 **[Manual](https://PaulGoG.github.io/MarketTickStreamer.jl/stable/)** ·
 [Architecture](https://PaulGoG.github.io/MarketTickStreamer.jl/stable/architecture/) ·
@@ -69,16 +70,16 @@ own environment with both installed.
 Relative paths in a configuration (`storage.data_dir`, `logging.log_dir`,
 `credentials.env_file`) are relative to the configuration file, so the shipped
 `config/config.toml` writes to `data/` and `logs/` of the clone. A project that
-installs the package (`Pkg.add(url = ...)`) copies that file — the installed
-one is a read-only template, `MarketTickStreamer.DEFAULT_CONFIG` — and passes
-its own path to `load_config`.
+installs the package (`Pkg.add(url = ...)`) copies that file and passes the
+copy's path to `load_config`; the installed file,
+`MarketTickStreamer.DEFAULT_CONFIG`, is a read-only template.
 
-Credentials: `cp .env.example .env`, fill in `ALPACA_API_KEY_ID` /
-`ALPACA_SECRET_KEY` (free keys: https://alpaca.markets; paper-account keys
-work — point `[alpaca] trading_base` at the paper endpoint, as the shipped
-config does). Feeds on the free tier: `iex` (real-time, single venue) and
-`delayed_sip` (consolidated tape, 15 min delayed — the default here, and
-empirically print-complete against the historical tape); `sip` (real-time
+For credentials, `cp .env.example .env` and fill in `ALPACA_API_KEY_ID` and
+`ALPACA_SECRET_KEY` (free keys at https://alpaca.markets). Paper-account keys
+work with `[alpaca] trading_base` pointed at the paper endpoint, as in the
+shipped config. Feeds on the free tier: `iex` (real-time, single venue) and
+`delayed_sip` (consolidated tape, 15 min delayed; the default here, and
+complete against the historical tape in validation); `sip` (real-time
 consolidated) requires a paid subscription.
 
 ## Entry points
@@ -142,53 +143,56 @@ opens the test environment.
 From the REPL, the same entry points are `run_stream(cfg)`,
 `run_backfill(cfg)`, `compact_raw(files, out)`,
 `read_processed(cfg, "AAPL"; from, to, window = :regular)`,
-`replay_source(files)` and `follow_source(cfg.raw_dir)` — the last two return
-a `Channel{Trade}` indistinguishable from the live source, which is how
-real-time analysis consumers are developed offline (see
-`docs/src/architecture.md`).
+`replay_source(files)` and `follow_source(cfg.raw_dir)`. The last two return
+a `Channel{Trade}` indistinguishable from the live source, so a real-time
+consumer can be developed offline (see `docs/src/replay.md`).
 
 ## Status
 
-| Component | State |
+Every component below works and is covered by the offline suite: unit tests
+and end-to-end runs against in-process mocks. The second column records
+verification beyond that.
+
+| Component | Verification beyond the suite |
 |---|---|
-| Live trade streaming (Alpaca IEX/SIP) | working, tested against mock |
-| Binance spot adapter (public, 24/7, UTC calendar, `trade` + `aggTrade`, microsecond timestamps) | working, tested against mock and validated against the live API |
-| Provider-agnostic config, calendar and trading-day dispatch | working, tested |
-| Reconnection, stale-connection watchdog, graceful shutdown | working, tested |
-| Market-hours guards (wait-for-open, auto-stop at close, incl. half-day early close) | working, tested |
-| Unattended operation (systemd user service + timer; SIGINT stop, wait-for-open, stop-at-close) | documented; units verified with systemd-analyze on systemd 259 |
-| Delayed-feed handling (market-hours guards shifted by feed delay; tape tail captured) | working, tested |
-| Per-session provenance sidecars (`.meta.toml`) with a manifest snapshot | working, tested |
-| Resource guards (disk space, RAM ceiling with auto-GC, channel lag, REST backoff) | working, tested |
-| Crash-only session lifecycle (running/completed/interrupted/failed sidecars + startup reconciliation to aborted) | working, tested |
-| Page-streaming, per-day resumable backfill | working, tested |
-| Bulk backfill from the venue's daily files (Binance `aggTrades` and `trades` dumps: checksum-verified, kept as the vendor record, same raw/compaction/resume path; `keep_raw = false` drops the NDJSON copy) | working, tested |
-| Vendor day-file import (Nasdaq ITCH 5.0 executions priced off the book, crosses, odd lots, breaks; IEX HIST pcap/pcapng, IEX-TP sessions, trade reports and breaks) through the raw/compaction/sidecar path | working, tested on synthetic files; validated on full days of both: ITCH prints equal the SIP's Nasdaq prints apart from the official opening and closing cross reports (and a rare zero-size print), IEX prints equal the SIP's IEX prints in order |
-| Vendor file download (ITCH and IEX day files, Binance dumps): bounded Range requests resumed from a `.partial` prefix, announced size or CRC-32C checked, optional rate cap, several connections per file, progress logged | working, tested against mock; used on full vendor days of up to 18 GB |
-| Spill compaction (bounded memory for arbitrarily large raw inputs) | working, tested |
-| Single-instance lock per data tree | working, tested |
-| Capture-coverage cross-check against the historical tape (`coverage_report`) | working (Alpaca; a Binance day is verified by its vendor checksum and trade-id continuity) |
-| Lossy-tap option in `tee` fan-out (persistence always wins) | working, tested |
-| Batched raw NDJSON persistence + rolling | working, tested |
-| Historical backfill (paginated REST) | working, tested against mock |
-| Compaction to CSV/Arrow with duplicate removal (Arrow dictionary-encoded, optional zstd/lz4) | working, tested |
-| Session QA report (duplicates/gaps/ordering/latency) | working, tested |
-| Diagnostic figures (price, activity, Δt & size CCDFs; HH:MM axes, log ticks at powers of ten, tail-exponent annotations) | working, inspected |
-| Multi-day overview figures (trading-time price, activity heatmap, intra-session waiting-time CCDF) | working, inspected |
-| Live monitoring dashboard (attach-mode; text, plots with UnicodePlots loaded) | working, tested |
-| Paced replay (absolute schedule; receive or exchange clock; optional cap on gaps; a session from raw files, a corpus streamed day by day from the processed tree) | working, tested |
-| Corpus query path (`corpus_inventory`, `eachday`, `read_processed`: date range, exchange-local time window, price-forming population, memory guard) | working, tested |
-| Quotes (`q`) / bars (`b`) normalization | working, tested — parsed to `Quote`/`Bar` with `on_quote`/`on_bar`; not persisted: trades-only through 1.0 by decision |
-| Sale-condition eligibility (`price_forming`, per-tape lists from the CTA and UTP sale-condition matrices, `n_price_forming`) | working, tested — capture is never filtered; the choice is made at analysis time |
-| Resampling onto activity clocks (`tick_bars`, `volume_bars`, `dollar_bars`) and onto matching events (`event_bars`: the prints of one instant as one bar) | working, tested |
-| File-following source (`follow_source`: a consumer in another process follows a running session's raw files; ends with the sidecar) | working, tested |
+| Live trade streaming (Alpaca IEX/SIP) |  |
+| Binance spot adapter (public, 24/7, UTC calendar, `trade` + `aggTrade`, microsecond timestamps) | validated against the live API |
+| Provider-agnostic config, calendar and trading-day dispatch |  |
+| Reconnection, stale-connection watchdog, graceful shutdown |  |
+| Market-hours guards (wait-for-open, auto-stop at close, incl. half-day early close) |  |
+| Unattended operation (systemd user service + timer; SIGINT stop, wait-for-open, stop-at-close) | units verified with systemd-analyze on systemd 259 |
+| Delayed-feed handling (market-hours guards shifted by feed delay; tape tail captured) |  |
+| Per-session provenance sidecars (`.meta.toml`) with a manifest snapshot |  |
+| Resource guards (disk space, RAM ceiling with auto-GC, channel lag, REST backoff) |  |
+| Crash-only session lifecycle (running/completed/interrupted/failed sidecars + startup reconciliation to aborted) |  |
+| Page-streaming, per-day resumable backfill |  |
+| Bulk backfill from the venue's daily files (Binance `aggTrades` and `trades` dumps: checksum-verified, kept as the vendor record, same raw/compaction/resume path; `keep_raw = false` drops the NDJSON copy) |  |
+| Vendor day-file import (Nasdaq ITCH 5.0 executions priced off the book, crosses, odd lots, breaks; IEX HIST pcap/pcapng, IEX-TP sessions, trade reports and breaks) through the raw/compaction/sidecar path | validated on full days of both: ITCH prints equal the SIP's Nasdaq prints apart from the official opening and closing cross reports (and a rare zero-size print), IEX prints equal the SIP's IEX prints in order |
+| Vendor file download (ITCH and IEX day files, Binance dumps): bounded Range requests resumed from a `.partial` prefix, announced size or CRC-32C checked, optional rate cap, several connections per file, progress logged | used on full vendor days of up to 18 GB |
+| Spill compaction (bounded memory for arbitrarily large raw inputs) |  |
+| Single-instance lock per data tree |  |
+| Capture-coverage cross-check against the historical tape (`coverage_report`) | Alpaca only; a Binance day is verified by its vendor checksum and trade-id continuity |
+| Lossy-tap option in `tee` fan-out (persistence always wins) |  |
+| Batched raw NDJSON persistence + rolling |  |
+| Historical backfill (paginated REST) |  |
+| Compaction to CSV/Arrow with duplicate removal (Arrow dictionary-encoded, optional zstd/lz4) |  |
+| Session QA report (duplicates/gaps/ordering/latency) |  |
+| Diagnostic figures (price, activity, Δt & size CCDFs; HH:MM axes, log ticks at powers of ten, tail-exponent annotations) | figures inspected |
+| Multi-day overview figures (trading-time price, activity heatmap, intra-session waiting-time CCDF) | figures inspected |
+| Live monitoring dashboard (attach-mode; text, plots with UnicodePlots loaded) |  |
+| Paced replay (absolute schedule; receive or exchange clock; optional cap on gaps; a session from raw files, a corpus streamed day by day from the processed tree) |  |
+| Corpus query path (`corpus_inventory`, `eachday`, `read_processed`: date range, exchange-local time window, price-forming population, memory guard) |  |
+| Quotes (`q`) / bars (`b`) normalization | parsed to `Quote`/`Bar` with `on_quote`/`on_bar`; not persisted (trades only, by decision) |
+| Sale-condition eligibility (`price_forming`, per-tape lists from the CTA and UTP sale-condition matrices, `n_price_forming`) | capture is never filtered; the choice is made at analysis time |
+| Resampling onto activity clocks (`tick_bars`, `volume_bars`, `dollar_bars`) and onto matching events (`event_bars`: the prints of one instant as one bar) |  |
+| File-following source (`follow_source`: a consumer in another process follows a running session's raw files; ends with the sidecar) |  |
 | Real-time analysis consumers | interface contract documented; three worked examples under `examples/`, all executed by the suite |
 | Credential validation (paper account): clock REST, historical SIP REST, WS auth on `iex` and `delayed_sip` | verified 2026-08-01 |
-| Live capture validation against real Alpaca feed | verified 2026-08-06: 3 h `delayed_sip` session, 24 symbols, 3.17 M ticks; QA clean (0 duplicates/out-of-order/gaps), print-complete against the historical tape |
+| Live capture validation against real Alpaca feed | verified 2026-08-06: 3 h `delayed_sip` session, 24 symbols, 3.17 M prints; QA clean (0 duplicates/out-of-order/gaps); coverage matched the historical tape exactly for 22 of 24 symbols and to better than 99.9996 % for the other two |
 
 ## Public surface and versioning
 
-Public, and versioned from 1.0.0 under semantic versioning:
+From 1.0.0 the following are public and versioned under semantic versioning:
 
 - the exported Julia API and its documented keyword arguments, and the names
   declared `public` without being exported, reached qualified
@@ -201,11 +205,10 @@ Public, and versioned from 1.0.0 under semantic versioning:
 
 A change that alters what a consumer reads from the data tree, rejects a
 configuration previously accepted, changes a script's arguments or products,
-or removes or changes an exported name or its documented behaviour is
+or removes or changes an exported name or its documented behavior is
 breaking and waits for a major release.
 
-Internals — `_`-prefixed or undocumented names — may change in a minor
-release.
+Internals (`_`-prefixed or undocumented names) may change in a minor release.
 
 ## Output
 
@@ -221,8 +224,8 @@ seconds.</sub>
 
 <sub>A recording replayed through `replay_source`, which returns the same
 `Channel{Trade}` type a live session yields. A consumer written against one
-runs unchanged against the other, so a real-time method can be developed and
-validated offline, reproducibly, before it is pointed at the wire.</sub>
+runs unchanged against the other, so a real-time method can be validated
+offline before it runs live.</sub>
 
 ## Data layout
 

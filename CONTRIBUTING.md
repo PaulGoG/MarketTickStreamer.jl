@@ -18,7 +18,7 @@ julia -e 'include("activate.jl"); using Pkg; Pkg.test()'
 
 The suite includes Aqua, JET, ExplicitImports and AllocCheck, and its
 mock servers need no network or credentials. Every change lands with a
-green suite, and new behaviour comes with a test. Floating-point
+green suite, and new behavior comes with a test. Floating-point
 comparisons use `isapprox` with explicit tolerances.
 
 CI runs the suite on the latest Julia release, on the `[compat]` floor and,
@@ -43,8 +43,8 @@ claim made on a manual page updates that page in the same change.
 ## Configuration changes
 
 A new key gets validation in `src/config.jl`, a one-line comment in
-`config/config.toml` — what it is, its allowed values, its bounds and units,
-no rationale — and a row on the usage page of the manual.
+`config/config.toml` giving what it is, its allowed values, bounds and units
+(no rationale), and a row on the usage page of the manual.
 
 ## Commits and pull requests
 

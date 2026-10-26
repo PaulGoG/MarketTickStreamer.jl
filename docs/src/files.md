@@ -5,9 +5,9 @@ session appends to, the sidecar that records its lifecycle and provenance,
 and the processed day files compaction produces. This page specifies them,
 for a consumer written in any language; the contract of the
 `Channel{Trade}` a Julia consumer receives is on the
-[replay page](replay.md). Three things are public and versioned with the
-package: this file contract, the configuration schema, and the entry-point
-scripts, beside the exported Julia API.
+[replay page](replay.md). Besides the exported Julia API, this file
+contract, the configuration schema and the entry-point scripts are public
+and versioned with the package.
 
 ## Rules
 
@@ -148,7 +148,7 @@ since.
 The status is `running` when the sidecar is first written, at the start;
 that write is atomic. At the end it is rewritten as `completed`,
 `interrupted` or `failed`. A sidecar left `running` by a process that no
-longer exists is relabelled `aborted` by the next session that starts on the
+longer exists is relabeled `aborted` by the next session that starts on the
 tree; its raw parts stay valid to the last flushed line. The sidecar is the
 one file that is rewritten in place, so a reader that catches it mid-rewrite
 finds it empty or truncated, and re-reads it.

@@ -26,8 +26,8 @@ Pages = ["replay.jl", "follow.jl"]
 
 ## Corpus access
 
-The processed tree read back: what it holds, one trading day at a time, or a
-guarded whole.
+Reading the processed tree back: its inventory, iteration one trading day at
+a time, and a memory-guarded full read.
 
 ```@autodocs
 Modules = [MarketTickStreamer]
@@ -47,7 +47,7 @@ Pages = ["figures.jl"]
 
 ## Numerics behind the figures
 
-Plotting-free, and usable on their own.
+These need no plotting package and work on their own.
 
 ```@autodocs
 Modules = [MarketTickStreamer]

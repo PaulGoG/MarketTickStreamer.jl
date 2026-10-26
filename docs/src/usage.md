@@ -1,17 +1,15 @@
 # Usage and configuration
 
 Everything tunable lives in `config/config.toml`. Nothing operational is
-hardcoded, and the parser enforces exactly what the comments promise —
-types, enumerated choices, bounds — failing with a message that names the
-offending key, so a session cannot start from a configuration it could not
-honor.
+hardcoded. The parser enforces what the comments state (types, enumerated
+choices, bounds) and fails with a message naming the offending key, so a
+session cannot start from a configuration it could not honor.
 
 ## Credentials
 
-Keys come from the file named by `credentials.env_file` — `.env` beside the
-repository root in the shipped configuration — or from the process
-environment, never from the configuration file itself. Copy the template and
-fill it in:
+Keys come from the file named by `credentials.env_file` (`.env` at the
+repository root in the shipped configuration) or from the process environment,
+never from the configuration file itself. Copy the template and fill it in:
 
 ```bash
 cp .env.example .env      # then set ALPACA_API_KEY_ID and ALPACA_SECRET_KEY
@@ -78,7 +76,7 @@ where that file is a read-only template to copy
 | Key | Meaning |
 | --- | --- |
 | `symbols` | Subscription list; at most `limits.max_symbols` entries. |
-| `channels` | Subset of `"trades"`, `"quotes"`, `"bars"`. Trades only by default: quote and bar frames are parsed into [`Quote`](@ref) and [`Bar`](@ref) and delivered to the `on_quote` / `on_bar` callbacks of [`live_source`](@ref), but neither is persisted. A quote stream carries an order of magnitude more messages than the trade stream, and storing it is out of scope by decision: the package is trades-only through 1.0, quote persistence being a feature for a microstructure question that has not arisen. |
+| `channels` | Subset of `"trades"`, `"quotes"`, `"bars"`. Trades only by default: quote and bar frames are parsed into [`Quote`](@ref) and [`Bar`](@ref) and delivered to the `on_quote` / `on_bar` callbacks of [`live_source`](@ref), but neither is persisted. A quote stream carries an order of magnitude more messages than the trade stream, and persisting it is out of scope until a microstructure question requires it. |
 | `require_market_open` | Query the market clock before connecting and exit if closed. |
 | `wait_for_open` | When closed, sleep until the next open instead of exiting. The wait is shifted by the feed's intrinsic delay. |
 | `stop_at_market_close` | Schedule a graceful stop at the session's next close, likewise shifted. |
@@ -120,8 +118,7 @@ loop indefinitely.
 | `compact_footprint_factor` | Estimated in-memory footprint per byte of input, which decides whether a file fits in memory. |
 | `read_mem_fraction` | Share of the free RAM a materialized corpus read (`read_processed`) may claim; beyond it the read refuses and points at `eachday`. |
 
-These are the safety margins. They are the sole source of truth for the
-cutoffs — no threshold is hardcoded elsewhere in the pipeline.
+These are the pipeline's safety margins; no cutoff is hardcoded elsewhere.
 
 ## `[replay]`
 
@@ -223,11 +220,11 @@ Endpoint roots, overridable in the same way.
 | `ws_base` | `wss://stream.binance.com:9443` |
 | `bulk_base` | `https://data.binance.vision`, the daily bulk files. |
 
-The adapter requests microsecond timestamps — the REST header
-`X-MBX-TIME-UNIT` and the stream parameter `timeUnit` — which is the clock
-of the bulk files; rows and frames in milliseconds are read as well. Every
-session sidecar records `provenance.timestamp_unit`. A Binance capture whose
-sidecar lacks the key was recorded in milliseconds.
+The adapter requests microsecond timestamps, the clock of the bulk files,
+through the REST header `X-MBX-TIME-UNIT` and the stream parameter `timeUnit`;
+rows and frames in milliseconds are read as well. Every session sidecar
+records `provenance.timestamp_unit`. A Binance capture whose sidecar lacks
+the key was recorded in milliseconds.
 
 ## Importing vendor day files
 
@@ -240,14 +237,14 @@ queried, replayed and resampled like a captured one.
 files of `emi.nasdaq.com/ITCH/`, 3.5–18 GB gzipped, 0.3–1.4 × 10⁹ messages,
 about 10 M prints. [`itch50_trades`](@ref) prices every displayed execution
 off the order book it keeps, emits the printable executions-with-price, the
-hidden-order trades and the crosses, and files each print with
+hidden-order trades and the crosses. Each print is filed with
 `exchange = "Q"`, the match number as `id`, the tape from the stock
 directory, and conditions that name the kind of execution (`displayed`,
 `improved`, `hidden`, `cross_open`, `cross_close`, `cross_halt`,
 `cross_intraday`), the aggressor side for displayed executions, and `"I"`
-for an odd lot against the symbol's round lot — the condition the SIP gives
-the same execution, so `price_forming` treats both alike. The session date
-comes from the file name.
+for an odd lot against the symbol's round lot. `"I"` is the condition the
+SIP gives the same execution, so `price_forming` treats both alike. The
+session date comes from the file name.
 
 **IEX HIST** (`format = "iex"`): IEX's T+1 packet captures of its TOPS or
 DEEP multicast feed, 0.5–21 GB gzipped. [`iex_hist_trades`](@ref) walks the

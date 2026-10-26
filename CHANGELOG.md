@@ -10,11 +10,11 @@ Notable changes to MarketTickStreamer. The format follows
 
 The first stable release. It fixes what is public and versioned from here
 on: the exported API, the file contract a capture leaves on disk, the
-configuration schema and the entry-point scripts, so that a change to any of
-them which alters what a consumer reads waits for a major release. It also
-adds the third way a consumer meets a capture: beside the live channel and
-the replay of a recording, a process of its own can follow a running
-session through its files.
+configuration schema and the entry-point scripts. A change to any of them
+that alters what a consumer reads now waits for a major release. It also adds
+a third way to consume a capture, beside the live channel and the replay of
+a recording: a process of its own can follow a running session through its
+files.
 
 ### Added
 - `follow_source(dir; session, from_start, poll_s, idle_timeout_s,
@@ -126,16 +126,15 @@ connections without splicing a byte twice.
 
 ## [0.6.0] - 2026-10-15
 
-The release that opens the corpus to two archives the package did not
-produce. A full-day Nasdaq TotalView-ITCH 5.0 file and an IEX HIST packet
-capture are read into the processed tree through the same raw sink,
-compaction and sidecar as a backfill, every displayed Nasdaq execution
-priced off the order book the reader keeps, every IEX trade report filed
-with the tape's own flag letters; the vendor files are fetched in resumable,
-verified transfers and recorded in the sidecar. Beside them, the backoff
-jitter is seeded from the configuration, a consumer's state is snapshotted
-on the exchange clock under one convention, and a capture host runs
-unattended under systemd.
+Opens the corpus to two archives the package did not produce. A full-day
+Nasdaq TotalView-ITCH 5.0 file and an IEX HIST packet capture are read into
+the processed tree through the same raw sink, compaction and sidecar as a
+backfill, every displayed Nasdaq execution priced off the order book the
+reader keeps, every IEX trade report filed with the tape's own flag letters;
+the vendor files are fetched in resumable, verified transfers and recorded
+in the sidecar. Beside them, the backoff jitter is seeded from the
+configuration, a consumer's state is snapshotted on the exchange clock under
+one convention, and a capture host runs unattended under systemd.
 
 ### Added
 - `[rng] seed` seeds the jitter of the backoff schedules, REST retries and
@@ -174,12 +173,12 @@ unattended under systemd.
 
 ## [0.5.0] - 2026-10-15
 
-The release that closes the accounting of a bulk backfill. A sidecar now
-records what a backfill stored beside what it received, a duplicate-carrying
-vendor file can be named from the log alone, and the NDJSON copy of a bulk
-backfill, some twenty times the size of its vendor file, may be dropped once
-each day is compacted, because the checksum-verified vendor file is the
-record and rebuilds the day without the network.
+Closes the accounting of a bulk backfill. A sidecar now records what a
+backfill stored beside what it received, a duplicate-carrying vendor file
+can be named from the log alone, and the NDJSON copy of a bulk backfill,
+some twenty times the size of its vendor file, may be dropped once each day
+is compacted, because the checksum-verified vendor file is the record and
+rebuilds the day without the network.
 
 ### Added
 - A backfill's sidecar records the prints it stored as
@@ -217,18 +216,17 @@ record and rebuilds the day without the network.
 
 ## [0.4.0] - 2026-10-13
 
-The release that makes the corpus a thing to be queried and Binance a venue
-to be captured at scale. The processed tree is read back directly — an
-inventory from file metadata, one trading day at a time with an
-exchange-local window and the price-forming population, or a whole selection
-behind a memory guard — so a downstream pipeline consumes what the package
-produces without going through replay. Binance's daily dump files are a
-backfill source, which brings the `trade` feed, every execution, within
-reach of a backfill for the first time, with the venue's checksums verified
-and its files kept as the record; and the adapter captures at microsecond
-resolution on REST and on the stream, the clock those files carry, with the
-unit of every capture recorded in its sidecar. Quote persistence is settled
-as out of scope through 1.0.
+Makes the corpus a thing to be queried and Binance a venue to be captured at
+scale. The processed tree is read back directly — an inventory from file
+metadata, one trading day at a time with an exchange-local window and the
+price-forming population, or a whole selection behind a memory guard — so a
+downstream pipeline consumes what the package produces without going through
+replay. Binance's daily dump files are a backfill source, which brings the
+`trade` feed, every execution, within reach of a backfill for the first
+time, with the venue's checksums verified and its files kept as the record;
+and the adapter captures at microsecond resolution on REST and on the
+stream, the clock those files carry, with the unit of every capture recorded
+in its sidecar. Quote persistence is settled as out of scope through 1.0.
 
 ### Added
 - A query path over the processed tree, for pipelines that consume the
@@ -266,18 +264,18 @@ as out of scope through 1.0.
 
 ## [0.3.0] - 2026-10-06
 
-The release that settled which prints form a price and made the package
-usable as a dependency. The price-forming population is now derived from the
-CTS and UTDF condition matrices, which excludes two thirds of the prints of a
+Settles which prints form a price and makes the package usable as a
+dependency. The price-forming population is now derived from the CTS and
+UTDF condition matrices, which excludes two thirds of the prints of a
 high-priced name, and the round lot that defines an odd lot is observed from
-the tape instead of assumed. Configuration paths, logging and shutdown belong
-to a session and its configuration file rather than to the process and the
-package directory, and plotting moved into extensions, so a consumer of the
-trade channel loads in 0.9 s. A corpus replays streamed a day at a time, with
-an optional cap on gaps. Defects found by running at scale are fixed, one of
-them data-losing: a Binance backfill above 1000 rows per page kept only the
-first page of each day. JSON3, deprecated in General, gives way to JSON.jl,
-which in turn opens the way to CSV.jl 1.1.
+the tape instead of assumed. Configuration paths, logging and shutdown
+belong to a session and its configuration file rather than to the process
+and the package directory, and plotting moved into extensions, so a consumer
+of the trade channel loads in 0.9 s. A corpus replays streamed a day at a
+time, with an optional cap on gaps. Defects found by running at scale are
+fixed, one of them data-losing: a Binance backfill above 1000 rows per page
+kept only the first page of each day. JSON3, deprecated in General, gives
+way to JSON.jl, which in turn opens the way to CSV.jl 1.1.
 
 ### Fixed
 - A processed CSV whose `conditions` or `exchange` column held only numeric
@@ -476,19 +474,19 @@ which in turn opens the way to CSV.jl 1.1.
   2026-05-01,
   and the median inter-arrival time of the price-forming population dropped by
   a factor of eight across the boundary with no change in market behaviour;
-  ERIE went 100, 40 and back to 100 inside eight months. A redefinition that
-  moves a population is otherwise invisible on the tape — no new code, no
-  flag, no gap — so it is now in every session report and every sidecar.
+  ERIE went 100, 40 and back to 100 inside eight months. Nothing on the tape
+  marks such a redefinition, so the round lot is now in every session report
+  and every sidecar.
 
 ## [0.2.0] - 2026-09-13
 
-The release that made the package provider-agnostic in fact rather than in
-description, and that put a year of real tape through it. A second adapter
-(Binance spot: public, 24-hour, UTC) forced provider selection, feed
-vocabulary, exchange calendar and trading days onto dispatch, each of which
-had silently been Alpaca's. Three defects found by running the pipeline at
-scale are fixed — two of them data-losing. The static-QA layer, a benchmark
-suite, a Documenter manual and two executed consumer examples arrive with it.
+Makes the package provider-agnostic in fact rather than in description, and
+puts a year of real tape through it. A second adapter (Binance spot: public,
+24-hour, UTC) forced provider selection, feed vocabulary, exchange calendar
+and trading days onto dispatch, each of which had silently been Alpaca's.
+Three defects found by running the pipeline at scale are fixed — two of them
+data-losing. The static-QA layer, a benchmark suite, a Documenter manual and
+two executed consumer examples arrive with it.
 
 ### Added
 - `activate.jl` at the repository root, activating and instantiating the
@@ -534,10 +532,8 @@ suite, a Documenter manual and two executed consumer examples arrive with it.
   `NON_PRICE_CONDITIONS` holds the provider's published lists and
   `[quality.non_price_conditions]` overrides them, so the rule a result used
   lands in the session sidecar. `session_report` gains `n_price_forming`
-  beside `n_trades`. Capture is never filtered — a price path wants
-  price-forming prints, an arrival process wants every execution, and
-  discarding at capture would answer the first question by making the second
-  unanswerable.
+  beside `n_trades`. Capture is never filtered: a price path wants
+  price-forming prints, an arrival process wants every execution.
 - `Quote` and `Bar` structs, with the same value semantics and two-clock
   convention as `Trade`, and parsers for the corresponding stream frames;
   `live_source` gained `on_quote` and `on_bar` callbacks. Neither channel is
@@ -560,8 +556,8 @@ suite, a Documenter manual and two executed consumer examples arrive with it.
   environment of its own so a consumer's dependencies stay out of the
   package's. It is the mirror image of `waiting_times.jl`: the lossy tap
   rather than the lossless one, and constant-memory `OnlineStats`
-  accumulators rather than a retained sample — the right trade for a
-  dashboard beside a live capture, the wrong one for an estimator.
+  accumulators rather than a retained sample, suited to a dashboard beside a
+  live capture and not to an estimator.
   It also records a result worth knowing before trusting a sketch: on one
   AAPL session `P2Quantile` misses the ninth decile of the waiting-time
   distribution by a factor of 31, and taking logarithms first rescues the

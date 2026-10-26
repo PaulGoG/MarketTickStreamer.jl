@@ -20,9 +20,8 @@ Pages = ["config.jl"]
 
 ## Schema and timestamps
 
-Timestamps are `Int64` nanoseconds since the UNIX epoch everywhere — the
-only representation that survives the full range of exchange precision
-without rounding.
+Timestamps are `Int64` nanoseconds since the UNIX epoch everywhere, which
+holds the full range of exchange precision without rounding.
 
 ```@autodocs
 Modules = [MarketTickStreamer]
@@ -45,7 +44,8 @@ Pages = ["pipeline.jl"]
 
 ## Vendor day files
 
-One file, one trading day, every symbol: the readers and the import stage.
+Readers for vendor files, each holding one trading day of every symbol, and
+the import stage built on them.
 
 ```@autodocs
 Modules = [MarketTickStreamer]

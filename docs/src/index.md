@@ -16,15 +16,14 @@ distribution carries a fitted tail exponent.
 ## Purpose
 
 The package exists to supply a real-time data flux for testing time series
-analysis methods — waiting-time distributions, long-memory estimation,
-physics-informed models, criticality in tick arrival — on a stream whose
-statistics nobody controls. It therefore ends where analysis begins: it
-delivers ordered, deduplicated, provenance-tagged prints through a
-`Channel{Trade}` and a file layer, and implements no estimators of its own.
+analysis methods (waiting-time distributions, long-memory estimation,
+physics-informed models, criticality in tick arrival) on a stream whose
+statistics nobody controls. It delivers ordered, deduplicated,
+provenance-tagged prints through a `Channel{Trade}` and a file layer, and
+implements no estimators of its own.
 
-That boundary is deliberate. An acquisition layer that also computes is an
-acquisition layer whose numbers cannot be audited independently of the
-method under test.
+The boundary is deliberate: numbers computed inside the acquisition layer
+could not be audited independently of the method under test.
 
 ## Status
 
@@ -32,9 +31,9 @@ Validated against the live consolidated tape on 2026-08-06: a three-hour
 capture of 3.17 M prints across 24 symbols, 533 MB of raw NDJSON, with no
 duplicate, out-of-order or missing record. Per-symbol coverage was
 cross-checked against the historical SIP tape and matched exactly for 22 of
-24 symbols, and to better than 99.9996 % for the remaining two — evidence
-that Alpaca's free `delayed_sip` feed carries the complete consolidated
-tape, merely 15 minutes late, which for offline science is no delay at all.
+24 symbols, and to better than 99.9996 % for the remaining two. On this
+evidence Alpaca's free `delayed_sip` feed carries the complete consolidated
+tape, 15 minutes late; for offline analysis the delay is immaterial.
 
 The vendor archives were checked the same way, on full days against the
 consolidated tape: the prints read from an ITCH file equal the SIP's Nasdaq
@@ -43,25 +42,24 @@ read from an IEX HIST capture equal the SIP's IEX prints, in order.
 
 ## Installation
 
-Requires Julia ≥ 1.12. The package is not registered; clone the repository
-for the full pipeline workflow (entry-point scripts, configuration,
-benchmarks, diagnostics), which is how it is meant to be used:
+Requires Julia ≥ 1.12. The package is not registered. Clone the repository
+for the full pipeline (entry-point scripts, configuration, benchmarks,
+diagnostics):
 
-```julia
-using Pkg
-Pkg.activate(".")
-Pkg.instantiate()
+```bash
+julia -i activate.jl        # activates and instantiates, then leaves a REPL
 ```
 
-## Acquisition model
+It can also be added to another environment by URL (`Pkg.add(url = ...)`);
+that project copies `config/config.toml` and passes its own path to
+`load_config`.
 
-Three properties shape everything else:
+## Acquisition model
 
 - **Crash-only.** The raw layer is append-only NDJSON, one normalized
   `Trade` per line, flushed on a timer and a count. A killed process loses
   at most the unflushed tail; the next start reconciles the session
-  sidecars. There is no shutdown path whose failure can lose data, because
-  there is no shutdown path that must succeed.
+  sidecars. No shutdown step has to succeed for the data to be safe.
 - **Nanosecond integers.** Timestamps are `Int64` nanoseconds since the
   UNIX epoch from the wire to the file, never floating point, never a
   locale-dependent string.

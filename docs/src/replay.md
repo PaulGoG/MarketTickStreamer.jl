@@ -1,15 +1,14 @@
 # Replay and analysis interfaces
 
-Analysis pipelines are external to this package. What it owes them is a
-stream whose contract is written down, and a way to develop against that
-stream without a market being open. This page is that contract.
+Analysis pipelines are external to this package. They get a stream with a
+written contract, set out below, and a way to develop against it while the
+market is closed.
 
-The pipelines this was built to feed — exact waiting-time distributions of
-scalar series, long-memory estimation, criticality in tick arrival — live in
-packages of their own. Nothing here depends on them, and the contract below
-is what any consumer gets. Three worked consumers ship under `examples/`,
-and the test suite executes all three, so they cannot drift from what this
-page promises.
+The pipelines this package was built to feed (exact waiting-time distributions
+of scalar series, long-memory estimation, criticality in tick arrival) live
+in packages of their own, and nothing here depends on them. Three worked
+consumers ship under `examples/`, and the test suite executes all three, so
+they cannot drift from what this page promises.
 
 ![A recorded session replayed tick by tick, the price path drawing itself against exchange time](assets/replay.gif)
 
@@ -17,9 +16,8 @@ page promises.
 
 [`live_source`](@ref), [`replay_source`](@ref) and [`follow_source`](@ref)
 all hand back a `Channel{Trade}`. A consumer written against one works
-unchanged against the others: a real-time method is developed and validated
-on recorded flux, reproducible and repeatable, and only then pointed at the
-wire.
+unchanged against the others, so a real-time method can be developed and
+validated on recorded flux before it runs live.
 
 ```julia
 using MarketTickStreamer
@@ -112,9 +110,8 @@ one that reads the processed tree.
 | `tape` | `String` | Consolidated tape identifier (`A`, `B`, `C`). |
 | `id` | `Int64` | Venue trade identifier, unique per venue and day. |
 
-Two clocks per print is a deliberate choice: with `time_ns` and `recv_ns`
-both recorded, feed latency is a measurable quantity afterwards rather than
-an assumption baked in at capture time.
+With both `time_ns` and `recv_ns` recorded, feed latency can be measured
+after the fact.
 
 `Trade` carries value semantics — `==` and `hash` compare fields, not the
 identity of the `conditions` vector — so round-tripping through the raw
@@ -125,19 +122,18 @@ layer produces objects that compare equal.
 **Ordering.** Replay emits in ascending order of its clock, sorted on load:
 `recv_ns` when every record carries one, `time_ns` otherwise (`clock = "auto"`;
 either can be forced). Backfilled records have `recv_ns = 0`, so a backfilled
-recording replays on exchange time.
+recording replays on exchange time. The live source emits in arrival order,
+which is *not* the same as ascending `time_ns`: a consolidated tape
+interleaves venues, and late prints are normal. Any method that needs
+monotone exchange time must sort or reject explicitly;
+[`session_report`](@ref) quantifies how often it happens in a given capture.
 
 **Pacing.** Each emission is scheduled against the absolute time elapsed since
 the first record, not slept gap by gap. `sleep` overshoots by about a
 millisecond, so per-gap sleeping stretches a session whose gaps are of that
 order — 65 % on gaps of 2.5 ms — whereas on an absolute schedule the error
 stays within one overshoot however long the replay runs. Gaps below a
-millisecond are emitted back to back, in order. The live
-source emits in arrival order, which is *not* the same as ascending
-`time_ns`: a consolidated tape interleaves venues, and late prints are
-normal. Any method that needs monotone exchange time must sort or reject
-explicitly; [`session_report`](@ref) quantifies how often it happens in a
-given capture.
+millisecond are emitted back to back, in order.
 
 **Completion.** Every source closes the channel when the stream ends — the
 recording exhausted, the session deadline reached, the market closed, a
@@ -146,9 +142,9 @@ and a consumer needs no separate shutdown signal.
 
 **Backpressure.** The channel is bounded (`limits.channel_capacity`). A slow
 consumer blocks the producer, and on a live session that propagates into TCP
-backpressure rather than into unbounded memory growth. This is why the
-default is to block: silently dropping ticks would corrupt exactly the
-arrival statistics the package exists to measure.
+backpressure rather than into unbounded memory growth. Blocking is the
+default because dropping ticks silently would corrupt the arrival statistics
+the package exists to measure.
 
 **Determinism.** Replaying the same files with `pace = "max"` yields the
 identical sequence every time. With `pace = "recorded"` the *sequence* is
@@ -165,12 +161,12 @@ session = live_source(provider, cfg)
 persist, analyse = tee(session.channel, 2; lossy = [false, true])
 ```
 
-A non-lossy output blocks the fan-out when full — use it for persistence,
-which must always win. A lossy output drops incoming ticks instead of
-stalling the capture, counts the drops, and reports them through `on_drop`.
-An analysis tap that occasionally cannot keep up belongs on a lossy output;
-one whose results depend on seeing every print does not, and should instead
-run offline against the raw files, where nothing is ever dropped.
+A non-lossy output blocks the fan-out when full; persistence belongs on one.
+A lossy output drops incoming ticks instead of stalling the capture, counts
+the drops, and reports them through `on_drop`. An analysis tap that
+occasionally cannot keep up belongs on a lossy output; one whose results
+depend on seeing every print does not, and should instead run offline against
+the raw files, where nothing is ever dropped.
 
 ## Snapshots on the exchange clock
 
@@ -196,10 +192,10 @@ refresh interval is a display cadence and is not a snapshot clock.
 
 ## A worked consumer
 
-`examples/waiting_times.jl` is this page in code: it replays a recorded
-session, splits it with [`tee`](@ref) into two consumers, both on lossless
-outputs, accumulates inter-arrival times in a single pass, and stops when
-the channel closes — no shutdown protocol of its own.
+`examples/waiting_times.jl` replays a recorded session, splits it with
+[`tee`](@ref) into two consumers, both on lossless outputs, accumulates
+inter-arrival times in a single pass, and stops when the channel closes —
+no shutdown protocol of its own.
 
 ```bash
 julia examples/waiting_times.jl data/raw/<session>_part001.jsonl
@@ -213,22 +209,19 @@ every execution          n=  1225830  mean=  0.0470 s  median=  0.0007 s  p99=  
 price-forming only       n=   408793  mean=  0.1409 s  median=  0.0005 s  p99=  1.4756 s  max=  116.269 s
 ```
 
-A median of 0.7 ms against a mean of 47 ms is the distribution announcing
-itself. Excluding odd lots raises the mean roughly threefold
-while leaving the median where it was: it thins the dense clusters and
-stretches the tail rather than rescaling the whole distribution.
+A median of 0.7 ms against a mean of 47 ms marks a strongly right-skewed
+distribution. Excluding odd lots raises the mean roughly threefold while
+leaving the median where it was: it thins the dense clusters and stretches
+the tail rather than rescaling the whole distribution.
 
-Both `tee` outputs in the example are lossless. At maximum
-replay rate a lossy tap lost 85 000 of those prints — and it does not thin a
-sample evenly, it removes the bursts, which is where a waiting-time
-distribution lives. Backpressure costs nothing offline, since a blocked
-output only slows the replay.
+Both `tee` outputs in the example are lossless. At maximum replay rate a
+lossy tap lost 85 000 of those prints, and not uniformly: the losses fall
+in the bursts, which hold the short waiting times. Backpressure costs nothing
+offline, since a blocked output only slows the replay.
 
-The suite executes the example, so it cannot drift from the interface it
-documents. A third, `examples/follow_session.jl`, follows a running session
-from another process with [`follow_source`](@ref) and applies
-[`snapshots`](@ref) to it: one row per minute of exchange time and a final
-row when the session ends.
+A third, `examples/follow_session.jl`, follows a running session from another
+process with [`follow_source`](@ref) and applies [`snapshots`](@ref) to it:
+one row per minute of exchange time and a final row when the session ends.
 
 ## Which prints count as trades
 
@@ -241,9 +234,8 @@ serves want opposite answers:
   trades and corrections carry prices that were never a consolidated last
   sale, and differencing them manufactures volatility nobody could trade on.
 - An **arrival process** — waiting-time distributions, tick intensity,
-  criticality — wants every execution. An odd lot is a real fill by a real
-  participant at a real instant, and dropping it distorts the very law under
-  study.
+  criticality — wants every execution. An odd lot is an actual execution, and
+  dropping it distorts the law under study.
 
 So [`price_forming`](@ref) and [`filter_price_forming`](@ref) operate on
 loaded prints, and [`session_report`](@ref) reports `n_trades` beside
@@ -288,15 +280,13 @@ transaction time are far closer to independent and normal than calendar-time
 changes ([Mandelbrot & Taylor 1967](https://doi.org/10.1287/opre.15.6.1057);
 [Clark 1973](https://doi.org/10.2307/1913889);
 [Ané & Geman 2000](https://doi.org/10.1111/0022-1082.00286)). Of the
-three, the value clock is the one that survives a change of scale — it is
-invariant to splits and roughly invariant to price drift, so a threshold
-chosen on one sample still means something on another.
+three, the value clock is invariant to splits and roughly invariant to price
+drift, so a threshold chosen on one sample carries over to another.
 
-Two choices are yours. Whether to filter to
-price-forming prints first changes the bar count by a factor of three on a
-high-priced name. And the bars carry `recv_ns = 0`, the same marker the raw
-layer uses for records that never crossed the wire, because a derived bar has
-no receipt time.
+Whether to filter to price-forming prints first is your choice; on a
+high-priced name it changes the bar count by a factor of three. The bars
+carry `recv_ns = 0`, the same marker the raw layer uses for records that
+never crossed the wire, because a derived bar has no receipt time.
 
 A [`Bar`](@ref) records both ends of its interval: `time_ns` is the timestamp
 of its first print and `close_ns` that of the print that completed it. On an
@@ -334,11 +324,10 @@ is why the sidecar records the unit.
 
 ## Querying the corpus
 
-For methods that need the record rather than a stream — tail exponents,
-long-memory estimation, anything that wants the sample in memory — the
-processed tree is read back directly. Three functions cover it, and each
-takes the configuration, which supplies the tree, the provider's calendar
-and the condition lists.
+Methods that need the sample in memory rather than a stream, such as
+tail-exponent or long-memory estimation, read the processed tree back
+directly. Three functions cover it, and each takes the configuration, which
+supplies the tree, the provider's calendar and the condition lists.
 
 [`corpus_inventory`](@ref) says what the tree holds, from file metadata
 alone, so no print is parsed:
@@ -396,5 +385,5 @@ schema of the processed files.
 
 The raw layer stays the source of truth: [`read_raw`](@ref) returns a
 session's prints from raw NDJSON, and [`compact_raw`](@ref) writes the
-per-symbol, per-day CSV or Arrow files these functions read. Compaction is
-a convenience over the raw layer, never a replacement.
+per-symbol, per-day CSV or Arrow files these functions read. Compaction
+derives from the raw layer and does not replace it.

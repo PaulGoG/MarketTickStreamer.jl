@@ -1,9 +1,10 @@
-# MarketTickStreamer — Design
+# Architecture
 
-Goal: acquire tick-by-tick (trade-level) market data — live and historical —
-as the substrate for scientifically testing exotic time series analysis
-methods on a real-time data flux. This document records the architecture and
-the reasoning behind each decision; the README covers usage.
+The package acquires tick-by-tick (trade-level) market data, live and
+historical, as the substrate for testing exotic time series analysis methods
+on a real-time data flux. Below are the architecture and the reasons for
+each decision; configuration and entry points are on the
+[usage page](usage.md).
 
 ## 1. Data flow
 
@@ -40,13 +41,13 @@ the reasoning behind each decision; the README covers usage.
                        └──────────────────────────────────────────────────────────────────┘
 ```
 
-The load-bearing abstraction is `Channel{Trade}`: live, replay and follow
-produce the same typed stream, so a real-time analysis consumer developed
-against `replay_source` runs unchanged against the live feed or against a
-capture running in another process. Backfill and import write through the
-same sink as a capture, so everything downstream of the raw layer is one
-path. Backpressure is intrinsic: bounded channels block producers instead
-of dropping or buffering unboundedly.
+The central abstraction is `Channel{Trade}`: live, replay and follow produce
+the same typed stream, so a real-time analysis consumer developed against
+`replay_source` runs unchanged against the live feed or against a capture
+running in another process. Backfill and import write through the same sink
+as a capture, so everything downstream of the raw layer is one path.
+Backpressure is intrinsic: bounded channels block producers instead of
+dropping or buffering unboundedly.
 
 ## 2. Canonical schema
 
@@ -96,27 +97,27 @@ selection and refuses one that would exceed `limits.read_mem_fraction` of
 the free memory. Every day is loaded in full before its filters apply, so
 the memory bound is the busiest selected date — the bound replay has.
 
-A venue's daily bulk files are a third input, not a third layer. With
+A venue's daily bulk files are a third input to the raw layer. With
 `backfill.source = "bulk"` the backfill fetches Binance's dump of each day,
 verifies the venue's checksum, keeps the file under `data/bulk/` as the
 vendor's record, and streams its rows through the same per-day raw sink and
 compaction as a REST page walk, so the raw layer remains the one source of
-truth every reader understands. The copy costs disk, not correctness.
+truth every reader understands, at the cost of disk space.
 
-Scale-up path, when needed: swap the raw
-layer to `Arrow.append` on stream-format files and query with DuckDB.jl —
-the `Trade`-channel interface isolates that change to `sinks.jl`.
+If the raw layer has to scale, it can move to `Arrow.append` on
+stream-format files queried with DuckDB.jl; the `Trade`-channel interface
+confines that change to `sinks.jl`.
 
 ## 4. Concurrency model
 
 Plain Julia tasks, no locks. The producer (WebSocket read loop) `put!`s into
 the bounded channel; the sink task drains it with a poll/batch loop
-(0.05 s idle poll — granularity is irrelevant against a 30 s flush
-interval). **Closing the channel is the only shutdown signal**: producer
-exit (deadline, fatal error, retry exhaustion, `stop!`) closes it, the sink
-drains what remains, flushes, and returns its count. Ctrl-C is converted to
-`InterruptException` (`Base.exit_on_sigint(false)`) and takes the same
-path — no data is lost on interrupt (tested).
+(0.05 s idle poll, negligible against a 30 s flush interval). **Closing the
+channel is the only shutdown signal**: producer exit (deadline, fatal error,
+retry exhaustion, `stop!`) closes it, the sink drains what remains, flushes,
+and returns its count. Ctrl-C is converted to `InterruptException`
+(`Base.exit_on_sigint(false)`) and takes the same path — no data is lost on
+interrupt (tested).
 
 ## 5. Failure handling
 
@@ -127,25 +128,24 @@ path — no data is lost on interrupt (tested).
   task, so it also ends a connection that never drops; the reconnect loop
   alone would only test it between connections.
 - **Fatal vs retryable**: Alpaca error codes 401–411 (bad auth, connection
-  limit, bad subscription) abort immediately — retrying them is a ban risk,
-  not resilience. The Alpaca adapter carries the fatal signal out of the
-  WebSocket handler by value and throws it after the connection returns;
-  the Binance adapter throws inside the handler. Both paths are tested
-  against the mocks.
+  limit, bad subscription) abort immediately, since retrying them risks a
+  ban. The Alpaca adapter carries the fatal signal out of the WebSocket
+  handler by value and throws it after the connection returns; the Binance
+  adapter throws inside the handler. Both paths are tested against the mocks.
 - **Stale connections**: HTTP.jl 1.x websockets have no read-idle timeout, so
   a watchdog task force-closes the socket after `stream.stale_timeout_s`
   without a frame, triggering the normal reconnect path.
 - **Market-hours guards**: `/v2/clock` gates connection
   (`stream.require_market_open`); `stream.wait_for_open` sleeps until the
   next open instead of exiting; `stream.stop_at_market_close` schedules a
-  graceful stop at `next_close` so an unattended session doesn't idle on a
-  dead overnight connection. Half-days and holidays are handled implicitly
+  graceful stop at `next_close` so an unattended session does not idle on a
+  dead overnight connection. Half-days and holidays need no special case,
   because the clock endpoint, not a local calendar, is authoritative
   (early-close behavior is tested end-to-end against a mock clock).
   Delayed feeds (`delayed_sip`, 15 min) shift both guards by the feed
   delay via `feed_delay_ns`: the open-wait extends past the silent
   post-open window and the close guard runs to `next_close + delay + 60 s`
-  so the delayed tape tail is captured, not truncated.
+  so the delayed tail of the tape is captured.
 - **Shutdown**: `close(ws)` is a handshake; a peer that never
   acks the CLOSE frame would hang the read loop, so `stop!` severs the raw
   transport after a 5 s grace if the graceful close has not completed.
@@ -186,9 +186,9 @@ path — no data is lost on interrupt (tested).
   named under `provenance.manifest`: no manifest is tracked in the
   repository, so this copy is what pins the dependency versions a session
   ran with. Startup reconciliation relabels sidecars of dead processes
-  `aborted` and reports zero-byte raw stubs — provenance survives SIGKILL
-  and power loss, which graceful-path handling alone cannot (threaded
-  Ctrl-C delivery is best-effort in Julia).
+  `aborted` and reports zero-byte raw stubs; provenance thus survives SIGKILL
+  and power loss, which handling on the graceful path alone cannot ensure
+  (Ctrl-C delivery to a threaded Julia process is best-effort).
 - **Reproducible randomness**: the package's only random draws are the
   jitter of its backoff schedules, REST retries and stream reconnects. Both
   generators derive from one seed, `[rng] seed`, drawn from the OS at load
@@ -218,9 +218,9 @@ path — no data is lost on interrupt (tested).
 | No `WebSockets.jl` | Abandoned (last release 2022). `HTTP.WebSockets` is the ecosystem standard. |
 | No `AlpacaMarkets.jl` | REST-only, single maintainer, pins that conflict with a modern stack. Direct HTTP+JSON is a few hundred lines and fully under test. |
 | `PrecompileTools.jl` | The consumer-facing paths are compiled with the package; the first `compact_raw` and the first processed-file replay cost seconds of compilation before. |
-| `DotEnv.jl` 1.0 (`load!`) | Registered, stable, zero-issue scope. |
+| `DotEnv.jl` 1.0 (`load!`) | Registered and stable, with a narrow scope. |
 | Custom ns timestamps over `NanoDates.jl` | One regex + integer math, zero deps on the hot path; NanoDates remains an option as a display layer. |
-| Hand-rolled backoff | `Base.retry`/Retry.jl don't fit a stateful reconnect loop with attempt-reset semantics. |
+| Hand-rolled backoff | `Base.retry`/Retry.jl do not fit a stateful reconnect loop with attempt-reset semantics. |
 | Plotting as package extensions | CairoMakie and UnicodePlots are weak dependencies. A consumer that feeds an estimator from `Channel{Trade}` should not install or precompile a plotting stack to do it; the figures load with `using CairoMakie`, the monitor's plots with `using UnicodePlots`. |
 | No `MathTeXEngine.jl` dependency | The Computer Modern faces come from Makie's `theme_latexfonts()`, which wraps the same fonts. |
 
@@ -258,8 +258,8 @@ tail-exponent annotations):
 - **Session figures** — one 2×2 panel per (symbol, trading day) from raw
   captures: price path (min–max decimated), trades per minute, and
   survival functions (CCDFs) of inter-arrival times and trade sizes on
-  log-log axes — the distributions whose heavy tails matter first for
-  exotic time series methods, and which linear histograms hide.
+  log-log axes: the distributions whose heavy tails matter most to the
+  methods the package serves, and which linear histograms hide.
 - **Overview figures** — one panel per symbol across many days from the
   processed tree: price on a concatenated *trading-time* axis (overnight
   gaps removed, session boundaries marked), a day × session-minute
@@ -268,10 +268,10 @@ tail-exponent annotations):
   contaminate the waiting-time tail.
 
 CCDF point clouds are deterministically thinned (tail-preserving) and
-price paths min–max decimated, so million-tick figures stay vector-light.
-PDF + PNG (`px_per_unit = 4`) via `scripts/visualize.jl` (raw-file mode
-prints the `session_report` QA table; `--overview` sweeps the processed
-tree with symbol/date filters).
+price paths min–max decimated, so vector exports of million-tick figures
+stay small. PDF + PNG (`px_per_unit = 4`) via `scripts/visualize.jl`
+(raw-file mode prints the `session_report` QA table; `--overview` sweeps the
+processed tree with symbol/date filters).
 
 ## 9. Live monitoring
 
@@ -281,10 +281,10 @@ torn-line carries, roll-aware) and renders an in-terminal dashboard: tick
 totals and rate, tape-head timestamp and lag, per-symbol counts. The
 dashboard is text; with UnicodePlots loaded a second package extension adds
 a rate-history plot and draws the counts as a bar chart (headless-safe).
-Attaching from outside the producer was chosen over an in-process panel
-because it cannot interfere with the capture, its logging, or its progress
-output, it works identically for live capture and backfill, and it can
-attach to or detach from a session at any point — including sessions
-started by another process. Refresh cadence and panel sizing come
-from the `[monitor]` config table; `scripts/monitor.jl` is the entry point.
+An attached process was chosen over an in-process panel: it cannot interfere
+with the capture, its logging or its progress output; it works identically
+for live capture and backfill; and it can attach to or detach from any
+session at any point, including one started by another process. Refresh
+cadence and panel sizing come from the `[monitor]` config table;
+`scripts/monitor.jl` is the entry point.
 
