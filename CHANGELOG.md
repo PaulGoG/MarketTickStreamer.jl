@@ -12,6 +12,10 @@ Notable changes to MarketTickStreamer. The format follows
   `scripts/visualize.jl` passes the configured
   `[quality.non_price_conditions]` to the session report and the figures;
   the figures used the built-in lists before.
+- The provider implementer interface beyond the exported names,
+  `stream_protocol!`, `feed_delay_ns`, `exchange_day_start_ns`,
+  `spawn_watchdog` and `bump!`, is declared `public`: documented, versioned
+  with the package and reached qualified.
 
 ### Changed
 - A live session that ends on a fatal stream error or on exhausted
@@ -31,6 +35,10 @@ Notable changes to MarketTickStreamer. The format follows
 - `isequal` and `hash` on `Trade`, `Quote` and `Bar` follow field-wise
   `isequal`, so a `Bar` with a NaN `vwap` is equal to itself in a `Set` or a
   `Dict`.
+- The session envelope (lock on the data tree, reconciliation of stale
+  sidecars, free-disk gate, sidecar start and finalization) is one helper
+  shared by `run_stream`, `run_backfill` and `run_import`, so the three
+  cannot diverge on status again.
 
 ### Removed
 - The backfill progress bar and the ProgressMeter dependency: the bar was

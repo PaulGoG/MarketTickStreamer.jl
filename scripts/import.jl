@@ -8,25 +8,20 @@
 include(joinpath(@__DIR__, "activate.jl"))
 using Dates: Date
 using MarketTickStreamer
-
-function parse_args(args)
-    length(args) >= 2 ||
-        error("usage: julia scripts/import.jl <itch50|iex> <file> [options]")
-    opts = Dict{String,String}()
-    for a in args[3:end]
-        startswith(a, "--") || error("unexpected argument: $a")
-        k, v = occursin('=', a) ? split(a[3:end], '='; limit = 2) : (a[3:end], "")
-        opts[String(k)] = String(v)
-    end
-    return args[1], args[2], opts
-end
+include(joinpath(@__DIR__, "cli.jl"))
 
 function main()
-    format, file, opts = parse_args(ARGS)
-    cfg =
-        load_config(get(opts, "config", joinpath(@__DIR__, "..", "config", "config.toml")))
+    (; opts, flags, positional) = parse_cli(
+        ARGS;
+        valued = ("config", "date", "symbols", "broken", "tape"),
+        flags = ("all", "drop-raw"),
+    )
+    length(positional) == 2 ||
+        throw(ArgumentError("usage: julia scripts/import.jl <itch50|iex> <file> [options]"))
+    format, file = positional
+    cfg = load_config(config_path(opts))
     symbols =
-        haskey(opts, "all") ? nothing :
+        "all" in flags ? nothing :
         haskey(opts, "symbols") ? String.(split(opts["symbols"], ',')) : cfg.symbols
     files = run_import(
         cfg,
@@ -36,7 +31,7 @@ function main()
         symbols,
         broken = Symbol(get(opts, "broken", "drop")),
         tape = get(opts, "tape", ""),
-        keep_raw = !haskey(opts, "drop-raw"),
+        keep_raw = !("drop-raw" in flags),
     )
     println("Import complete; $(length(files)) processed file(s):")
     for f in files

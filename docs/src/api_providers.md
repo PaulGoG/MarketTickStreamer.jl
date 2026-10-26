@@ -16,7 +16,7 @@ than against one vendor's vocabulary.
 
 ```@autodocs
 Modules = [MarketTickStreamer]
-Pages = ["live.jl"]
+Pages = ["live.jl", "rest.jl"]
 ```
 
 ## Alpaca adapter

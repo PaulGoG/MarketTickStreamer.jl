@@ -100,19 +100,17 @@ function _run_import(
                 "or pass replace = true to displace them into safesave backups",
             ),
         )
-    started_utc = Dates.now(UTC)
-    mkpath(cfg.raw_dir)
-    slock = acquire_session_lock(cfg.data_dir)
-    status = "completed"
-    total = 0
-    stored = 0
-    meta_path = nothing
-    processed = String[]
-    stats = nothing
-    try
-        reconcile_sessions!(cfg.raw_dir)
-        _ensure_free_disk(cfg)
-        meta_path = start_session_meta(cfg, sid; started_utc)
+    return _with_session(
+        cfg,
+        sid;
+        on_interrupt = "interrupt; compacted output kept, sidecar marked interrupted",
+    ) do summary, start_meta
+        processed = String[]
+        summary.result = processed
+        summary.ticks_processed = 0
+        summary.source = _import_source(path, format, nothing)
+        stats = nothing
+        start_meta()
         sink = open_raw_sink(cfg.raw_dir, sid; max_mb = cfg.max_raw_file_mb)
         sink_page =
             page -> begin
@@ -132,9 +130,10 @@ function _run_import(
             close_sink!(sink)
             sink.n_written == 0 && filesize(sink.path) == 0 && rm(sink.path; force = true)
         end
-        total = stats.prints
+        _import_stats!(summary.source, stats)
+        summary.ticks = stats.prints
         files = _raw_files_with_prefix(cfg.raw_dir, sid)
-        if total == 0
+        if summary.ticks == 0
             for f in files
                 filesize(f) == 0 && rm(f; force = true)
             end
@@ -142,39 +141,23 @@ function _run_import(
         else
             c = _compact_raw(cfg, files)
             append!(processed, c.files)
-            stored = c.rows
+            summary.ticks_processed = c.rows
             keep_raw || foreach(f -> rm(f; force = true), files)
         end
         stats.truncated &&
             @warn "the file ended inside a message; the day is incomplete" file =
                 basename(path)
         @info "imported" format file = basename(path) messages = stats.messages prints =
-            total stored broken = stats.broken
-    catch e
-        if e isa InterruptException
-            status = "interrupted"
-            @info "interrupt; compacted output kept, sidecar marked interrupted" sid
-        else
-            status = "failed"
-            rethrow()
-        end
-    finally
-        meta_path === nothing || finalize_session_meta(
-            meta_path,
-            status;
-            ticks = total,
-            ticks_processed = stored,
-            raw_files = _session_raw_files(cfg, sid),
-            source = _import_source(path, format, stats),
-        )
-        close(slock)
+            summary.ticks stored = summary.ticks_processed broken = stats.broken
+        @info "import finished" status = summary.status files = length(processed) prints =
+            summary.ticks stored = summary.ticks_processed
+        return processed
     end
-    @info "import finished" status files = length(processed) prints = total stored
-    return processed
 end
 
-# The vendor file as the sidecar records it: identity, checksum and what the
-# reader counted. `stats` is `nothing` when the reader never ran.
+# The vendor file as the sidecar records it: identity and checksum, computed
+# once before the reader runs, and what the reader counted, merged in by
+# `_import_stats!` when it returns. `stats` is `nothing` when the reader never ran.
 function _import_source(path::AbstractString, format::AbstractString, stats)
     src = Dict{String,Any}(
         "file" => basename(path),
@@ -182,7 +165,10 @@ function _import_source(path::AbstractString, format::AbstractString, stats)
         "sha256" => _sha256_hex(path),
         "format" => String(format),
     )
-    stats === nothing && return src
+    return stats === nothing ? src : _import_stats!(src, stats)
+end
+
+function _import_stats!(src::AbstractDict, stats)
     for (k, v) in pairs(stats)
         k === :trades && continue
         src[String(k)] = v

@@ -5,19 +5,12 @@
 
 include(joinpath(@__DIR__, "activate.jl"))
 using MarketTickStreamer
+include(joinpath(@__DIR__, "cli.jl"))
 
 function main()
-    cfg_path = joinpath(@__DIR__, "..", "config", "config.toml")
-    i = 1
-    while i <= length(ARGS)
-        if ARGS[i] == "--config"
-            cfg_path = ARGS[i+1]
-            i += 2
-        else
-            error("unknown argument: $(ARGS[i])")
-        end
-    end
-    cfg = load_config(cfg_path)
+    (; opts, positional) = parse_cli(ARGS; valued = ("config",))
+    isempty(positional) || throw(ArgumentError("unexpected argument: $(first(positional))"))
+    cfg = load_config(config_path(opts))
     inventory = corpus_inventory(cfg)
     if size(inventory, 1) == 0
         println("No processed data under $(cfg.processed_dir).")

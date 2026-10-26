@@ -96,6 +96,10 @@ public RawSink,
     reconcile_sessions!,
     acquire_session_lock
 
+# The provider implementer interface beyond the exported names: what an
+# adapter in another package defines or calls (see `AbstractProvider`).
+public stream_protocol!, feed_delay_ns, exchange_day_start_ns, spawn_watchdog, bump!
+
 include("schema.jl")
 include("config.jl")
 include("sinks.jl")
@@ -105,6 +109,7 @@ include("follow.jl")
 include("monitor.jl")
 include("corpus.jl")
 include("replay.jl")
+include("rest.jl")
 include("live.jl")
 include("providers/alpaca.jl")
 include("providers/binance.jl")

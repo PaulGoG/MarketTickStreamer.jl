@@ -31,7 +31,7 @@ and reproducibly.
 ├── Project.toml        # package environment and [compat]
 ├── activate.jl         # silent activation; one per environment (scripts/, test/, docs/, bench/, examples/)
 ├── config/config.toml  # every tunable
-├── src/                # the package: schema, config, sinks, quality, resample, corpus, replay, follow, monitor, live, providers/, formats/, pipeline, import, diagnostics, figures
+├── src/                # the package: schema, config, sinks, quality, resample, corpus, replay, follow, monitor, rest, live, providers/, formats/, pipeline, import, diagnostics, figures
 ├── ext/                # package extensions: figures (CairoMakie), terminal plots (UnicodePlots)
 ├── scripts/            # entry points: stream, backfill, import, compact, inventory, replay, monitor, visualize (own environment)
 ├── examples/           # worked consumers of the Channel{Trade} interface (own environment)
@@ -303,6 +303,7 @@ Citation metadata is in [`CITATION.cff`](CITATION.cff). BibTeX:
 │   ├── follow.jl           # file-following source: tail a session's raw parts, end with its sidecar
 │   ├── live.jl             # provider-agnostic live source: reconnect, watchdog,
 │   │                       #   market-close guard
+│   ├── rest.jl             # REST policy and retry schedule; resumable vendor downloads
 │   ├── pipeline.jl         # session orchestration: run_stream / run_backfill; tee
 │   ├── import.jl           # vendor day files → processed/: run_import
 │   ├── diagnostics.jl      # plotting-free numerics of the figures: CCDF, decimation, Hill
@@ -319,6 +320,7 @@ Citation metadata is in [`CITATION.cff`](CITATION.cff). BibTeX:
 ├── scripts/
 │   ├── Project.toml        # scripts environment: the package by path, CairoMakie, UnicodePlots
 │   ├── activate.jl         # silent activation; included by every script
+│   ├── cli.jl              # argument parsing shared by the scripts
 │   ├── stream.jl           # live capture session
 │   ├── backfill.jl         # historical trade download
 │   ├── import.jl           # vendor day file import

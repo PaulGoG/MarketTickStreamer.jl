@@ -495,6 +495,65 @@ function reconcile_sessions!(raw_dir::AbstractString)
     return n
 end
 
+# One session's bookkeeping, filled in by the body of `_with_session` as it
+# runs and read when the sidecar is finalized. `result` is what the session
+# returns when an interrupt ends it early.
+mutable struct SessionSummary
+    status::String
+    ticks::Int
+    ticks_processed::Union{Nothing,Int}
+    source::Union{Nothing,AbstractDict}
+    meta_path::Union{Nothing,String}
+    result::Any
+end
+SessionSummary() = SessionSummary("completed", 0, nothing, nothing, nothing, nothing)
+
+# The envelope shared by run_stream, run_backfill and run_import: the lock on
+# the data tree, reconciliation of stale sidecars, the free-disk gate, and the
+# sidecar's finalization on every exit. `body(summary, start_meta)` calls
+# `start_meta()` once it is about to produce data (a stream that finds the
+# market closed returns without a sidecar) and fills `summary` as it goes.
+# Status: `completed` on return, `interrupted` on Ctrl-C, after which
+# `summary.result` is returned, `failed` on any other error, which propagates;
+# the body may set `failed` itself.
+function _with_session(
+    body,
+    cfg::Config,
+    sid::AbstractString;
+    on_interrupt::Union{Nothing,AbstractString} = nothing,
+)
+    started_utc = Dates.now(UTC)
+    mkpath(cfg.raw_dir)
+    slock = acquire_session_lock(cfg.data_dir)
+    summary = SessionSummary()
+    start_meta() = (summary.meta_path = start_session_meta(cfg, sid; started_utc))
+    try
+        reconcile_sessions!(cfg.raw_dir)
+        _ensure_free_disk(cfg)
+        return body(summary, start_meta)
+    catch e
+        if e isa InterruptException
+            summary.status = "interrupted"
+            on_interrupt === nothing || @info on_interrupt sid
+            return summary.result
+        else
+            summary.status = "failed"
+            rethrow()
+        end
+    finally
+        meta_path = summary.meta_path
+        meta_path === nothing || finalize_session_meta(
+            meta_path,
+            summary.status;
+            ticks = summary.ticks,
+            ticks_processed = summary.ticks_processed,
+            raw_files = _session_raw_files(cfg, sid),
+            source = summary.source,
+        )
+        close(slock)
+    end
+end
+
 """
     run_stream(cfg::Config; provider = nothing) -> NamedTuple
 
@@ -529,20 +588,11 @@ function _run_stream(
     provider::Union{AbstractProvider,Nothing},
     stop::Threads.Atomic{Bool},
 )
-    started_utc = Dates.now(UTC)
     provider === nothing && (provider = _provider_from_config(cfg))
     delay = feed_delay_ns(provider)
     delay > 0 &&
         @info "delayed feed; market-hours guards shifted" delay_s = delay ÷ NS_PER_SEC
-
-    mkpath(cfg.raw_dir)
-    slock = acquire_session_lock(cfg.data_dir)
-    meta_path = nothing
-    status = "completed"
-    try
-        reconcile_sessions!(cfg.raw_dir)
-        _ensure_free_disk(cfg)
-
+    return _with_session(cfg, sid) do summary, start_meta
         clock = nothing
         # A venue that never closes has no open to wait for and no close to
         # stop at; the session deadline is the only bound that applies.
@@ -581,7 +631,7 @@ function _run_stream(
                 (delay > 0 ? 60 * NS_PER_SEC : Int64(0)),
             )
         sink = open_raw_sink(cfg.raw_dir, sid; max_mb = cfg.max_raw_file_mb)
-        meta_path = start_session_meta(cfg, sid; started_utc)
+        meta_path = start_meta()
         @info "session started" id = sid raw = sink.path symbols = cfg.symbols
 
         on_flush = function (n, tot)
@@ -605,41 +655,36 @@ function _run_stream(
             on_flush,
         )
 
-        ticks = 0
-        files = String[]
         try
-            ticks = fetch(sink_task)
-            session.outcome[] === :failed && (status = "failed")
+            summary.ticks = fetch(sink_task)
+            session.outcome[] === :failed && (summary.status = "failed")
         catch e
             if e isa InterruptException
-                status = "interrupted"
+                summary.status = "interrupted"
                 @info "interrupt; shutting down"
             else
-                # The `finally` below finalizes the sidecar; without this the
-                # provenance of a crashed session would stay "running".
-                status = "failed"
-                rethrow()
+                summary.status = "failed"
             end
+            rethrow()
         finally
             stop!(session)                       # idempotent; unblocks the producer
             if !istaskfailed(sink_task)
                 try
-                    ticks = fetch(sink_task)     # final drain + flush
+                    summary.ticks = fetch(sink_task)     # final drain + flush
                 catch e
                     e isa InterruptException && rethrow()
-                    status = "failed"
+                    summary.status = "failed"
                     @error "sink failed while draining" exception = (e, catch_backtrace())
                 end
             end
             close_sink!(sink)
             files = _session_raw_files(cfg, sid)
-            finalize_session_meta(meta_path, status; ticks, raw_files = files)
-            @info "session finished" status ticks files = length(files) meta = meta_path frames =
-                session.stats[].frames reconnects = session.stats[].reconnects
+            summary.result = (; ticks = summary.ticks, raw_files = files)
+            @info "session finished" status = summary.status ticks = summary.ticks files =
+                length(files) meta = meta_path frames = session.stats[].frames reconnects =
+                session.stats[].reconnects
         end
-        return (; ticks, raw_files = files)
-    finally
-        close(slock)
+        return summary.result
     end
 end
 
@@ -701,19 +746,18 @@ function _run_backfill(
     sid::AbstractString,
     provider::Union{AbstractProvider,Nothing},
 )
-    started_utc = Dates.now(UTC)
     provider === nothing && (provider = _provider_from_config(cfg))
-    mkpath(cfg.raw_dir)
-    slock = acquire_session_lock(cfg.data_dir)
-    status = "completed"
-    total = 0
-    stored = 0
-    meta_path = nothing
-    processed = String[]
-    try
-        reconcile_sessions!(cfg.raw_dir)
-        _ensure_free_disk(cfg)
-        meta_path = start_session_meta(cfg, sid; started_utc)
+    return _with_session(
+        cfg,
+        sid;
+        on_interrupt = "interrupt; completed days are compacted and a rerun resumes",
+    ) do summary, start_meta
+        processed = String[]
+        summary.result = processed
+        summary.ticks_processed = 0
+        total = 0
+        stored = 0
+        start_meta()
         days = session_days(provider, cfg.backfill_start, cfg.backfill_end)
         for sym in cfg.symbols, day in days
             if cfg.backfill_resume && _processed_exists(cfg, sym, day)
@@ -782,31 +826,15 @@ function _run_backfill(
             end
             total += n
             stored += n_stored
+            summary.ticks = total
+            summary.ticks_processed = stored
             cfg.backfill_source == "bulk" && sleep(cfg.backfill_rate_sleep_s)
             @info "backfilled" symbol = sym day trades = n stored = n_stored
         end
-    catch e
-        if e isa InterruptException
-            status = "interrupted"
-            @info "interrupt; completed days are compacted and a rerun resumes" sid
-        else
-            # The `finally` below finalizes the sidecar; without this the
-            # provenance of a crashed run would read "completed".
-            status = "failed"
-            rethrow()
-        end
-    finally
-        meta_path === nothing || finalize_session_meta(
-            meta_path,
-            status;
-            ticks = total,
-            ticks_processed = stored,
-            raw_files = _session_raw_files(cfg, sid),
-        )
-        close(slock)
+        @info "backfill finished" status = summary.status days = length(processed) ticks =
+            total stored
+        return processed
     end
-    @info "backfill finished" status days = length(processed) ticks = total stored
-    return processed
 end
 
 """

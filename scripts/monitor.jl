@@ -10,29 +10,17 @@
 include(joinpath(@__DIR__, "activate.jl"))
 using MarketTickStreamer
 using UnicodePlots: UnicodePlots   # activates the dashboard plots
+include(joinpath(@__DIR__, "cli.jl"))
 
 function main()
-    cfg_path = joinpath(@__DIR__, "..", "config", "config.toml")
-    session = nothing
-    from_start = false
-    iterations = nothing
-    i = 1
-    while i <= length(ARGS)
-        if ARGS[i] == "--config"
-            cfg_path = ARGS[i+1]
-            i += 2
-        elseif ARGS[i] == "--full"
-            from_start = true
-            i += 1
-        elseif ARGS[i] == "--iterations"
-            iterations = parse(Int, ARGS[i+1])
-            i += 2
-        else
-            session = ARGS[i]
-            i += 1
-        end
-    end
-    cfg = load_config(cfg_path)
+    (; opts, flags, positional) =
+        parse_cli(ARGS; valued = ("config", "iterations"), flags = ("full",))
+    length(positional) <= 1 ||
+        throw(ArgumentError("at most one session prefix, got $(length(positional))"))
+    session = isempty(positional) ? nothing : first(positional)
+    from_start = "full" in flags
+    iterations = haskey(opts, "iterations") ? parse(Int, opts["iterations"]) : nothing
+    cfg = load_config(config_path(opts))
     monitor_raw(
         cfg.raw_dir;
         session,

@@ -13,47 +13,29 @@ include(joinpath(@__DIR__, "activate.jl"))
 using CairoMakie: CairoMakie   # activates the figure extension
 using MarketTickStreamer
 using Dates: Date
+include(joinpath(@__DIR__, "cli.jl"))
 
 function main()
-    cfg_path = joinpath(@__DIR__, "..", "config", "config.toml")
     out_dir = joinpath(@__DIR__, "..", "plots")
     formats = ("pdf", "png")
-    files = String[]
-    overview = false
     symbols = nothing
     from = nothing
     to = nothing
-    i = 1
-    while i <= length(ARGS)
-        if ARGS[i] == "--config"
-            cfg_path = ARGS[i+1]
-            i += 2
-        elseif ARGS[i] == "--out"
-            out_dir = ARGS[i+1]
-            i += 2
-        elseif ARGS[i] == "--format"
-            formats = Tuple(split(ARGS[i+1], ","))
-            i += 2
-        elseif ARGS[i] == "--overview"
-            overview = true
-            i += 1
-        elseif ARGS[i] == "--symbols"
-            symbols = String.(split(ARGS[i+1], ","))
-            i += 2
-        elseif ARGS[i] == "--from"
-            from = Date(ARGS[i+1])
-            i += 2
-        elseif ARGS[i] == "--to"
-            to = Date(ARGS[i+1])
-            i += 2
-        else
-            push!(files, ARGS[i])
-            i += 1
-        end
-    end
+    (; opts, flags, positional) = parse_cli(
+        ARGS;
+        valued = ("config", "out", "format", "symbols", "from", "to"),
+        flags = ("overview",),
+    )
+    files = positional
+    overview = "overview" in flags
+    haskey(opts, "out") && (out_dir = opts["out"])
+    haskey(opts, "format") && (formats = Tuple(split(opts["format"], ",")))
+    haskey(opts, "symbols") && (symbols = String.(split(opts["symbols"], ",")))
+    haskey(opts, "from") && (from = Date(opts["from"]))
+    haskey(opts, "to") && (to = Date(opts["to"]))
     # The exchange calendar, the regular session and the units belong to the
     # provider.
-    cfg = load_config(cfg_path)
+    cfg = load_config(config_path(opts))
     tz = cfg.exchange_tz
     spec = provider_spec(cfg.provider)
     session = spec.regular_session
