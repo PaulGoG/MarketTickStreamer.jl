@@ -8,10 +8,8 @@ instantiated; from an existing REPL, `include` it for the same effect. The
 first instantiation resolves and precompiles and is therefore slow;
 afterwards it is a no-op.
 
-This file activates the package environment, for a REPL (`julia -i
-activate.jl`) and for `Pkg.test()`. Each side environment — `scripts/`,
-`test/`, `docs/`, `bench/`, `examples/` — has its own `activate.jl`, which
-its scripts include first.
+Each side environment (`scripts/`, `test/`, `docs/`, `bench/`,
+`examples/`) has its own `activate.jl`, which its scripts include first.
 """
 
 using Pkg

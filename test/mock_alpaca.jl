@@ -53,7 +53,7 @@ mock_quote(sym, i; t = "2026-07-30T14:30:$(lpad(i % 60, 2, '0')).000000001Z") = 
     z = "C",
 )
 
-# Note `c` here is the CLOSING PRICE, not a condition list: the v2 protocol
+# `c` here is the closing price, not a condition list: the v2 protocol
 # reuses the key across frame types.
 mock_bar(sym, i; t = "2026-07-30T14:3$(i % 10):00Z") = (;
     T = "b",
@@ -117,8 +117,9 @@ end
                     is_open = true, open_in_s = 64800.0, hits = Ref(0),
                     fail_after = typemax(Int)) -> server
 
-REST mock: `/v2/clock` and `/v2/stocks/{symbol}/trades` with two pages linked
-by `next_page_token = "page2"`. The clock reports `is_open`, a close
+REST mock: `/v2/clock`, `/v2/stocks/meta/conditions/{ticktype}` and
+`/v2/stocks/{symbol}/trades` with two pages linked by
+`next_page_token = "page2"`. The clock reports `is_open`, a close
 `close_in_s` from each query (shrink it to simulate a half-day's early close)
 and an open `open_in_s` from each query — negative to place the opening bell
 in the past, which is how the `wait_for_open` guard is exercised without

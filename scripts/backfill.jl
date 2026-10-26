@@ -10,7 +10,7 @@ function main()
         isempty(ARGS) ? joinpath(@__DIR__, "..", "config", "config.toml") : ARGS[1],
     )
     files = run_backfill(cfg)
-    println("Backfill complete — $(length(files)) processed file(s):")
+    println("Backfill complete; $(length(files)) processed file(s):")
     for f in files
         println("  ", f)
     end

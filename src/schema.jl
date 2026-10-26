@@ -20,7 +20,7 @@ Fields
 - `size`       : trade size (Float64 to accommodate fractional shares/crypto)
 - `exchange`   : exchange code (provider-specific, e.g. "V" = IEX)
 - `conditions` : trade condition codes (provider-specific)
-- `tape`       : tape identifier ("A"/"B"/"C" for US equities; may be empty)
+- `tape`       : tape identifier ("A"/"B"/"C" for US equities, "SPOT" for Binance; may be empty)
 - `id`         : provider trade id (0 when absent)
 """
 struct Trade
@@ -43,8 +43,8 @@ them, with both clocks kept as for [`Trade`](@ref) — `time_ns` from the
 exchange, `recv_ns` from local receipt.
 
 Quotes are parsed but not subscribed to by default, and not persisted. A
-quote stream runs an order of magnitude above the trade stream in message
-count, which is a storage decision rather than a parsing one; reach them
+quote stream carries an order of magnitude more messages than the trade
+stream, so persisting it is a storage decision, not a parsing one; reach them
 through the `on_quote` callback of [`live_source`](@ref).
 
 Sizes are round lots as the tape reports them, not shares.
@@ -171,7 +171,7 @@ now_ns() = round(Int64, time() * 1e6) * 1_000
     ns_to_datetime(ns) -> DateTime
 
 Round a nanosecond epoch timestamp to a millisecond-resolution UTC
-`DateTime` (for display and coarse grouping only — not for storage).
+`DateTime` (for display and coarse grouping only, never for storage).
 """
 ns_to_datetime(ns::Int64) = unix2datetime(ns / NS_PER_SEC)
 

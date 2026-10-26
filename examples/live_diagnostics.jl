@@ -6,25 +6,23 @@ Worked consumer: bounded-memory live diagnostics from a tick stream.
 The companion to `waiting_times.jl`, and its opposite on both axes that matter
 when a consumer runs beside a live capture rather than after one.
 
-`waiting_times.jl` takes the **lossless** tap and keeps **every** gap, because
+`waiting_times.jl` takes the lossless tap and keeps every gap, because
 a distribution estimate must not be thinned by load. This file takes the
-**lossy** tap and keeps **no** samples at all: state is a fixed set of
+lossy tap and keeps no samples at all: state is a fixed set of
 `OnlineStats` accumulators, so memory is constant in the length of the stream
 and a slow consumer sheds prints instead of applying backpressure to
 acquisition. That is the right trade for a dashboard and the wrong one for an
 estimator.
 
-It shows single-pass accumulators whose footprint does not grow with the
-stream (`Mean`, `Variance`, `Extrema`, `KHist`) and why a diagnostic belongs
-on a lossy output: acquisition must never wait for a consumer, and a dropped
-print costs a dashboard nothing. A size-weighted quantity, the VWAP, is
-accumulated as two running sums rather than as a ratio of means, which is not
-the same number. Drops are reported rather than hidden, so a diagnostic
-quietly seeing a third of the tape cannot be mistaken for one seeing all of
-it. The section below shows that the choice of quantile sketch is not a
-detail.
+The accumulators (`Mean`, `Variance`, `Extrema`, `KHist`) do not grow with
+the stream, and the tap is lossy because acquisition must never wait for a
+consumer, and a dropped print costs a dashboard nothing. A size-weighted
+quantity, the VWAP, is accumulated as two running sums rather than as a ratio
+of means, which is not the same number. Drops are reported rather than
+hidden, so a diagnostic quietly seeing a third of the tape cannot be mistaken
+for one seeing all of it.
 
-## Not every constant-memory quantile survives this distribution
+## Constant-memory quantile sketches on inter-arrival times
 
 The obvious sketch is `P2Quantile`, and on inter-arrival times it is wrong by
 more than an order of magnitude. Measured on one AAPL session (1 225 830
@@ -40,12 +38,12 @@ positive gaps) against exact order statistics:
 P² assumes a smooth, roughly unimodal density and adapts five markers to it.
 Waiting times on a consolidated tape span six orders of magnitude with most of
 the mass in the first millisecond, so the markers sit in the wrong place and
-the estimate is off by 31x at the ninth decile. Taking logs first fixes the median and
-still fails at the shoulder. A histogram binned in log₁₀ tracks every quantile
-here to within a few percent, for 100 kB of state rather than 280 bytes —
-constant either way, which is the property that matters.
+the estimate is off by a factor of 31 at the ninth decile. Taking logs first
+fixes the median and still fails at the shoulder. A histogram binned in log₁₀
+tracks every quantile here to within a few percent, for 100 kB of state
+rather than 280 bytes; both are constant in the length of the stream.
 
-The general lesson: a bounded-memory sketch encodes an assumption about the
+A bounded-memory sketch encodes an assumption about the
 distribution's shape, and an arrival process on a market tape violates the
 usual one. Check a sketch against exact statistics on a real sample before
 trusting it, because it fails quietly and returns a plausible number.
@@ -221,7 +219,7 @@ function consume(
         speed > 0 ? replay_source(paths; pace = "recorded", speed = speed) :
         replay_source(paths; pace = "max")
 
-    # Persistence is lossless and always wins; the diagnostic is lossy and
+    # Persistence is lossless; the diagnostic is lossy and
     # yields. Reversing this would let a slow dashboard throttle acquisition,
     # which is the failure a live capture cannot afford.
     persist, diagnose = tee(source, 2; capacity = capacity, lossy = [false, true])

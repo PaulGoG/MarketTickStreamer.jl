@@ -1768,7 +1768,7 @@ hostname = "$(gethostname())"
         # HH:MM domain ticks
         vals, labels = M._hhmm_ticks(9.5, 16.0)
         @test labels[1] == "10:00" && labels[end] == "16:00"
-        # a whole day is labelled every four hours, which fits a half-width panel
+        # a whole day is labeled every four hours, which fits a half-width panel
         @test M._hhmm_ticks(0.0, 24.0)[2] ==
               ["00:00", "04:00", "08:00", "12:00", "16:00", "20:00", "24:00"]
         # Pooled waiting times: a closure between days is not a waiting time,
@@ -2265,7 +2265,7 @@ hostname = "$(gethostname())"
         end
     end
 
-    @testset "live E2E: early market close stops the session gracefully" begin
+    @testset "live E2E: early market close stops the session" begin
         mktempdir() do dir
             ws_port, rest_port = freeport(9151), freeport(9171)
             # one batch, then the connection idles: only the close guard can end

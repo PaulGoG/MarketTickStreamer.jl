@@ -23,7 +23,7 @@ function _days_from_files(paths::AbstractVector{<:AbstractString})
         m = match(PROCESSED_FILE, basename(p))
         m === nothing && throw(
             ArgumentError(
-                "not a processed day file (YYYY-MM-DD.csv|.arrow): $p — safesave " *
+                "not a processed day file (YYYY-MM-DD.csv|.arrow): $p; safesave " *
                 "backups and partial files are not read",
             ),
         )
@@ -157,8 +157,8 @@ busiest selected date at about [`BYTES_PER_PRINT`](@ref) per print.
 
 - `window = (open, close)`: keep the prints whose exchange time falls in
   `[open, close)` on the exchange-local clock of each day, in fractional
-  hours — `(9.5, 16.0)` is the US regular session, and a provider's
-  `regular_session` plugs in as it is. The bounds are resolved through `tz`
+  hours; `(9.5, 16.0)` is the US regular session, and a provider's
+  `regular_session` can be passed directly. The bounds are resolved through `tz`
   for every date, so they stay correct across daylight-saving transitions.
   `nothing` keeps the whole day. The `Config` form also accepts
   `window = :regular`, the provider's regular session.

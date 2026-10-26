@@ -13,7 +13,7 @@ independent consumers, both lossless, as a waiting-time estimator requires;
 termination by channel close, with no shutdown protocol of its own;
 single-pass accumulation, which bounds memory by the state of the estimator
 rather than by the length of the stream; and the population choice, every
-execution or price-forming prints only, made where it changes the answer.
+execution or price-forming prints only, made by the analysis.
 
 The estimator is minimal: an external pipeline brings its own; this file is
 about the plumbing.

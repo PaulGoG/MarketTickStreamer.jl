@@ -106,8 +106,8 @@ sampled this way are close to normal where calendar-time returns are heavy-taile
 Prints are ordered by exchange timestamp, not arrival. The print that
 completes a bar belongs to it. Its timestamp is the bar's `close_ns`, so
 consecutive bars satisfy `bars[i].close_ns <= bars[i+1].time_ns`. A trailing
-incomplete bar is dropped unless `keep_partial`, since its threshold — and
-therefore its comparability to the others — is not met.
+incomplete bar is dropped unless `keep_partial`: it has not reached its
+threshold and is not comparable to the others.
 
     tick_bars(trades, 500)                      # one bar per 500 prints
     tick_bars(filter_price_forming(trades), 500)  # price-forming prints only
@@ -149,8 +149,8 @@ price times size.
 
 This is the clock that survives changes of scale. It is invariant to splits,
 and roughly invariant to price-level drift, so a threshold chosen on one
-sample stays meaningful on another — the property neither [`tick_bars`](@ref)
-nor [`volume_bars`](@ref) has, and the reason dollar bars are the usual
+sample stays meaningful on another, which neither [`tick_bars`](@ref)
+nor [`volume_bars`](@ref) does; hence dollar bars are the usual
 default for cross-sample work.
 
 `value` is in the price's own units; no currency conversion is performed.
@@ -167,8 +167,8 @@ Collapse the prints that share an exchange timestamp into one [`Bar`](@ref)
 per instant: the matching event. A taker order filled against several
 resting orders is reported as one print per fill, all at the matching
 engine's single timestamp, so the print series is not the arrival process
-of orders — on a liquid crypto pair nine prints in ten follow their
-predecessor at a gap of exactly zero. The event series is: its `time_ns`
+of orders: on a liquid crypto pair nine prints in ten follow their
+predecessor at a gap of exactly zero. The event series is that process: its `time_ns`
 are the distinct instants, and the gap `bars[i+1].time_ns - bars[i].close_ns`
 is the waiting time between events.
 

@@ -233,9 +233,9 @@ end
 
 The Trade Reports of one IEX HIST capture (`.pcap.gz` as published, or the
 decompressed pcap/pcapng) as [`Trade`](@ref) records, in capture order. The
-feed is read off the IEX-TP protocol id — TOPS 1.5, TOPS 1.6 or DEEP 1.0,
-whose Trade Report is one and the same message — so the file name is never
-trusted. Timestamps are the matching engine's, nanoseconds since the epoch;
+feed is read off the IEX-TP protocol id (TOPS 1.5, TOPS 1.6 or DEEP 1.0,
+whose Trade Report is one and the same message), not from the file
+name. Timestamps are the matching engine's, nanoseconds since the epoch;
 the capture clock is not read.
 
 Each print carries `exchange = "V"` (IEX's market-centre code on the
@@ -247,9 +247,9 @@ sweep, `T` extended hours, `I` odd lot, `8` trade-through exempt, `X`
 single-price cross. A print with no flag has no condition.
 
 `symbols` restricts the output; `nothing` keeps every symbol. `broken`
-decides what a Trade Break does to the print it voids — `:drop` (default)
-omits it, `:mark` appends `"broken"`, `:keep` leaves it — the first two
-reading the file twice. `each_page` and `page_rows` stream the prints as in
+decides what a Trade Break does to the print it voids: `:drop` (default)
+omits it, `:mark` appends `"broken"`, `:keep` leaves it; the first two
+read the file twice. `each_page` and `page_rows` stream the prints as in
 [`itch50_trades`](@ref). The statistics count captured packets, IEX-TP
 segments with messages, message blocks, emitted prints, voided prints
 (Trade Breaks seen, under `:keep`), sequence gaps and duplicate segments,
@@ -457,9 +457,10 @@ case-insensitive; the version is whatever IEX lists for that day) into
 `dir/iex/`, resuming an interrupted transfer, verify it against the CRC-32C
 the file host announces (`x-goog-hash`), and return its path. `nothing`
 when IEX lists no files for the date, an error naming the feeds listed when
-the feed is not among them. A file already present whose size matches the
-index entry and whose CRC-32C matches the host's is reused; a verified
-mismatch deletes the file and fails.
+the feed is not among them. A file already present is reused when its size
+matches the index entry and its CRC-32C the host's, and fetched again
+otherwise; a fresh download that fails the CRC-32C check is deleted and the
+call fails.
 """
 function fetch_iex_hist(
     date::Date,
@@ -496,7 +497,7 @@ function fetch_iex_hist(
         if got_crc != want_crc
             rm(path; force = true)
             error(
-                "CRC-32C mismatch for $name: expected $want_crc, got $got_crc — " *
+                "CRC-32C mismatch for $name: expected $want_crc, got $got_crc; " *
                 "the download was discarded",
             )
         end

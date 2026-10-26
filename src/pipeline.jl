@@ -1,7 +1,7 @@
 # Session orchestration: wire a tick source to sinks and analysis taps, with
-# structured logging and graceful shutdown.
+# structured logging and orderly shutdown.
 
-# A log file holds plain text: CSI escape sequences (colour, cursor control) are removed.
+# A log file holds plain text: CSI escape sequences (color, cursor control) are removed.
 _strip_ansi(s) = replace(string(s), r"\e\[[0-9;?]*[ -/]*[@-~]" => "")
 
 """
@@ -30,8 +30,6 @@ function setup_logging(
         "warn" => Logging.Warn,
         "error" => Logging.Error,
     )[cfg.log_level]
-    # During a deliberate shutdown, transport-teardown errors surfacing from
-    # HTTP.jl internals (EOFError on a socket we closed) are expected noise.
     quiet(logger) = EarlyFilteredLogger(
         log -> !(shutting_down[] && startswith(string(log._module), "HTTP")),
         logger,
@@ -69,8 +67,8 @@ Fan one tick stream out to `n` independent consumers (e.g. persistence plus
 real-time analysis taps). Outputs close when `src` closes.
 
 Per-output overflow policy: a non-`lossy` output blocks the fan-out when
-full (backpressure — data is never silently dropped; use for persistence,
-which must always win). A `lossy` output drops the incoming tick instead
+full (backpressure: nothing is dropped; the setting for
+persistence). A `lossy` output drops the incoming tick instead
 when its buffer is full (use for analysis taps that must never stall the
 capture); drops are counted, reported via `on_drop(output_index, n_dropped)`
 when given, and warned on first occurrence.
@@ -98,14 +96,14 @@ function tee(
                     live[i] || continue
                     if !isopen(o)
                         live[i] = false
-                        @warn "tee output closed by its consumer — dropped from the fan-out" output =
+                        @warn "tee output closed by its consumer; dropped from the fan-out" output =
                             i
                         continue
                     end
                     if lossy[i] && _occupancy(o) >= capacity
                         dropped[i] += 1
                         dropped[i] == 1 &&
-                            @warn "lossy tee output saturated — dropping ticks" output =
+                            @warn "lossy tee output saturated; dropping ticks" output =
                                 i
                         on_drop === nothing || on_drop(i, dropped[i])
                     else
@@ -115,13 +113,13 @@ function tee(
                             # closed between the check and the put
                             e isa InvalidStateException || rethrow()
                             live[i] = false
-                            @warn "tee output closed by its consumer — dropped from the fan-out" output =
+                            @warn "tee output closed by its consumer; dropped from the fan-out" output =
                                 i
                         end
                     end
                 end
                 if !any(live)
-                    @error "every tee output is closed — fan-out stopped"
+                    @error "every tee output is closed; fan-out stopped"
                     break
                 end
             end
@@ -224,7 +222,7 @@ function _ensure_free_disk(cfg::Config)
     free = free_disk_gb(cfg.raw_dir)
     free < cfg.min_free_disk_gb && error(
         "only $(round(free; digits = 2)) GiB free on $(cfg.raw_dir), " *
-        "below limits.min_free_disk_gb = $(cfg.min_free_disk_gb) — not starting",
+        "below limits.min_free_disk_gb = $(cfg.min_free_disk_gb); not starting",
     )
     return nothing
 end
@@ -244,7 +242,7 @@ _session_raw_files(cfg::Config, sid::AbstractString) =
     acquire_session_lock(data_dir) -> lock
 
 One session per data tree: takes a PID-file lock at
-`<data_dir>/.session.lock` and throws with a precise message if another
+`<data_dir>/.session.lock` and throws if another
 live process already holds it: two backfills interleaving on one raw
 directory would corrupt both. Stale locks from dead processes are
 broken automatically; release with `close(lock)`.
@@ -254,7 +252,7 @@ function acquire_session_lock(data_dir::AbstractString)
     path = joinpath(data_dir, ".session.lock")
     pidlock = Pidfile.trymkpidlock(path; stale_age = 600.0)
     pidlock === false && error(
-        "another session already holds $path — one capture/backfill per data " *
+        "another session already holds $path; one capture/backfill per data " *
         "tree (stale locks from dead processes clear automatically)",
     )
     # `trymkpidlock` returns `Union{LockMonitor,Bool}`; the guard above settles
@@ -399,7 +397,7 @@ end
 """
     start_session_meta(cfg, sid; started_utc) -> String
 
-Write the sidecar at session START with `status = "running"` — an abruptly
+Write the sidecar at session start with `status = "running"`, so an abruptly
 killed process still leaves its provenance on disk.
 """
 start_session_meta(cfg::Config, sid::AbstractString; started_utc::DateTime) =
@@ -419,7 +417,7 @@ end
 
 Rewrite the running sidecar with the final status (`"completed"`,
 `"interrupted"` or `"failed"`), tick count, file list, and finish timestamp. The sidecar
-is a mutable status record by design — the safesave rule protects data
+is a mutable status record: the safesave rule protects data
 products, not status metadata.
 
 `ticks` counts the prints received and written to `raw/`. A session that
@@ -505,7 +503,8 @@ Run one complete live capture session:
 1. optional market-clock gate (`stream.require_market_open`),
 2. live WebSocket source → bounded channel,
 3. batched raw NDJSON persistence,
-4. graceful shutdown on Ctrl-C, session deadline, or stream termination.
+4. shutdown on Ctrl-C, market close, low disk, session deadline or stream
+   termination.
 
 Returns `(; ticks, raw_files)`. Blocks until the session ends. Logging is
 scoped to the call: the session runs under its own logger and the caller's
@@ -534,7 +533,7 @@ function _run_stream(
     provider === nothing && (provider = _provider_from_config(cfg))
     delay = feed_delay_ns(provider)
     delay > 0 &&
-        @info "delayed feed — market-hours guards shifted" delay_s = delay ÷ NS_PER_SEC
+        @info "delayed feed; market-hours guards shifted" delay_s = delay ÷ NS_PER_SEC
 
     mkpath(cfg.raw_dir)
     slock = acquire_session_lock(cfg.data_dir)
@@ -549,7 +548,7 @@ function _run_stream(
         # stop at; the session deadline is the only bound that applies.
         always_open(provider) &&
             (cfg.require_market_open || cfg.stop_at_market_close) &&
-            @info "venue trades continuously — market-hours guards do not apply"
+            @info "venue trades continuously; market-hours guards do not apply"
         if !always_open(provider) && (cfg.require_market_open || cfg.stop_at_market_close)
             clock = market_clock(provider)
             if !clock.is_open && cfg.require_market_open
@@ -557,12 +556,12 @@ function _run_stream(
                     # settle past the bell, plus the feed's intrinsic delay: on a
                     # delayed feed the first post-open data cannot arrive earlier.
                     wait_s = (rfc3339_to_ns(clock.next_open) + delay - now_ns()) / 1e9 + 10
-                    @info "market closed — waiting for open" next_open = clock.next_open hours =
+                    @info "market closed; waiting for open" next_open = clock.next_open hours =
                         round(wait_s / 3600; digits = 2)
                     sleep(max(wait_s, 0.0))
                     clock = market_clock(provider)          # refresh next_close for the new session
                 else
-                    @info "market closed — not streaming (set stream.wait_for_open to wait)" next_open =
+                    @info "market closed; not streaming (set stream.wait_for_open to wait)" next_open =
                         clock.next_open
                     return (; ticks = 0, raw_files = String[])
                 end
@@ -589,11 +588,11 @@ function _run_stream(
             @info "flushed batch" batch = n total = tot
             occ = _occupancy(session.channel)
             occ > 0.8 * cfg.channel_capacity &&
-                @warn "tick channel nearly full — sink is lagging the stream" occupancy =
-                    occ capacity = cfg.channel_capacity
+                @warn "tick channel nearly full; sink lagging" occupancy = occ capacity =
+                    cfg.channel_capacity
             f = free_disk_gb(cfg.raw_dir)
             if f < cfg.min_free_disk_gb
-                @error "free disk below limit — stopping session" free_gb =
+                @error "free disk below limit; stopping session" free_gb =
                     round(f; digits = 2)
                 stop!(session)
             end
@@ -668,10 +667,9 @@ Work is done one `(symbol, day)` at a time: its own raw part set, compacted
 as soon as that day finishes. Pages are flushed to disk as they arrive, so
 RAM stays bounded by one page and `limits.max_live_heap_mb`.
 
-That granularity is what makes `backfill.resume` mean anything on a long
-download. The skip test asks whether a day is already present under
-`processed/`, so a day must land there the moment it is complete and not
-before: a run killed after eight of twelve hours resumes at hour eight.
+`backfill.resume` depends on that granularity. The skip test asks whether a
+day is already present under `processed/`, so a day must land there the
+moment it is complete and not before: a run killed after eight of twelve hours resumes at hour eight.
 Compacting only at the end would leave a killed run with raw data that resume
 cannot see, and the rerun would start from nothing.
 
@@ -719,13 +717,12 @@ function _run_backfill(
         days = session_days(provider, cfg.backfill_start, cfg.backfill_end)
         for sym in cfg.symbols, day in days
             if cfg.backfill_resume && _processed_exists(cfg, sym, day)
-                @info "resume — already processed, skipping" symbol = sym day
+                @info "resume; already processed, skipping" symbol = sym day
                 continue
             end
             # One raw part set per (symbol, day), compacted the moment the day
-            # finishes. That is what makes `resume` survive a kill: the skip
-            # test reads `processed/`, so it can only be accurate if a day
-            # lands there as soon as it is complete and never before.
+            # finishes, which is what lets `resume` survive a kill (see the
+            # docstring).
             day_prefix = "$(sid)_$(sym)_$(day)"
             day_sink = open_raw_sink(cfg.raw_dir, day_prefix; max_mb = cfg.max_raw_file_mb)
             n = 0
@@ -791,7 +788,7 @@ function _run_backfill(
     catch e
         if e isa InterruptException
             status = "interrupted"
-            @info "interrupt — completed days are compacted; a rerun resumes" sid
+            @info "interrupt; completed days are compacted and a rerun resumes" sid
         else
             # The `finally` below finalizes the sidecar; without this the
             # provenance of a crashed run would read "completed".
@@ -818,9 +815,8 @@ end
 Run a command-line entry point's `main` with clean interrupt handling: SIGINT
 arrives as an `InterruptException` and exits without a stack trace.
 
-Delivery is best-effort under threads — the crash-only session lifecycle, not
-this wrapper, is what actually guarantees that an interrupted run leaves
-recoverable state. Shared by the scripts under `scripts/` and the worked
+Delivery is best-effort under threads; recoverable state after an interrupt
+rests on the crash-only session lifecycle, not on this wrapper. Shared by the scripts under `scripts/` and the worked
 examples so that every entry point behaves the same way at the terminal.
 
 # Example
@@ -835,7 +831,7 @@ function run_entrypoint(main::Function)
         main()
     catch e
         e isa InterruptException || rethrow()
-        println("\nInterrupted — exiting cleanly.")
+        println("\nInterrupted.")
     end
     return nothing
 end

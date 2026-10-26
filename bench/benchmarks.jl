@@ -96,8 +96,8 @@ suite["quality"] = BenchmarkGroup()
 suite["quality"]["session_report_10k"] =
     @benchmarkable(session_report([$RAW_FILE]), samples = 10, evals = 1,)
 
-# Run only when invoked as a script; the benchmarked functions log, and that
-# output would drown the progress output.
+# Run only when invoked as a script. Logging is muted: the benchmarked
+# functions log, and their records would drown the progress output.
 if abspath(PROGRAM_FILE) == @__FILE__
     println("Running benchmarks...")
     try

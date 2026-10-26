@@ -107,8 +107,8 @@ end
     market_clock(p) -> (; is_open, next_open, next_close)
 
 Query `/v2/clock` on the trading API. Timestamps are returned as the raw
-RFC 3339 strings Alpaca sends (display only — nothing downstream computes
-with them).
+RFC 3339 strings Alpaca sends; the session converts `next_open` and
+`next_close` with [`rfc3339_to_ns`](@ref) for the market-hours guards.
 """
 function market_clock(p::AlpacaProvider)
     resp = _get_with_retry("$(p.trading_base)/v2/clock", rest_headers(p); policy = p.rest)
@@ -129,9 +129,9 @@ description for one `tape` (`"A"`, `"B"`, `"C"`). `ticktype` is `"trade"` or
 `"quote"`.
 
 The same character carries different meanings on different tapes, and a
-vendor is free to re-map the raw CTA and UTP codes — this one delivers them
-unchanged — so the glossary is fetched from the provider that produced the
-data rather than transcribed into this package. What *is* held here is the
+vendor is free to re-map the raw CTA and UTP codes (this one delivers them
+unchanged), so the glossary is fetched from the provider that produced the
+data rather than transcribed into this package. The package holds only the
 much smaller [`NON_PRICE_CONDITIONS`](@ref) table of the codes that disqualify
 a print from a price path.
 
@@ -192,7 +192,7 @@ function parse_alpaca_quote(msg, recv_ns::Int64; symbol::AbstractString = "")
     )
 end
 
-# Bar frames reuse `c` for the CLOSING PRICE, not for conditions as trade and
+# Bar frames reuse `c` for the closing price, not for conditions as trade and
 # quote frames do. Mixing the two up is silent and produces plausible numbers,
 # so the field is read explicitly here and nowhere else.
 # The `b` channel carries one-minute bars stamped with the minute's opening
@@ -341,7 +341,7 @@ const FATAL_WS_CODES = (401, 402, 403, 404, 405, 406, 409, 410, 411)
 # server opens with {"T":"success","msg":"connected"}, we reply with auth,
 # then subscribe on {"T":"success","msg":"authenticated"}.
 #
-# Fatal protocol errors are carried out via a Ref and thrown AFTER
+# Fatal protocol errors are carried out via a Ref and thrown after
 # HTTP.WebSockets.open returns: exceptions thrown inside the handler cross
 # HTTP.jl's internal task boundary and may arrive wrapped (TaskFailedException
 # etc.), which would defeat the caller's `isa FatalStreamError` dispatch.

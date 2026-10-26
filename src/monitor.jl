@@ -1,10 +1,9 @@
 # Live in-terminal monitoring (attach mode): tail a session's raw NDJSON
-# part files from a separate read-only process and render a dashboard. Never
-# touches the producer, its logging, or its progress machinery — the monitor
-# can attach to and detach from a running live capture or backfill at any
-# time. The dashboard is text; with UnicodePlots loaded, the package extension
-# MarketTickStreamerUnicodePlotsExt adds the rate history and the per-symbol
-# bar chart.
+# part files from a separate read-only process and render a dashboard. It
+# shares nothing with the producer process, so it can attach to and detach
+# from a running live capture or backfill at any time. The dashboard is text;
+# with UnicodePlots loaded, the package extension MarketTickStreamerUnicodePlotsExt
+# adds the rate history and the per-symbol bar chart.
 
 """
     MonitorState
@@ -115,7 +114,7 @@ timestamp and lag, and per-symbol counts. With UnicodePlots loaded
 (`using UnicodePlots`) the counts become a bar chart and a rate-history plot
 is added; without it the dashboard is plain text.
 
-`from_start = true` ingests the whole existing file first (session totals;
+`from_start = true` ingests every existing part of the session first (session totals;
 costs one full read of the raw data); the default starts at the current end
 of file (activity since attach). `iterations` bounds the number of refreshes
 (`nothing` = run until interrupted). Returns the final `MonitorState`.

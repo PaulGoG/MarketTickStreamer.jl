@@ -36,9 +36,7 @@ The processed tree is keyed by symbol and day with no source dimension, so
 an imported day is filed where a capture of that day would be. A source
 therefore gets a data tree of its own, and the import refuses to write a
 (symbol, day) that already exists in `processed/` unless `replace = true`,
-which displaces the existing files into safesave backups. The day is
-`date`, or is read from the file name ([`itch50_date`](@ref),
-[`iex_hist_date`](@ref)) when not given.
+which displaces the existing files into safesave backups.
 """
 function run_import(
     cfg::Config,
@@ -148,14 +146,14 @@ function _run_import(
             keep_raw || foreach(f -> rm(f; force = true), files)
         end
         stats.truncated &&
-            @warn "the file ended inside a message — the day is incomplete" file =
+            @warn "the file ended inside a message; the day is incomplete" file =
                 basename(path)
         @info "imported" format file = basename(path) messages = stats.messages prints =
             total stored broken = stats.broken
     catch e
         if e isa InterruptException
             status = "interrupted"
-            @info "interrupt — what was compacted stays; the sidecar says so" sid
+            @info "interrupt; compacted output kept, sidecar marked interrupted" sid
         else
             status = "failed"
             rethrow()

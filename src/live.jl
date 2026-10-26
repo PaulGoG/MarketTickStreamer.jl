@@ -2,7 +2,10 @@
 # exponential-backoff reconnection and a hard session deadline.
 #
 # The producer feeds a bounded Channel{Trade}; if consumers stall, `put!`
-# blocks and TCP backpressure does the rest — no unbounded buffering.
+# blocks and TCP backpressure throttles the sender, so nothing is buffered
+# without bound. A stall longer than `stream.stale_timeout_s` is ended by the
+# watchdog instead, which severs the connection and lets the reconnect path
+# resume.
 
 """
     AbstractProvider
@@ -17,8 +20,7 @@ parsing. It overrides [`always_open`](@ref), [`session_days`](@ref) and
 
 The adapters that ship are `providers/alpaca.jl` (US equities, New York
 calendar, credentialed, closes overnight and at weekends) and
-`providers/binance.jl` (crypto spot, UTC calendar, public, never closes). They
-differ on every one of those axes.
+`providers/binance.jl` (crypto spot, UTC calendar, public, never closes).
 """
 abstract type AbstractProvider end
 
@@ -232,12 +234,8 @@ RestPolicy(cfg::Config) = RestPolicy(
 _backoff_delay(rng, base::Real, attempt::Integer, cap::Real) =
     min(base * 2.0^attempt, cap) * (0.5 + rand(rng))
 
-# GET with exponential-backoff retry on transient statuses (rate limiting,
-# server hiccups). Client errors other than 429 fail immediately. Shared by
-# every REST adapter; `Retry-After` is honored when the server sends it.
-# Requests are bounded by the caller's `RestPolicy` timeouts, and a transport
-# failure — refused connection, read timeout, broken stream — retries on the
-# same schedule.
+# HTTP statuses retried with backoff: rate limiting (429) and transient
+# server errors. Other client errors fail at once.
 const RETRYABLE_STATUS = (429, 500, 502, 503, 504)
 
 # Transport failures worth retrying: the connection could not be made, the
@@ -264,10 +262,10 @@ function _with_retry(f, policy::RestPolicy)
                 nothing
             delay = ra !== nothing ? ra : _backoff_delay(policy.rng, 1.0, attempt, Inf)
             if status
-                @warn "REST $(e.status) — backing off" attempt delay =
+                @warn "REST status $(e.status); retrying" attempt delay =
                     round(delay; digits = 1)
             else
-                @warn "REST transport failure — backing off" attempt delay =
+                @warn "REST transport failure; retrying" attempt delay =
                     round(delay; digits = 1) exception = e
             end
             sleep(min(delay, 60.0))
@@ -579,7 +577,7 @@ end
 
 Whether the venue never closes. `true` suppresses the market-hours guards:
 there is no open to wait for and no close to stop at, and a 24-hour venue
-asked for its `next_close` can only answer with a fiction. The session is then
+has no meaningful `next_close`. The session is then
 bounded by `limits.max_session_hours` alone.
 """
 always_open(::AbstractProvider) = false
@@ -633,7 +631,7 @@ historical_trade_count(
     kwargs...,
 ) = throw(
     ArgumentError(
-        "$(nameof(typeof(p))) has no countable historical tape: coverage_report checks a capture against Alpaca's consolidated tape; a Binance day is verified by its vendor checksum and the continuity of its trade ids",
+        "$(nameof(typeof(p))) has no countable historical tape; coverage_report supports Alpaca only (Binance days are verified by vendor checksum and trade-id continuity)",
     ),
 )
 
@@ -651,7 +649,7 @@ feed_delay_ns(::AbstractProvider) = Int64(0)
 """
     FatalStreamError(msg)
 
-A stream error that must NOT trigger reconnection (bad credentials,
+A stream error that must not trigger reconnection (bad credentials,
 connection-limit exceeded, invalid subscription). Aborts the session.
 """
 struct FatalStreamError <: Exception
@@ -687,9 +685,9 @@ LiveSession(channel, stop, ws, stats) = LiveSession(channel, stop, ws, stats, Re
 """
     stop!(s::LiveSession)
 
-Signal graceful shutdown: sets the stop flag and closes the underlying
-WebSocket, which unblocks the producer loop; the tick channel then closes,
-letting sinks drain and finish.
+Request shutdown: set the stop flag and close the underlying WebSocket,
+which unblocks the producer loop; the tick channel then closes and the sinks
+drain.
 """
 function stop!(s::LiveSession)
     s.stop[] = true
@@ -715,7 +713,7 @@ function stop!(s::LiveSession)
     return nothing
 end
 
-# Guard task: gracefully stop the session once the wall clock passes `stop_ns`
+# Guard task: `stop!` the session once the wall clock passes `stop_ns`
 # (ns since epoch). Shared by the market-hours guard and the session
 # deadline. Returns the task; it exits early if the session stops first.
 function _stop_at!(s::LiveSession, stop_ns::Int64, message::AbstractString)
@@ -735,7 +733,7 @@ end
 """
     schedule_close_stop!(s::LiveSession, close_ns; grace_s = 5.0) -> Task
 
-Spawn a guard task that gracefully [`stop!`](@ref)s the session once the
+Spawn a guard task that calls [`stop!`](@ref) on the session once the
 wall clock passes `close_ns` (ns since epoch, e.g. the market's
 `next_close`) plus `grace_s`. Without this, a streamer left unattended sits
 on a silent overnight connection until the session deadline.
@@ -744,7 +742,7 @@ function schedule_close_stop!(s::LiveSession, close_ns::Int64; grace_s::Real = 5
     return _stop_at!(
         s,
         close_ns + round(Int64, grace_s * NS_PER_SEC),
-        "market close reached — stopping session",
+        "market close reached; stopping session",
     )
 end
 
@@ -755,8 +753,8 @@ end
 Provider interface: run one connect→auth→subscribe→stream cycle, pushing
 normalized `Trade`s into `ch`. Must return on orderly close, throw
 [`FatalStreamError`](@ref) on non-retryable protocol errors, and any other
-exception on retryable transport failures. Implemented per provider
-(see `providers/alpaca.jl`).
+exception on retryable transport failures. Implemented by each provider
+(`providers/alpaca.jl`, `providers/binance.jl`).
 
 `on_quote` and `on_bar`, when given, receive normalized [`Quote`](@ref) and
 [`Bar`](@ref) values for the corresponding frames. Neither channel is
@@ -781,7 +779,7 @@ function spawn_watchdog(
     return Threads.@spawn begin
         while alive[] && !s.stop[]
             if time() - last_frame[] > stale_timeout_s
-                @warn "no frames for $(stale_timeout_s)s — closing stale connection"
+                @warn "stale connection; closing" stale_timeout_s
                 try
                     close(ws)
                 catch e
@@ -813,13 +811,12 @@ end
 Start the live producer task. Streams ticks into `session.channel` until the
 session deadline (`limits.max_session_hours`), a [`stop!`](@ref) call, a
 fatal protocol error, or reconnection exhaustion — whichever comes first.
-The channel is closed on exit so downstream consumers terminate cleanly.
+The channel is closed on exit, which ends downstream consumers' loops.
 
 `on_quote` and `on_bar` are handed normalized [`Quote`](@ref) and
 [`Bar`](@ref) values when those channels are subscribed to
-(`stream.channels`); neither is by default, and neither is persisted — a
-quote stream carries an order of magnitude more messages than the trade
-stream, which is a storage decision taken separately.
+(`stream.channels`); neither is by default, and neither is persisted
+(see [`Quote`](@ref)).
 
 `stop` lets the caller own the session's stop flag, which [`run_stream`](@ref)
 shares with its logger.
@@ -827,7 +824,7 @@ shares with its logger.
 Reconnects with jittered exponential backoff
 (`stream.reconnect_base_delay_s * 2^attempt`, capped at
 `stream.reconnect_max_delay_s`, the jitter drawn from a generator seeded by
-`rng.seed`); the attempt counter resets after any connection that actually
+`rng.seed`); the attempt counter resets after any connection that
 delivered data.
 """
 function live_source(
@@ -851,7 +848,7 @@ function live_source(
     _stop_at!(
         session,
         now_ns() + round(Int64, cfg.max_session_hours * 3600 * NS_PER_SEC),
-        "session deadline reached — stopping session",
+        "session deadline reached; stopping session",
     )
     Threads.@spawn begin
         attempt = 0

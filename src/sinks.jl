@@ -10,7 +10,7 @@
     trade_to_json(t::Trade) -> String
 
 Serialize a `Trade` to a single NDJSON line (no trailing newline). Timestamps
-stay Int64 nanoseconds — the round-trip through [`json_to_trade`](@ref) is
+stay Int64 nanoseconds, so the round-trip through [`json_to_trade`](@ref) is
 lossless.
 """
 trade_to_json(t::Trade) = JSON.json((
@@ -132,8 +132,8 @@ close_sink!(s::RawSink) = (flush(s.io); close(s.io); nothing)
 Consumer loop: drain `ch` into an in-memory batch and persist whenever the
 batch reaches `flush_max_ticks` or `flush_interval_s` elapses with pending
 data. Returns the total number of trades written. Terminates (after a final
-flush) once `ch` is closed and fully drained — closing the channel is the
-shutdown signal, so no locks or flags are needed.
+flush) once `ch` is closed and fully drained. Closing the channel is the
+shutdown signal; no lock or flag is involved.
 
 `on_flush(n_batch, n_total)` is called after each disk write (for logging).
 """
@@ -362,10 +362,9 @@ before [`compact_raw`](@ref) will stream to it (`spill_headroom`).
 The spill pass trades memory for scratch space, writing every input line back
 out once. `tempdir()` is the wrong home for that: on systemd distributions
 `/tmp` is a tmpfs sized at half of RAM, so spilling there writes the copy into
-RAM and, on an input larger than that, takes the machine down — the failure
-this guard exists to prevent. The default scratch location is therefore the
-directory holding `out_dir`, and the space is verified before the first line
-is read.
+RAM and, on an input larger than that, exhausts memory. The default scratch
+location is therefore the directory holding `out_dir`, and the space is
+verified before the first line is read.
 """
 const SPILL_HEADROOM = 1.1
 
@@ -394,7 +393,7 @@ group ([`check_live_heap`](@ref)).
 
 The spill pass writes a verbatim copy of the input, so it needs scratch space
 of the input's own size. `scratch_dir` places it; the default is the directory
-containing `out_dir`, **not** `tempdir()` — see [`SPILL_HEADROOM`](@ref). The
+containing `out_dir`, not `tempdir()` (see [`SPILL_HEADROOM`](@ref)). The
 free space is checked up front and compaction refuses to start without it.
 
 `footprint_factor` is the estimated in-memory size of the parsed input per
@@ -540,7 +539,7 @@ function _ensure_spill_space(
     gib(x) = round(x / 2^30; digits = 2)
     free < headroom * bytes && error(
         "spill compaction of $(gib(bytes)) GiB needs $(gib(headroom * bytes)) " *
-        "GiB of scratch space, but $(parent) has only $(gib(free)) GiB free — " *
+        "GiB of scratch space, but $(parent) has only $(gib(free)) GiB free; " *
         "pass scratch_dir to place it on another filesystem",
     )
     return nothing
@@ -614,7 +613,7 @@ function _compact_spill(
         Base.diskstat(parent).available;
         headroom = spill_headroom,
     )
-    @info "large input — using spill compaction" mib = round(bytes / 2^20; digits = 1) scratch =
+    @info "input over memory budget; spill compaction" mib = round(bytes / 2^20; digits = 1) scratch =
         parent
     written = String[]
     # The count is the closure's value: a variable reassigned inside it would
@@ -683,8 +682,8 @@ the oldest.
 If `write_fn` throws, the partial file is removed, `path` is left untouched
 and the exception propagates.
 
-These are the semantics of DrWatson's `safesave` — newest data canonical,
-prior results kept as numbered backups — without the dependency.
+These are the semantics of DrWatson's `safesave` (newest data canonical,
+prior results kept as numbered backups) without the dependency.
 """
 function _safesave(write_fn, path::AbstractString)
     base, ext = splitext(path)

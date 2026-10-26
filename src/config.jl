@@ -1,7 +1,6 @@
 # TOML configuration loading and validation.
 #
-# Everything tunable comes from the TOML configuration; nothing operational is
-# hardcoded. Credentials come from the environment file the configuration
+# Credentials come from the environment file the configuration
 # names, or from the process environment, and from nowhere else.
 
 """
@@ -81,9 +80,8 @@ Base.@kwdef struct Config
     non_price_conditions::Dict{String,Vector{String}}
     # [<provider>] endpoint roots
     endpoints::Dict{String,String}
-    # The provider's calendar — the clock that decides which date a print
-    # belongs to. Derived from the provider, not configurable: it is a
-    # property of the venue, not a preference.
+    # The provider's calendar, which decides the date a print is filed under;
+    # a property of the venue, hence not configurable.
     exchange_tz::TimeZone
 end
 
@@ -252,7 +250,8 @@ _draw_seed() = Int(rand(RandomDevice(), UInt64) >> 1)
 """
     _reject_unknown_keys(raw)
 
-Check the parsed TOML against `CONFIG_KEYS` and the known provider tables. Throws `ArgumentError` naming the offending table or key, so a misspelt
+Check the parsed TOML against `CONFIG_KEYS` and the known provider tables.
+Throws `ArgumentError` naming the offending table or key, so a misspelt
 entry cannot be silently ignored in favour of a default.
 """
 function _reject_unknown_keys(raw::AbstractDict)
@@ -694,7 +693,7 @@ function load_credentials!(; env_path::AbstractString)
     if isfile(env_path)
         Sys.isunix() &&
             (filemode(env_path) & 0o044) != 0 &&
-            @warn "credentials file is group/world-readable — consider `chmod 600`" env_path
+            @warn "credentials file is group- or world-readable; chmod 600 recommended" env_path
         DotEnv.load!(env_path; override = false)
     end
     key = get(ENV, "ALPACA_API_KEY_ID", "")

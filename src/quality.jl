@@ -1,9 +1,8 @@
 # Data-quality safeguards: duplicate removal and session auditing.
 #
 # Reconnections can double-deliver ticks and backfills can overlap live
-# captures; neither may silently contaminate the analysis layer. Likewise a
-# "successful" session with hidden gaps, out-of-order delivery, or clock skew
-# must be visible before any science is done on it.
+# captures; both are removed before the analysis layer. Gaps, out-of-order
+# delivery and clock skew are reported per session before it is analysed.
 
 # Identity of a tick for deduplication: provider id alone is not unique
 # across symbols/tapes, and id may be 0, so use the full print identity.
@@ -15,9 +14,9 @@ _tick_key(t::Trade) = (t.symbol, t.time_ns, t.id, t.price, t.size, t.exchange)::
 
 Sale-condition codes that disqualify a print from setting a price, keyed by
 tape: `"A"` and `"B"` are CTA-processed, `"C"` is UTP-processed, `"O"` is the
-OTC tape. The same character means different things on different tapes — the
-average price trade is `B` on CTA and `W` on UTP, where `B` is a bunched
-trade — which is why the lists are not shared.
+OTC tape. The same character means different things on different tapes (the
+average-price trade is `B` on CTA and `W` on UTP, where `B` is a bunched
+trade), so the lists are not shared.
 
 The lists for `A`, `B` and `C` are derived from the plans' own sale-condition
 matrices (CTS Pillar output specification 2.11b, UTP data feed services
@@ -44,10 +43,9 @@ precisely the official close.
 The `O` list is the provider's published one and has not been checked against
 a specification.
 
-This is not a per-field eligibility table — the plans track high/low,
+This is not a per-field eligibility table: the plans track high/low,
 open, last and volume eligibility separately, and a print may update some and
-not others. It answers one question, the one a price path needs answered: may
-this print set a price.
+not others. It answers only whether a print may set a price.
 """
 const NON_PRICE_CONDITIONS = Dict{String,Vector{String}}(
     "A" => ["B", "C", "H", "I", "M", "N", "P", "Q", "R", "U", "V", "Z", "4", "7", "9"],
@@ -70,13 +68,11 @@ no basis on which to exclude, and silently discarding prints on that ground
 would be the worse error; [`session_report`](@ref) counts what survives, so
 the effect stays visible.
 
-This is an analysis-time predicate. Capture is never filtered — the raw layer
-records every print the venue reported, and which subset constitutes "a
-trade" is a decision each analysis makes for itself. It is also not one
-decision: a price path wants price-forming prints only, whereas an arrival
-process or a waiting-time distribution counts every execution, odd lots and
-contingent trades included. Filtering the capture would foreclose the second
-question to answer the first.
+This is an analysis-time predicate; the raw layer records every print the
+venue reported. A price path wants price-forming prints only, whereas an
+arrival process or a waiting-time distribution counts every execution, odd
+lots and contingent trades included; filtering at capture would serve the
+first and foreclose the second.
 """
 function price_forming(t::Trade; non_price::AbstractDict = NON_PRICE_CONDITIONS)
     excluded = get(non_price, t.tape, nothing)
@@ -127,8 +123,8 @@ carries the flag.
 
 Worth reporting per capture because the round lot is neither 100 shares nor
 constant. Under the SEC Market Data Infrastructure rules it is tiered by
-share price — 100 shares at or below 250 USD, 40 up to 1000 USD, 10 up to
-10 000 USD, 1 above — and reassigned semiannually per symbol from that symbol's
+share price (100 shares at or below 250 USD, 40 up to 1000 USD, 10 up to
+10 000 USD, 1 above) and reassigned semiannually per symbol from that symbol's
 average close over an evaluation month, effective the first business day of
 May and of November.
 
@@ -137,11 +133,11 @@ population, silently changes membership at those dates. On a 251-day AAPL
 capture taken with this package, the lot fell from 100 to 40 shares on
 2026-05-01 and the median inter-arrival time of the price-forming population
 dropped by a factor of eight across the boundary, with no change in market
-behaviour. A symbol near a tier threshold can also oscillate: over the same
+behavior. A symbol near a tier threshold can also oscillate: over the same
 span ERIE went 100, 40, then 100 again inside eight months.
 
-Reporting it turns an invisible redefinition into an observable, and it costs
-one pass over prints already in memory.
+[`session_report`](@ref) reports it, at the cost of one pass over prints
+already in memory.
 """
 function observed_round_lot(trades::AbstractVector{Trade}; code::AbstractString = "I")
     lot = NaN
@@ -232,8 +228,8 @@ free_disk_gb(path::AbstractString) = Base.diskstat(path).available / 2^30
     check_live_heap(limit_mb; context = "") -> Nothing
 
 Config-gated RAM ceiling: if the live heap exceeds `limit_mb`, force a
-garbage collection; if it still exceeds the ceiling, fail loudly with a
-message naming `context` — a graceful stop beats an OOM kill. Call from
+garbage collection; if it still exceeds the ceiling, throw an error
+naming `context`, so the process stops before the OOM killer ends it. Call from
 long accumulation loops (backfill pages, compaction groups).
 """
 function check_live_heap(limit_mb::Real; context::AbstractString = "")
@@ -245,7 +241,7 @@ function check_live_heap(limit_mb::Real; context::AbstractString = "")
         "live heap $(round(live_mb; digits = 0)) MiB exceeds limits.max_live_heap_mb = " *
         "$(limit_mb)" *
         (isempty(context) ? "" : " during $context") *
-        " — stopping before the OS kills the process",
+        "; stopping before the OS kills the process",
     )
     return nothing
 end

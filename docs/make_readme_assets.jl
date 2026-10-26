@@ -8,8 +8,8 @@ what a reader sees is what the tool produces rather than a mock-up:
 
   * `session_diagnostic.png` — `save_session_figures`, downscaled only.
   * `replay.gif` — a paced replay drawn frame by frame from the same
-    `Channel{Trade}` a live session yields, which is the one claim a static
-    figure cannot show.
+    `Channel{Trade}` a live session yields, which a static figure cannot
+    show.
 
 The GIF is assembled with the system `ffmpeg`; without it the script skips
 that asset and says so rather than failing. Committed PNG/GIF are kept small:
@@ -30,8 +30,6 @@ const OKABE_BLUE = "#0072B2"
 const OKABE_VERMILION = "#D55E00"
 const OKABE_GREY = (:grey, 0.55)
 const GIF_WIDTH = 760       # px; frames are rendered larger and scaled down
-
-# ---------------------------------------------------------------- static
 
 """Render the package's own per-session diagnostic and keep the PNG."""
 function static_figure(raw_paths)
@@ -58,8 +56,6 @@ function static_figure(raw_paths)
     end
 end
 
-# ----------------------------------------------------------------- gif
-
 """
     replay_gif(raw_paths; n_frames = 120, fps = 12, hold_s = 2.0)
 
@@ -74,7 +70,7 @@ completed path is held for `hold_s` seconds before the loop restarts.
 """
 function replay_gif(raw_paths; n_frames::Int = 120, fps::Int = 12, hold_s::Real = 2.0)
     Sys.which("ffmpeg") === nothing &&
-        (@warn "ffmpeg not found — skipping replay.gif"; return nothing)
+        (@warn "ffmpeg not found; skipping replay.gif"; return nothing)
 
     # Drain once at maximum rate; the animation paces the *drawing*, which is
     # what a reader can see, rather than the wall-clock of the replay itself.

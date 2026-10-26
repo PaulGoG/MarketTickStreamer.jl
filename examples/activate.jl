@@ -10,8 +10,8 @@ tree rather than a registered snapshot.
 
 The examples carry their own environment because a consumer's dependencies are
 not the package's: `live_diagnostics.jl` needs `OnlineStats.jl`, which
-MarketTickStreamer does not depend on — it supplies the stream,
-not the estimators.
+MarketTickStreamer does not depend on: the package supplies the
+stream, not the estimators.
 """
 
 using Pkg

@@ -202,11 +202,10 @@ Serve the combined-stream endpoint, sending each of `frames` as its own
 `{"stream":…,"data":…}` message, then idling `linger_s` before closing.
 
 Connections past `fatal_after` receive an `{"error":…}` frame instead. A
-closed connection is a *retryable* condition — `live_source` reconnects, and
-the attempt counter resets after any connection that delivered data — so
-without a terminating condition the client would replay these frames until
-the session deadline. That is correct client behavior and it has to be
-scripted against, exactly as `MockPlan` does for Alpaca.
+closed connection is retryable (`live_source` reconnects, and the attempt
+counter resets after any connection that delivered data), so without a
+terminating condition the client would replay these frames until the session
+deadline; the error frame ends the session, as `MockPlan` does for Alpaca.
 """
 function start_mock_binance_ws(
     port::Integer;

@@ -21,8 +21,8 @@
 # The adapter differs from the equity one in three respects:
 #   * the venue never closes, so there are no market-hours guards and the
 #     calendar is UTC;
-#   * prices and quantities arrive as STRINGS, and timestamps in
-#     MILLISECONDS by default — this adapter asks for MICROSECONDS (REST
+#   * prices and quantities arrive as strings, and timestamps in
+#     milliseconds by default; this adapter asks for microseconds (REST
 #     header X-MBX-TIME-UNIT, stream parameter timeUnit) and reads either
 #     unit by magnitude, against this package's Int64 nanoseconds;
 #   * there is no consolidated tape and no sale conditions, but there is an
@@ -134,7 +134,7 @@ const BINANCE_MICROSECOND_FLOOR = 100_000_000_000_000
 _binance_ns(raw::Integer) =
     raw < BINANCE_MICROSECOND_FLOOR ? Int64(raw) * 1_000_000 : Int64(raw) * 1_000
 
-# The aggressor side, which is what `m` encodes: `m = true` means the BUYER
+# The aggressor side, which is what `m` encodes: `m = true` means the buyer
 # sat on the book as maker, so the seller crossed the spread and the print is
 # seller-initiated. Carried in `conditions` because it is the one piece of
 # per-print classification a crypto venue reports, and losing it would discard
@@ -174,15 +174,14 @@ the Alpaca adapter's, so the backfill pipeline is provider-agnostic:
 `each_page` streams pages and returns only the row count, otherwise every
 trade is accumulated.
 
-**Pagination is by trade id, not by time window.** Binance rejects a
+Pagination is by trade id, not by time window. Binance rejects a
 `startTime`/`endTime` pair spanning an hour or more, so the range is seeded
 with a single `startTime` request and then walked forward with
 `fromId = last id + 1` until a row's timestamp passes the end of the range.
 Walking hour-wide windows instead would issue 24 requests a day and still
 truncate any hour holding more than `page_limit` trades, silently.
-`page_limit` above the venue maximum of 1000 is rejected here, because the
-server would clamp it silently and the short-page termination rule would then
-end the walk after the first page.
+`page_limit` above the venue maximum of 1000 is rejected, because the server would
+clamp it silently.
 
 Rows are requested at microsecond resolution (`X-MBX-TIME-UNIT:
 MICROSECOND`), the clock of the bulk files, so a REST day and a bulk day
@@ -190,7 +189,7 @@ agree print for print; a server answering in milliseconds is read all the
 same. `startTime` is sent in milliseconds, which the venue accepts in either
 unit.
 
-**`aggTrade` is not the tape.** Binance aggregates executions that filled at
+`aggTrade` is not the tape: Binance aggregates executions that filled at
 one price from one taker order into a single row, so an aggregate trade is a
 taker order's fill, not an execution. Counts and inter-arrival times are
 therefore not comparable with a raw `trade` stream, and the choice belongs to
@@ -330,7 +329,7 @@ function _fetch_bulk(p::BinanceProvider, url::AbstractString, dir::AbstractStrin
     if got != want
         rm(path; force = true)
         error(
-            "checksum mismatch for $(basename(path)): expected $want, got $got — " *
+            "checksum mismatch for $(basename(path)): expected $want, got $got; " *
             "the download was discarded",
         )
     end
@@ -416,8 +415,8 @@ feeds, no pagination. `feed = "aggTrade"` is the population the REST
 backfill delivers; `feed = "trade"` is every execution, which no public
 REST endpoint can backfill. Prices, quantities, ids and the aggressor side
 map onto `Trade` as the REST rows do, and both sources are read at
-microsecond resolution — the dumps carry it since 2025-01-01, the REST
-rows are requested with it — so a day obtained either way is the same
+microsecond resolution (the dumps carry it since 2025-01-01, the REST
+rows are requested with it), so a day obtained either way is the same
 prints on the same clock.
 
 The zip and its `.CHECKSUM` are stored under `dest_dir/binance/SYMBOL/` and

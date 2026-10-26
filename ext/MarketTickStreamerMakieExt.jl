@@ -89,7 +89,7 @@ function _log_ticks(lo::Real, hi::Real)
 end
 
 # y-axis of a survival function: from the power of ten below the smallest
-# probability up to 1, so the floor of the curve sits on a labelled tick.
+# probability up to 1, so the floor of the curve sits on a labeled tick.
 function _survival_yaxis!(ax, pmin::Real)
     floor_pow10 = 10.0^floor(Int, log10(pmin) + 1e-9)
     ax.yticks = _log_ticks(floor_pow10, 1.0)
@@ -291,7 +291,7 @@ function MarketTickStreamer.overview_figure(
     # share their edges.
     fig = Figure(size = (1600, 1100))
 
-    # 1 — price on concatenated trading time
+    # Panel 1: price on concatenated trading time
     ax1 = Axis(
         fig[1, 1];
         xlabel = "Trading day",
@@ -342,7 +342,7 @@ function MarketTickStreamer.overview_figure(
         fontsize = ANNOTATION_FONTSIZE,
     )
 
-    # 2 — day × minute activity heatmap
+    # Panel 2: day × minute activity heatmap
     nmin = round(Int, 60 * session_len)
     act = zeros(Float64, nmin + 1, nd)
     for (i, (_, df)) in enumerate(days)
@@ -382,7 +382,7 @@ function MarketTickStreamer.overview_figure(
         ticks = _log_ticks(crange...),
     )
 
-    # 3 — pooled intra-session waiting-time CCDF
+    # Panel 3: pooled intra-session waiting-time CCDF
     continuous = session_len == 24
     dts, excluded = _pooled_gaps(days; continuous)
     pooling_note =
@@ -415,7 +415,7 @@ function MarketTickStreamer.overview_figure(
         )
     end
 
-    # 4 — pooled size CCDF
+    # Panel 4: pooled size CCDF
     sizes = Float64[]
     for (_, df) in days
         append!(sizes, Float64.(df.size))

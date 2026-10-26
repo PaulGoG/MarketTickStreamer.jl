@@ -23,7 +23,7 @@ function _replay_clock(trades::Vector{Trade}, clock::AbstractString)
         return "recv"
     end
     n_missing == 0 && return "recv"
-    @info "recording has no complete receive clock — replaying on exchange time" missing =
+    @info "recording has no complete receive clock; replaying on exchange time" missing =
         n_missing
     return "exchange"
 end
@@ -170,8 +170,8 @@ The replay clock is selected by `clock`:
   otherwise `"exchange"`, logged at `@info`. For processed files the choice is
   made on the first day and held.
 
-The channel closes when the recording is exhausted, which cleanly terminates
-any consumer written against [`run_sink!`](@ref)-style loops. An error while
+The channel closes when the recording is exhausted, which ends the
+loop of any consumer written like [`run_sink!`](@ref). An error while
 streaming a later day (an unreadable file, a missing receive clock) closes the
 channel with that error, and the consumer's iteration rethrows it.
 """

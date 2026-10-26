@@ -30,7 +30,7 @@ bulk_subdir = "bulk"             # vendor bulk files kept as downloaded (backfil
 flush_interval_s = 30.0          # sink flush interval [s]; > 0
 flush_max_ticks = 5000           # sink flush batch-size threshold; >= 1
 processed_format = "csv"         # one of: "csv" | "arrow"
-processed_compression = "none"   # Arrow record-batch compression; one of: "none" | "zstd" | "lz4"; "arrow" only
+processed_compression = "none"   # Arrow record-batch compression; one of: "none" | "zstd" | "lz4"; requires processed_format = "arrow"
 
 [limits]
 max_session_hours = 8.0          # hard stop for a live session [h]; > 0
@@ -89,18 +89,18 @@ rate_window_s = 300.0            # rate-history window [s]; >= refresh_s
 
 [logging]
 level = "info"                   # one of: "debug" | "info" | "warn" | "error"
-log_to_file = true
-log_dir = "../logs"              # relative to this file or absolute
+log_to_file = true               # tee the log to log_dir/<session id>.log
+log_dir = "../logs"              # session log directory; relative to this file or absolute
 
 [alpaca]
-# Endpoint roots — overridable for testing against a mock server.
+# Endpoint roots.
 # trading_base: "https://api.alpaca.markets" (live keys) | "https://paper-api.alpaca.markets" (paper keys)
 trading_base = "https://paper-api.alpaca.markets"
 data_base = "https://data.alpaca.markets"
 ws_base = "wss://stream.data.alpaca.markets/v2"
 
 [binance]
-# Endpoint roots — overridable for testing against a mock server.
+# Endpoint roots.
 rest_base = "https://api.binance.com"
 ws_base = "wss://stream.binance.com:9443"
 bulk_base = "https://data.binance.vision"

@@ -4,7 +4,7 @@
 #   julia scripts/visualize.jl --overview [--symbols A,B] [--from YYYY-MM-DD] [--to YYYY-MM-DD]
 #
 # Default mode: per-(symbol, day) session figures from raw NDJSON files (all
-# raw session files under the configured data dir when none are given), plus
+# raw session files under the configured raw directory when none are given), plus
 # the session QA table. --overview mode: multi-day figures per symbol from
 # the processed tree (price on trading time, activity heatmap,
 # intra-session waiting-time and size CCDFs).

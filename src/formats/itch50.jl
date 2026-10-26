@@ -472,7 +472,7 @@ function fetch_itch50(
     if got != expected
         rm(path; force = true)
         error(
-            "size mismatch for $(basename(path)): announced $expected bytes, got $got — " *
+            "size mismatch for $(basename(path)): announced $expected bytes, got $got; " *
             "the download was discarded",
         )
     end

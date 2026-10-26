@@ -38,7 +38,7 @@ function main()
         tape = get(opts, "tape", ""),
         keep_raw = !haskey(opts, "drop-raw"),
     )
-    println("Import complete — $(length(files)) processed file(s):")
+    println("Import complete; $(length(files)) processed file(s):")
     for f in files
         println("  ", f)
     end

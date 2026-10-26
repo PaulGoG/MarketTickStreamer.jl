@@ -5,8 +5,7 @@ Worked consumer: follow a running session from another process.
 
 This is the streaming consumer class of the manual's file contract. It is
 coupled to the capture through the session's raw files and sidecar only, so
-the capture never waits on it, never learns it exists, and keeps running if
-it falls behind or dies.
+the capture neither waits on it nor fails with it.
 
 It shows `follow_source` as a drop-in for `live_source` or `replay_source`,
 the `snapshots` convention applied to a followed stream (one row per minute of

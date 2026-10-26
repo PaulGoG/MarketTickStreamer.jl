@@ -1,5 +1,5 @@
 # Attach a live terminal dashboard to the most recent (or named) session by
-# tailing its raw NDJSON files. Read-only — safe to run beside a running
+# tailing its raw NDJSON files. Read-only, so it can run beside a
 # live capture or backfill; Ctrl-C detaches without affecting the session.
 #
 #   julia scripts/monitor.jl [session_prefix] [--config path] [--full] [--iterations N]
