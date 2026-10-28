@@ -251,7 +251,7 @@ end
 """
     iex_hist_trades(path; symbols = nothing, broken = :drop, tape = "", each_page = nothing,
                     page_rows = 100_000)
-        -> (; trades, feed, packets, segments, messages, prints, broken, gaps, duplicates,
+        -> (; trades, prints, feed, packets, segments, messages, broken, gaps, duplicates,
               truncated)
 
 The Trade Reports of one IEX HIST capture (`.pcap.gz` as published, or the
@@ -287,6 +287,7 @@ function iex_hist_trades(
     page_rows::Integer = 100_000,
 )
     page_rows >= 1 || throw(ArgumentError("page_rows must be at least 1, got $page_rows"))
+    pages = TradePages(each_page, page_rows)
     broken in (:drop, :mark, :keep) ||
         throw(ArgumentError("broken must be :drop, :mark or :keep, got $(repr(broken))"))
     tape isa Union{AbstractString,AbstractDict} || throw(
@@ -303,22 +304,10 @@ function iex_hist_trades(
     feed_id = Ref(0x0000)               # protocol of the first processed segment
     segments = Ref(0)
     messages = Ref(0)
-    prints = Ref(0)
     n_broken = Ref(0)
     gaps = Ref(0)
     duplicates = Ref(0)
     other_protocol = Ref(0)
-    acc = each_page === nothing ? Trade[] : nothing
-    page = Ref(Trade[])
-
-    function emit!(t::Trade)
-        push!(page[], t)
-        if length(page[]) >= page_rows
-            acc === nothing ? each_page(page[]) : append!(acc, page[])
-            page[] = Trade[]
-        end
-        return nothing
-    end
 
     function on_message(buf::Vector{UInt8}, m::Int, len::Int)
         len >= 1 || return nothing
@@ -342,7 +331,8 @@ function iex_hist_trades(
             ts = reinterpret(Int64, _le64(buf, m + 2))
             shares = _le32(buf, m + 18)
             price = reinterpret(Int64, _le64(buf, m + 22))
-            emit!(
+            push!(
+                pages,
                 Trade(
                     sym,
                     ts,
@@ -355,7 +345,6 @@ function iex_hist_trades(
                     id,
                 ),
             )
-            prints[] += 1
         elseif t == UInt8('B')
             len >= 38 || _iex_short(file_name, t, len)
             # In the other modes the voided set accounts for the break,
@@ -403,19 +392,17 @@ function iex_hist_trades(
         close(io)
     end
 
-    if !isempty(page[])
-        acc === nothing ? each_page(page[]) : append!(acc, page[])
-    end
+    _hand_over!(pages)
     feed = feed_id[] == 0x0000 ? "" : IEX_PROTOCOLS[feed_id[]]
     skipped = other_protocol[]
     skipped > 0 && @warn "IEX segments of another protocol skipped" feed skipped
     return (;
-        trades = acc === nothing ? Trade[] : acc,
+        trades = pages.kept,
+        prints = pages.prints,
         feed,
         packets = scan.packets,
         segments = segments[],
         messages = messages[],
-        prints = prints[],
         broken = n_broken[],
         gaps = gaps[],
         duplicates = duplicates[],

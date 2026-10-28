@@ -166,13 +166,13 @@ const BINANCE_REST_HEADERS = ["X-MBX-TIME-UNIT" => "MICROSECOND"]
 """
     historical_trades(p::BinanceProvider, symbol, start_date, end_date;
                       feed = "aggTrade", page_limit = 1000, rate_sleep_s = 0.1,
-                      on_page = nothing, each_page = nothing)
+                      each_page = nothing) -> (; trades, prints)
 
 Download aggregate trades for `symbol` over `[start_date, end_date]`
 (inclusive UTC dates) from `/api/v3/aggTrades`. Signature and semantics match
 the Alpaca adapter's, so the backfill pipeline is provider-agnostic:
-`each_page` streams pages and returns only the row count, otherwise every
-trade is accumulated.
+`each_page` receives the pages and `trades` is then empty, otherwise every
+trade is accumulated in `trades`.
 
 Pagination is by trade id, not by time window. Binance rejects a
 `startTime`/`endTime` pair spanning an hour or more, so the range is seeded
@@ -206,7 +206,6 @@ function historical_trades(
     feed::AbstractString = "aggTrade",
     page_limit::Integer = 1000,
     rate_sleep_s::Real = 0.1,
-    on_page = nothing,
     each_page = nothing,
 )
     feed == "aggTrade" || throw(
@@ -227,8 +226,7 @@ function historical_trades(
     start_ns = exchange_day_start_ns(p, start_date)
     stop_ns = exchange_day_start_ns(p, end_date + Day(1)) - 1
 
-    acc = each_page === nothing ? Trade[] : nothing
-    total = 0
+    pages = TradePages(each_page, page_limit)
     # Seed on time; continue on id. Mixing the two in one request is what the
     # documentation warns against, and what the hour limit applies to.
     query = Dict{String,String}(
@@ -252,19 +250,14 @@ function historical_trades(
             end
             push!(page, t)
         end
-        if !isempty(page)
-            total += length(page)
-            acc === nothing || append!(acc, page)
-            each_page === nothing || each_page(page)
-            on_page === nothing || on_page(length(page), total)
-        end
+        append!(pages, page)
         # A short page means the tape is exhausted, not that the range is.
         (done || length(rows) < page_limit) && break
         delete!(query, "startTime")
         query["fromId"] = string(last_id + 1)
         sleep(rate_sleep_s)
     end
-    return acc === nothing ? total : acc
+    return (; trades = pages.kept, prints = pages.prints)
 end
 
 # Vendor path segment of a feed's daily dump.
@@ -377,9 +370,7 @@ function _parse_bulk_csv(
     cols = feed == "aggTrade" ? 8 : 7
     day_lo = round(Int64, datetime2unix(DateTime(date))) * NS_PER_SEC
     day_hi = day_lo + 86_400 * NS_PER_SEC
-    acc = each_page === nothing ? Trade[] : nothing
-    page = Trade[]
-    total = 0
+    pages = TradePages(each_page, page_rows)
     first_line = true
     for line in eachline(IOBuffer(csv))
         isempty(line) && continue
@@ -401,23 +392,14 @@ function _parse_bulk_csv(
                 "$name: a row dated $(trading_date(t.time_ns; tz = tz"UTC")) in the file of $date",
             ),
         )
-        push!(page, t)
-        if length(page) >= page_rows
-            total += length(page)
-            acc === nothing ? each_page(page) : append!(acc, page)
-            page = Trade[]
-        end
+        push!(pages, t)
     end
-    if !isempty(page)
-        total += length(page)
-        acc === nothing ? each_page(page) : append!(acc, page)
-    end
-    return acc === nothing ? total : acc
+    return _hand_over!(pages)
 end
 
 """
     bulk_trades(p::BinanceProvider, symbol, date; feed = "aggTrade", dest_dir,
-                each_page = nothing, page_rows = 100_000) -> Vector{Trade} | Int
+                each_page = nothing, page_rows = 100_000) -> (; trades, prints, file)
 
 The trades of `symbol` on UTC `date` from the venue's daily dump
 ([`bulk_url`](@ref)), the route to a large corpus: one file per day, both
@@ -433,11 +415,12 @@ The zip and its `.CHECKSUM` are stored under `dest_dir/binance/SYMBOL/` and
 kept: they are the vendor's own record of the day. A stored file whose
 checksum verifies is reused; a download whose checksum does not match is
 deleted and the day fails with an [`IntegrityError`](@ref). A day the venue has not published (HTTP 404)
-returns nothing, logged at `@info` — the dump of a day appears on the
-following UTC day.
+returns no trades and `file = ""`, logged at `@info` — the dump of a day
+appears on the following UTC day.
 
-Rows are parsed in pages of `page_rows`; `each_page` streams them and
-returns only the count, otherwise the trades are accumulated. The vendor's
+Rows are parsed in pages of `page_rows`; `each_page` receives them and
+`trades` is then empty, otherwise the trades are accumulated in `trades`.
+`prints` counts them either way, and `file` is the path of the verified zip. The vendor's
 timestamps are milliseconds before 2025-01-01 and microseconds from then
 on; both are read.
 """
@@ -456,7 +439,7 @@ function bulk_trades(
     path = _fetch_bulk(p, url, joinpath(dest_dir, "binance", sym))
     if path === nothing
         @info "no bulk file published for this day" symbol = sym date feed
-        return each_page === nothing ? Trade[] : 0
+        return (; trades = Trade[], prints = 0, file = "")
     end
     archive = ZipReader(Mmap.mmap(path))
     entries = zip_names(archive)
@@ -468,15 +451,9 @@ function bulk_trades(
         ),
     )
     csv = zip_readentry(archive, only(entries))
-    return _parse_bulk_csv(
-        csv,
-        sym,
-        date,
-        feed;
-        each_page,
-        page_rows,
-        name = basename(path),
-    )
+    pages =
+        _parse_bulk_csv(csv, sym, date, feed; each_page, page_rows, name = basename(path))
+    return (; trades = pages.kept, prints = pages.prints, file = path)
 end
 
 # Binance spot streaming. There is no auth and no subscribe handshake — the

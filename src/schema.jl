@@ -191,3 +191,49 @@ function trading_date(ns::Int64; tz::TimeZone = tz"America/New_York")
     zdt = ZonedDateTime(unix2datetime(fld(ns, NS_PER_SEC)), tz"UTC")
     return Date(astimezone(zdt, tz))
 end
+
+# The prints of a reader on their way out. With `each_page` set, every `rows`
+# prints go to it as one page and none is kept; without it they accumulate in
+# `kept`, which the reader returns as `trades`. `prints` counts both ways, so
+# every reader returns the same `(; trades, prints, …)` whichever is used.
+mutable struct TradePages{F}
+    const each_page::F
+    const rows::Int
+    page::Vector{Trade}
+    const kept::Vector{Trade}
+    prints::Int
+end
+
+function TradePages(each_page, rows::Integer)
+    rows >= 1 || throw(ArgumentError("page size must be at least 1, got $rows"))
+    return TradePages(each_page, Int(rows), Trade[], Trade[], 0)
+end
+
+function Base.push!(p::TradePages, t::Trade)
+    p.prints += 1
+    if p.each_page === nothing
+        push!(p.kept, t)
+    else
+        push!(p.page, t)
+        length(p.page) >= p.rows && _hand_over!(p)
+    end
+    return p
+end
+
+# A page the source delivered whole, as a REST response does.
+function Base.append!(p::TradePages, page::Vector{Trade})
+    isempty(page) && return p
+    p.prints += length(page)
+    p.each_page === nothing ? append!(p.kept, page) : p.each_page(page)
+    return p
+end
+
+# Hand the page in progress to `each_page`, short or not; a reader calls it
+# once more when its source is exhausted. A fresh vector follows, since the
+# consumer may keep the one it was given.
+function _hand_over!(p::TradePages)
+    (p.each_page === nothing || isempty(p.page)) && return p
+    p.each_page(p.page)
+    p.page = Trade[]
+    return p
+end

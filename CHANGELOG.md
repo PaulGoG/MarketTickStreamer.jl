@@ -7,6 +7,15 @@ Notable changes to MarketTickStreamer. The format follows
 ## [Unreleased]
 
 ### Changed
+- **Breaking: one return shape for the trade readers.** Every reader returns
+  a `NamedTuple` whose `trades` holds the prints, empty when `each_page`
+  consumed them, and whose `prints` counts them, followed by the reader's
+  own statistics. `historical_trades` returns `(; trades, prints)` and
+  `bulk_trades` `(; trades, prints, file)`, where they returned a
+  `Vector{Trade}` or, under `each_page`, an `Int`; `itch50_trades` and
+  `iex_hist_trades` keep their fields, with `prints` now second. The
+  `on_page` progress callback of `historical_trades`, which nothing called,
+  is removed; `each_page` sees every page.
 - **Breaking: modes are `Symbol`s.** Keywords that choose among a fixed set
   of behaviors take a `Symbol`: `replay_source(...; pace = :recorded | :max,
   clock = :auto | :recv | :exchange)`, `compact_raw(...; format = :csv |

@@ -209,7 +209,7 @@ end
 """
     itch50_trades(path, date; symbols = nothing, broken = :drop, each_page = nothing,
                   page_rows = 100_000)
-        -> (; trades, messages, prints, broken, unresolved, symbols, truncated)
+        -> (; trades, prints, messages, broken, unresolved, symbols, truncated)
 
 The executions of one Nasdaq TotalView-ITCH 5.0 day file as [`Trade`](@ref)
 records, in file order. `date` is the session date (see [`itch50_date`](@ref));
@@ -236,7 +236,8 @@ the first two read the file twice, the voided ids being collected first.
 
 `each_page` receives pages of `page_rows` prints as they are decoded and the
 returned `trades` is then empty; without it the prints are accumulated in
-`trades`. `messages` counts every framed message, `prints` the emitted
+`trades`. Every reader of the package returns this shape: `trades`, then
+`prints`, then its own statistics. `messages` counts every framed message, `prints` the emitted
 prints, `broken` the prints voided by a Broken Trade message (under `:keep`,
 the Broken Trade messages seen), `unresolved` the `E` messages
 whose order was unknown (a file cut before its Add Order), `symbols` the
@@ -252,6 +253,7 @@ function itch50_trades(
     page_rows::Integer = 100_000,
 )
     page_rows >= 1 || throw(ArgumentError("page_rows must be at least 1, got $page_rows"))
+    pages = TradePages(each_page, page_rows)
     broken in (:drop, :mark, :keep) ||
         throw(ArgumentError("broken must be :drop, :mark or :keep, got $(repr(broken))"))
     wanted = symbols === nothing ? nothing : Set{String}(uppercase.(String.(symbols)))
@@ -265,21 +267,9 @@ function itch50_trades(
     selected = falses(65536)
     orders = Dict{UInt64,ItchOrder}()
     sizehint!(orders, 1 << 20)
-    prints = Ref(0)
     n_broken = Ref(0)
     unresolved = Ref(0)
     n_symbols = Ref(0)
-    acc = each_page === nothing ? Trade[] : nothing
-    page = Ref(Trade[])
-
-    function emit!(t::Trade)
-        push!(page[], t)
-        if length(page[]) >= page_rows
-            acc === nothing ? each_page(page[]) : append!(acc, page[])
-            page[] = Trade[]
-        end
-        return nothing
-    end
 
     function print!(
         locate,
@@ -305,7 +295,8 @@ function itch50_trades(
             push!(c, "broken")
             n_broken[] += 1
         end
-        emit!(
+        push!(
+            pages,
             Trade(
                 names[k],
                 day0 + Int64(ts),
@@ -318,7 +309,6 @@ function itch50_trades(
                 Int64(match_number),
             ),
         )
-        prints[] += 1
         return nothing
     end
 
@@ -436,13 +426,11 @@ function itch50_trades(
         close(io)
     end
 
-    if !isempty(page[])
-        acc === nothing ? each_page(page[]) : append!(acc, page[])
-    end
+    _hand_over!(pages)
     return (;
-        trades = acc === nothing ? Trade[] : acc,
+        trades = pages.kept,
+        prints = pages.prints,
         messages = scan.messages,
-        prints = prints[],
         broken = n_broken[],
         unresolved = unresolved[],
         symbols = n_symbols[],

@@ -2218,7 +2218,7 @@ hostname = "$(gethostname())"
             @test haskey(cmap, "B")                        # CTA average price
             @test haskey(condition_map(p; tape = "C"), "I")
             @test_throws ArgumentError condition_map(p; ticktype = "bars")
-            trades = historical_trades(
+            r = historical_trades(
                 p,
                 "AAPL",
                 Date(2026, 7, 29),
@@ -2226,7 +2226,8 @@ hostname = "$(gethostname())"
                 page_limit = 3,
                 rate_sleep_s = 0.0,
             )
-            @test length(trades) == 6                      # two pages followed
+            trades = r.trades
+            @test length(trades) == 6 && r.prints == 6     # two pages followed
             @test all(t -> t.symbol == "AAPL", trades)
             @test all(t -> t.recv_ns == 0, trades)         # backfill marker
             @test trades[1].time_ns % 10 == 9              # nanosecond digit survived
@@ -2611,7 +2612,7 @@ hostname = "$(gethostname())"
                 MOCK_BINANCE_EPOCH;
                 page_limit = 3,
                 rate_sleep_s = 0.0,
-            )
+            ).trades
             @test length(got) == per_day
             @test all(t -> trading_date(t.time_ns; tz = tz"UTC") == MOCK_BINANCE_EPOCH, got)
             @test issorted([t.time_ns for t in got])
@@ -2630,13 +2631,13 @@ hostname = "$(gethostname())"
                 MOCK_BINANCE_EPOCH + Day(1);
                 page_limit = 3,
                 rate_sleep_s = 0.0,
-            )
+            ).trades
             @test length(two) == 2 * per_day
             @test length(unique(trading_date(t.time_ns; tz = tz"UTC") for t in two)) == 2
 
-            # Streaming mode returns the count and retains nothing.
+            # Streaming mode counts the prints and retains none.
             pages = Vector{Int}()
-            n = historical_trades(
+            r = historical_trades(
                 p,
                 "BTCUSDT",
                 MOCK_BINANCE_EPOCH,
@@ -2645,7 +2646,8 @@ hostname = "$(gethostname())"
                 rate_sleep_s = 0.0,
                 each_page = pg -> push!(pages, length(pg)),
             )
-            @test n == per_day && sum(pages) == per_day && length(pages) > 1
+            @test r.prints == per_day && isempty(r.trades)
+            @test sum(pages) == per_day && length(pages) > 1
 
             # Only aggTrade can seek by time; asking for the raw feed must say so.
             @test_throws ArgumentError historical_trades(
@@ -2698,7 +2700,8 @@ hostname = "$(gethostname())"
 
     @testset "binance: bulk dump parsing" begin
         d = Date(2026, 1, 1)
-        parse_csv(text; feed = "aggTrade", kw...) = MarketTickStreamer._parse_bulk_csv(
+        # The reader's page state: `kept` holds the trades, `prints` counts them.
+        parse_pages(text; feed = "aggTrade", kw...) = MarketTickStreamer._parse_bulk_csv(
             Vector{UInt8}(codeunits(text)),
             "BTCUSDT",
             d,
@@ -2706,6 +2709,7 @@ hostname = "$(gethostname())"
             name = "x.csv",
             kw...,
         )
+        parse_csv(text; kw...) = parse_pages(text; kw...).kept
         us = 1_767_225_600_000_000 + 5_000_000           # 2026-01-01T00:00:05Z, µs
         ms = 1_767_225_600_000 + 5_000                   # the same instant, ms
         agg = "7,64000.5,0.25,10,12,$us,True,True\n8,64001.0,0.5,13,13,$(us + 1_000),False,True\n"
@@ -2733,8 +2737,8 @@ hostname = "$(gethostname())"
         @test tr[1].id == 10 && tr[1].size == 0.145 && tr[1].conditions == ["buy"]
         # Paging: the count comes back and every page reaches the callback.
         pages = Vector{Int}()
-        n = parse_csv(agg^3; each_page = pg -> push!(pages, length(pg)), page_rows = 4)
-        @test n == 6 && pages == [4, 2]
+        r = parse_pages(agg^3; each_page = pg -> push!(pages, length(pg)), page_rows = 4)
+        @test r.prints == 6 && isempty(r.kept) && pages == [4, 2]
         # A wrong column count and a row outside the day are errors, not silence.
         @test_throws IntegrityError parse_csv("7,64000.5,0.25,$us,True\n")
         @test_throws IntegrityError parse_csv(
@@ -2763,7 +2767,7 @@ hostname = "$(gethostname())"
                     MOCK_BINANCE_EPOCH;
                     feed = "kline",
                 )
-                bulk = bulk_trades(p, "BTCUSDT", MOCK_BINANCE_EPOCH; dest_dir = dest)
+                b = bulk_trades(p, "BTCUSDT", MOCK_BINANCE_EPOCH; dest_dir = dest)
                 rest = historical_trades(
                     p,
                     "BTCUSDT",
@@ -2771,17 +2775,19 @@ hostname = "$(gethostname())"
                     MOCK_BINANCE_EPOCH;
                     page_limit = 3,
                     rate_sleep_s = 0.0,
-                )
-                @test bulk == rest
+                ).trades
+                @test b.trades == rest && b.prints == length(rest)
                 zip =
                     joinpath(dest, "binance", "BTCUSDT", "BTCUSDT-aggTrades-2026-01-01.zip")
+                @test b.file == zip
                 @test isfile(zip) && isfile(zip * ".CHECKSUM") && !isfile(zip * ".partial")
                 # An interrupted download resumes from its partial file with a
                 # Range request and still passes the checksum.
                 full = read(zip)
                 rm(zip)
                 write(zip * ".partial", full[1:(length(full)÷2)])
-                @test bulk_trades(p, "BTCUSDT", MOCK_BINANCE_EPOCH; dest_dir = dest) == rest
+                @test bulk_trades(p, "BTCUSDT", MOCK_BINANCE_EPOCH; dest_dir = dest).trades ==
+                      rest
                 @test read(zip) == full && !isfile(zip * ".partial")
                 # The trades feed is the same tape under its own column layout.
                 tr = bulk_trades(
@@ -2790,16 +2796,16 @@ hostname = "$(gethostname())"
                     MOCK_BINANCE_EPOCH + Day(1);
                     feed = "trade",
                     dest_dir = dest,
-                )
+                ).trades
                 @test length(tr) == per_day
                 @test [t.id for t in tr] == collect((per_day+1):2per_day)
                 @test isfile(
                     joinpath(dest, "binance", "BTCUSDT", "BTCUSDT-trades-2026-01-02.zip"),
                 )
-                # Streaming returns the count; an unpublished day is empty and
-                # leaves no file behind.
+                # Streaming counts the prints and keeps none; an unpublished
+                # day is empty, names no file and leaves none behind.
                 pages = Vector{Int}()
-                n = bulk_trades(
+                r = bulk_trades(
                     p,
                     "BTCUSDT",
                     MOCK_BINANCE_EPOCH;
@@ -2807,16 +2813,17 @@ hostname = "$(gethostname())"
                     each_page = pg -> push!(pages, length(pg)),
                     page_rows = 3,
                 )
-                @test n == per_day && pages == [3, 3, 1]
+                @test r.prints == per_day && isempty(r.trades) && pages == [3, 3, 1]
                 gone = MOCK_BINANCE_EPOCH + Day(2)
-                @test isempty(bulk_trades(p, "BTCUSDT", gone; dest_dir = dest))
+                @test bulk_trades(p, "BTCUSDT", gone; dest_dir = dest) ==
+                      (; trades = Trade[], prints = 0, file = "")
                 @test bulk_trades(
                     p,
                     "BTCUSDT",
                     gone;
                     dest_dir = dest,
                     each_page = identity,
-                ) == 0
+                ).prints == 0
                 @test !isfile(
                     joinpath(
                         dest,
@@ -2830,7 +2837,7 @@ hostname = "$(gethostname())"
             end
             # A verified file is reused with the venue unreachable.
             p = BinanceProvider("aggTrade", base, "ws://unused", base, RestPolicy(1, 1, 0))
-            @test length(bulk_trades(p, "BTCUSDT", MOCK_BINANCE_EPOCH; dest_dir = dest)) ==
+            @test bulk_trades(p, "BTCUSDT", MOCK_BINANCE_EPOCH; dest_dir = dest).prints ==
                   per_day
             # A checksum that does not match discards the download and fails the day.
             rest_port = freeport(9881)

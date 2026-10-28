@@ -263,18 +263,17 @@ end
 """
     historical_trades(p, symbol, start_date, end_date;
                       feed = "sip", page_limit = 10_000, rate_sleep_s = 0.35,
-                      on_page = nothing, each_page = nothing)
+                      each_page = nothing) -> (; trades, prints)
 
 Download all trades for `symbol` in `[start_date, end_date]` (inclusive,
 exchange dates) from `/v2/stocks/{symbol}/trades`, following pagination
 tokens until exhausted. `rate_sleep_s` throttles between pages (free tier:
 200 requests/min). Backfilled records get `recv_ns = 0` — they never crossed
-the wire. `on_page(n_page, n_total)` is called per page for progress.
+the wire.
 
-By default all trades are accumulated and returned as a `Vector{Trade}`.
-With `each_page` set, each page's trades are handed to
-`each_page(::Vector{Trade})` instead and only the total row count is
-returned — memory stays bounded by one page regardless of the range.
+`trades` holds the prints and `prints` counts them. With `each_page` set,
+each page is handed to `each_page(::Vector{Trade})` as it arrives and
+`trades` is empty, so memory stays bounded by one page whatever the range.
 """
 function historical_trades(
     p::AlpacaProvider,
@@ -284,12 +283,10 @@ function historical_trades(
     feed::AbstractString = "sip",
     page_limit::Integer = 10_000,
     rate_sleep_s::Real = 0.35,
-    on_page = nothing,
     each_page = nothing,
 )
-    acc = each_page === nothing ? Trade[] : nothing
-    seen = 0
-    total = _each_trades_page(
+    pages = TradePages(each_page, page_limit)
+    _each_trades_page(
         p,
         symbol;
         start_str = ns_to_rfc3339(exchange_day_start_ns(p, start_date)),
@@ -298,12 +295,9 @@ function historical_trades(
         page_limit,
         rate_sleep_s,
     ) do page
-        seen += length(page)
-        acc === nothing || append!(acc, page)
-        each_page === nothing || each_page(page)
-        on_page === nothing || on_page(length(page), seen)
+        append!(pages, page)
     end
-    return acc === nothing ? total : acc
+    return (; trades = pages.kept, prints = pages.prints)
 end
 
 """

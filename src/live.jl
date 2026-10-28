@@ -167,16 +167,17 @@ session_days(::AbstractProvider, start_date::Date, end_date::Date) =
 
 """
     bulk_trades(p::AbstractProvider, symbol, date; feed, dest_dir,
-                each_page = nothing, page_rows = 100_000) -> Vector{Trade} | Int
+                each_page = nothing, page_rows = 100_000) -> (; trades, prints, file)
 
 The trades of `symbol` on exchange date `date` from the venue's daily bulk
 file, for a provider whose [`ProviderSpec`](@ref) lists `feed` in
 `bulk_feeds`. The file is downloaded into `dest_dir`, verified against the
 venue's checksum and kept there as the vendor's record of the day; a
 present, verified file is reused without a request. Rows are parsed in
-pages of `page_rows`: with `each_page` every page is passed to it and only
-the row count is returned, otherwise the trades are accumulated. A day the
-venue has not published yields no trades. Backfilled prints carry
+pages of `page_rows`: with `each_page` every page is passed to it and
+`trades` is empty, otherwise the trades are accumulated in `trades`; `prints`
+counts them either way and `file` is the vendor file read. A day the venue
+has not published yields no trades and `file = ""`. Backfilled prints carry
 `recv_ns = 0`.
 
 The default method throws: a venue without bulk files cannot be asked for

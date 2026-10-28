@@ -788,7 +788,7 @@ function _run_backfill(
                         feed = cfg.backfill_feed,
                         dest_dir = cfg.bulk_dir,
                         each_page = sink_page,
-                    )
+                    ).prints
                 else
                     historical_trades(
                         provider,
@@ -799,7 +799,7 @@ function _run_backfill(
                         page_limit = cfg.backfill_page_limit,
                         rate_sleep_s = cfg.backfill_rate_sleep_s,
                         each_page = sink_page,
-                    )
+                    ).prints
                 end
             finally
                 close_sink!(day_sink)
