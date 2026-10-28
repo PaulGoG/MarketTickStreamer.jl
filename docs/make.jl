@@ -20,6 +20,7 @@ makedocs(
         "Replay & Analysis Interfaces" => "replay.md",
         "Files & Provenance" => "files.md",
         "Unattended Operation" => "deployment.md",
+        "Migrating to 2.0" => "migration.md",
         "API Reference" => [
             "Acquisition and storage" => "api.md",
             "Providers" => "api_providers.md",

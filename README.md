@@ -31,7 +31,7 @@ and reproducibly.
 ├── Project.toml        # package environment and [compat]
 ├── activate.jl         # silent activation; one per environment (scripts/, test/, docs/, bench/, examples/)
 ├── config/config.toml  # every tunable
-├── src/                # the package: schema, config, sinks, quality, resample, corpus, replay, follow, monitor, rest, live, providers/, formats/, pipeline, import, diagnostics, figures
+├── src/                # the package: errors, schema, config, sinks, quality, resample, corpus, replay, follow, monitor, rest, live, providers/, formats/, pipeline, import, diagnostics, figures
 ├── ext/                # package extensions: figures (CairoMakie), terminal plots (UnicodePlots)
 ├── scripts/            # entry points: stream, backfill, import, compact, inventory, replay, monitor, visualize (own environment)
 ├── examples/           # worked consumers of the Channel{Trade} interface (own environment)
@@ -149,16 +149,17 @@ consumer can be developed offline (see `docs/src/replay.md`).
 
 ## Status
 
-Every component below works and is covered by the offline suite: unit tests
-and end-to-end runs against in-process mocks. The second column records
-verification beyond that.
+Feature complete and in maintenance mode from 2.0.0 (see
+[Maintenance](#maintenance)). Every component below works and is covered by
+the offline suite: unit tests and end-to-end runs against in-process mocks.
+The second column records verification beyond that.
 
 | Component | Verification beyond the suite |
 |---|---|
 | Live trade streaming (Alpaca IEX/SIP) |  |
 | Binance spot adapter (public, 24/7, UTC calendar, `trade` + `aggTrade`, microsecond timestamps) | validated against the live API |
 | Provider-agnostic config, calendar and trading-day dispatch |  |
-| Reconnection, stale-connection watchdog, graceful shutdown |  |
+| Reconnection, stale-connection watchdog, orderly shutdown |  |
 | Market-hours guards (wait-for-open, auto-stop at close, incl. half-day early close) |  |
 | Unattended operation (systemd user service + timer; SIGINT stop, wait-for-open, stop-at-close) | units verified with systemd-analyze on systemd 259 |
 | Delayed-feed handling (market-hours guards shifted by feed delay; tape tail captured) |  |
@@ -209,6 +210,35 @@ or removes or changes an exported name or its documented behavior is
 breaking and waits for a major release.
 
 Internals (`_`-prefixed or undocumented names) may change in a minor release.
+
+2.0.0 changed the Julia API in four places (modes as `Symbol`s, one return
+shape for the trade readers, package exception types, self-registering
+providers) and left the file contract and the scripts as they were; the
+configuration schema changed only in rejecting an unknown key in a provider
+table, as it rejects one in any other. The
+[migration page](https://PaulGoG.github.io/MarketTickStreamer.jl/stable/migration/)
+lists every change with its replacement.
+
+## Maintenance
+
+The package is feature complete: it captures, backfills, imports, stores,
+replays and follows trade tapes for the venues and vendor formats listed
+under [Status](#status), and its analysis interface is the `Channel{Trade}`
+and the file contract. From 2.0.0 it is maintained rather than extended.
+Maintenance covers
+
+- defects, fixed in patch releases;
+- changes on the venues' side (API versions, endpoints, wire and file
+  formats), followed in patch or minor releases;
+- dependency `[compat]` updates (Dependabot opens them weekly) and support
+  for new Julia releases, with the floor at 1.12;
+
+and only the latest major release receives them. New features are not
+planned. An adapter for another venue belongs in a package of its own: the
+provider interface registers it without a change here (see "Adding a
+provider" on the
+[providers page](https://PaulGoG.github.io/MarketTickStreamer.jl/stable/api_providers/)).
+Analysis methods belong downstream, consuming the channel or the files.
 
 ## Output
 
@@ -291,7 +321,8 @@ Citation metadata is in [`CITATION.cff`](CITATION.cff). BibTeX:
 │   └── config.toml         # every tunable
 ├── src/
 │   ├── MarketTickStreamer.jl     # module root: imports, exports, includes
-│   ├── schema.jl           # Trade struct; Int64-ns timestamps; RFC 3339 parsing
+│   ├── errors.jl           # exception types: MarketTickStreamerError and its subtypes
+│   ├── schema.jl           # Trade struct; Int64-ns timestamps; RFC 3339 parsing; reader pages
 │   ├── config.jl           # TOML loading/validation; .env credential loading
 │   ├── sinks.jl            # raw NDJSON sink (append-only, rolling); compaction
 │   ├── quality.jl          # dedup, session QA report, disk-space probe,
@@ -350,7 +381,7 @@ Citation metadata is in [`CITATION.cff`](CITATION.cff). BibTeX:
 │   ├── activate.jl         # silent environment activation
 │   ├── make.jl             # Documenter build → docs/build/
 │   ├── make_readme_assets.jl  # regenerate the figures shown above, from a capture
-│   └── src/                # manual: index, architecture, usage, replay, files, deployment, API
+│   └── src/                # manual: index, architecture, usage, replay, files, deployment, migration, API
 │       └── assets/         # the rendered figures the README and manual show
 ├── .github/
 │   ├── dependabot.yml      # weekly dependency updates: julia, github-actions

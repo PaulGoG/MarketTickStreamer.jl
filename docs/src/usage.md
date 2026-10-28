@@ -51,7 +51,7 @@ package itself depends on neither.
 
 | Key | Meaning |
 | --- | --- |
-| `name` | Provider adapter. One of: `"alpaca"` (US equities, credentialed), `"binance"` (crypto spot, public). |
+| `name` | Provider adapter. One of: `"alpaca"` (US equities, credentialed), `"binance"` (crypto spot, public), or the name of an adapter registered by another package (see the providers page of the API reference). |
 | `feed` | Live feed. Binance: `"trade"` or `"aggTrade"`. Alpaca: one of `"iex"` (real-time, single venue, 30 symbols on the free tier), `"delayed_sip"` (consolidated tape, 15 minutes late, free), `"sip"` (real-time consolidated, paid). |
 
 On the free tier `delayed_sip` is the scientifically stronger choice: it is
@@ -202,7 +202,8 @@ sequences, so a killed session still leaves a readable tail.
 ## `[alpaca]`
 
 Endpoint roots, overridable so the suite can point the whole pipeline at an
-in-process mock server.
+in-process mock server. A key not listed here is rejected, in this table as
+in every other.
 
 | Key | Default |
 | --- | --- |
@@ -233,7 +234,7 @@ Two archives publish one file per trading day holding every symbol, and
 raw sink, compaction and sidecar as a backfill, so an imported day is
 queried, replayed and resampled like a captured one.
 
-**Nasdaq TotalView-ITCH 5.0** (`format = "itch50"`): the full-day binary
+**Nasdaq TotalView-ITCH 5.0** (`format = :itch50`): the full-day binary
 files of `emi.nasdaq.com/ITCH/`, 3.5–18 GB gzipped, 0.3–1.4 × 10⁹ messages,
 about 10 M prints. [`itch50_trades`](@ref) prices every displayed execution
 off the order book it keeps, emits the printable executions-with-price, the
@@ -246,7 +247,7 @@ for an odd lot against the symbol's round lot. `"I"` is the condition the
 SIP gives the same execution, so `price_forming` treats both alike. The
 session date comes from the file name.
 
-**IEX HIST** (`format = "iex"`): IEX's T+1 packet captures of its TOPS or
+**IEX HIST** (`format = :iex`): IEX's T+1 packet captures of its TOPS or
 DEEP multicast feed, 0.5–21 GB gzipped. [`iex_hist_trades`](@ref) walks the
 pcap or pcapng container, the IEX-TP segments and their messages, decodes
 every Trade Report, and files it with `exchange = "V"`, the trade id, and

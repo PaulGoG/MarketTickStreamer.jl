@@ -54,6 +54,14 @@ states what changed and why. No attribution trailers, generated footers or
 tool identifiers in commits or pull requests. A pull request states the
 change, how it was verified, and what is still open.
 
+## Scope
+
+The package is feature complete and in maintenance mode (README,
+"Maintenance"). A pull request that fixes a defect, follows a change on a
+venue's side or updates a dependency is welcome. New features are not taken;
+an adapter for another venue is published as a package of its own against
+the provider interface, which registers it without a change here.
+
 ## Versioning
 
 User-visible changes go under `[Unreleased]` in `CHANGELOG.md`. A change to

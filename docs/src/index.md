@@ -27,6 +27,12 @@ could not be audited independently of the method under test.
 
 ## Status
 
+Feature complete and in maintenance mode from 2.0.0: defects, changes on
+the venues' side and new Julia and dependency releases are followed; new
+features are not planned. Another venue is added by an adapter in a package
+of its own ([providers](api_providers.md)). Code written against 1.x is
+ported with the [migration page](migration.md).
+
 Validated against the live consolidated tape on 2026-08-06: a three-hour
 capture of 3.17 M prints across 24 symbols, 533 MB of raw NDJSON, with no
 duplicate, out-of-order or missing record. Per-symbol coverage was
@@ -79,6 +85,8 @@ that project copies `config/config.toml` and passes its own path to
 - [Files & Provenance](files.md) — the on-disk contract: raw parts,
   sidecars, processed day files and vendor files, for a consumer in any
   language.
+- [Migrating to 2.0](migration.md) — the four API changes of 2.0 and their
+  replacements.
 - API reference — the public functions and types:
   [acquisition and storage](api.md), [providers](api_providers.md),
   [analysis interfaces](api_analysis.md).
