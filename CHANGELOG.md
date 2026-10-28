@@ -6,6 +6,10 @@ Notable changes to MarketTickStreamer. The format follows
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-10-28
+
+The two capture scripts take their configuration the way the others do.
+
 ### Added
 - `scripts/stream.jl` and `scripts/backfill.jl` take `--config <path>`, as
   the other scripts do; the configuration path as their only argument still
@@ -799,7 +803,8 @@ against the historical SIP tape.
 - An offline test suite driven by an in-process mock of the Alpaca REST and
   WebSocket APIs, with Aqua static quality assurance.
 
-[Unreleased]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v2.0.1...HEAD
+[2.0.1]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v1.1.0...v2.0.0
 [1.1.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.8.0...v1.0.0
