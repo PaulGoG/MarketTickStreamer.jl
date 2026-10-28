@@ -1,6 +1,6 @@
 name = "MarketTickStreamer"
 uuid = "57360e3f-416d-4026-814a-7f453c6dc1fa"
-version = "2.0.0"
+version = "2.0.1-DEV"
 authors = ["Paul-Adrian Gogîță"]
 
 [deps]
