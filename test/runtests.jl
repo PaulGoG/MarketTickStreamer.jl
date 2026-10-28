@@ -263,6 +263,8 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             rejected(base * "[limits]\nchannel_capacity = 2.5\n")
             rejected("[stream]\nsymbols = \"A\"\n")
             rejected(base * "[alpaca]\ndata_base = 8080\n")
+            rejected(base * "[alpaca]\nrest_base = \"http://x\"\n")   # a Binance key
+            rejected(base * "[kraken]\nrest_base = \"http://x\"\n")   # no such provider
             # bounds
             rejected(base * "reconnect_max_retries = -1\n")
             rejected(base * "reconnect_base_delay_s = 2.0\nreconnect_max_delay_s = 1.0\n")
@@ -1948,9 +1950,25 @@ hostname = "$(gethostname())"
             )
             chmod(joinpath(dir, "conf", "keys.env"), 0o600)
             withenv("ALPACA_API_KEY_ID" => nothing, "ALPACA_SECRET_KEY" => nothing) do
-                @test load_credentials!(load_config(p)) ==
-                      ("key-from-file", "secret-from-file")
+                @test load_credentials!(load_config(p)) == Dict(
+                    "ALPACA_API_KEY_ID" => "key-from-file",
+                    "ALPACA_SECRET_KEY" => "secret-from-file",
+                )
             end
+            # What is missing is named, as a field and in the message.
+            rm(joinpath(dir, "conf", "keys.env"))
+            withenv("ALPACA_API_KEY_ID" => "k", "ALPACA_SECRET_KEY" => nothing) do
+                err = try
+                    load_credentials!(load_config(p))
+                catch e
+                    e
+                end
+                @test err isa CredentialError && err.names == ["ALPACA_SECRET_KEY"]
+                @test occursin("ALPACA_SECRET_KEY", sprint(showerror, err))
+            end
+            # A public provider asks for nothing and reads no file.
+            @test load_credentials!(String[]; env_path = "/nonexistent") ==
+                  Dict{String,String}()
         end
         # The shipped configuration is the working one in a clone, where its
         # relative paths land in the repository, and a template elsewhere.
@@ -2054,7 +2072,11 @@ hostname = "$(gethostname())"
                         log_to_file = true,
                     ),
                 )
-                provider = MarketTickStreamer.make_provider(Val(:alpaca), cfg, "k", "s")
+                provider =
+                    withenv("ALPACA_API_KEY_ID" => "k", "ALPACA_SECRET_KEY" => "s") do
+                        MarketTickStreamer.make_provider(Val(:alpaca), cfg)
+                    end
+                @test provider.key == "k" && provider.secret == "s"
                 before = Base.CoreLogging.global_logger()
                 run_backfill(cfg; provider)
                 @test Base.CoreLogging.global_logger() === before
@@ -2495,8 +2517,10 @@ hostname = "$(gethostname())"
         @test_throws ArgumentError provider_spec("kraken")
         @test provider_spec("alpaca").tz == tz"America/New_York"
         @test provider_spec("binance").tz == tz"UTC"
-        @test provider_spec("alpaca").needs_credentials
-        @test !provider_spec("binance").needs_credentials
+        @test provider_spec("alpaca").credential_keys ==
+              ["ALPACA_API_KEY_ID", "ALPACA_SECRET_KEY"]
+        @test isempty(provider_spec("binance").credential_keys)
+        @test MarketTickStreamer.registered_providers() == ["alpaca", "binance"]
 
         bp = BinanceProvider("aggTrade", "http://x", "ws://x")
         ap = AlpacaProvider("k", "s", "sip", "", "", "")
@@ -2535,14 +2559,62 @@ hostname = "$(gethostname())"
         # with a value widens every caller's inference and leaves each
         # downstream provider call with a no-matching-method branch.
         cfg_now = load_config()
-        @test_throws ArgumentError MarketTickStreamer.make_provider(
-            Val(:kraken),
-            cfg_now,
-            "",
-            "",
-        )
+        @test_throws ArgumentError MarketTickStreamer.make_provider(Val(:kraken), cfg_now)
         @test Base.infer_return_type(MarketTickStreamer._provider_from_config, (Config,)) ==
               Union{AlpacaProvider,BinanceProvider}
+    end
+
+    @testset "provider registry: an adapter defined outside the package" begin
+        # Defining provider_spec for a new name registers it: the
+        # configuration accepts the name and its table, the session layer
+        # constructs it, and nothing in the package is edited.
+        @eval begin
+            struct ToyProvider <: MarketTickStreamer.AbstractProvider
+                base::String
+                token::String
+            end
+            MarketTickStreamer.provider_spec(::Val{:toy}) =
+                MarketTickStreamer.ProviderSpec(;
+                    feeds = ["ticks"],
+                    backfill_feeds = ["ticks"],
+                    tz = tz"UTC",
+                    credential_keys = ["TOY_TOKEN"],
+                    endpoint_keys = ["base"],
+                    max_page_limit = 100,
+                    regular_session = (0.0, 24.0),
+                    price_unit = "USD",
+                    size_unit = "units",
+                    timestamp_unit = "nanosecond",
+                )
+            MarketTickStreamer.make_provider(::Val{:toy}, cfg::Config) =
+                ToyProvider(cfg.endpoints["base"], load_credentials!(cfg)["TOY_TOKEN"])
+        end
+        @test MarketTickStreamer.registered_providers() == ["alpaca", "binance", "toy"]
+        mktempdir() do dir
+            p = joinpath(dir, "toy.toml")
+            toml =
+                "[provider]\nname = \"toy\"\nfeed = \"ticks\"\n" *
+                "[stream]\nsymbols = [\"X\"]\n[toy]\nbase = \"http://toy\"\n" *
+                "[credentials]\nenv_file = \"absent.env\"\n"
+            write(p, toml)
+            cfg = load_config(p)
+            @test cfg.provider == "toy" && cfg.feed == "ticks"
+            @test cfg.endpoints == Dict("base" => "http://toy")
+            withenv("TOY_TOKEN" => nothing) do
+                @test_throws CredentialError MarketTickStreamer._provider_from_config(cfg)
+            end
+            withenv("TOY_TOKEN" => "t0k") do
+                prov = MarketTickStreamer._provider_from_config(cfg)
+                @test prov isa ToyProvider &&
+                      prov.base == "http://toy" &&
+                      prov.token == "t0k"
+            end
+            # Its table is checked against its own endpoint keys.
+            write(p, replace(toml, "base = " => "bsae = "))
+            @test_throws ArgumentError load_config(p)
+            write(p, replace(toml, "feed = \"ticks\"" => "feed = \"trades\""))
+            @test_throws ArgumentError load_config(p)
+        end
     end
 
     @testset "binance: frame and REST parsing" begin

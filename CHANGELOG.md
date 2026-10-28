@@ -6,7 +6,26 @@ Notable changes to MarketTickStreamer. The format follows
 
 ## [Unreleased]
 
+### Added
+- `MarketTickStreamer.registered_providers()` lists the provider names a
+  configuration may select. Defining `provider_spec(::Val{:name})` in
+  another package registers an adapter: `load_config` accepts the name and
+  its `[name]` table, and the session runners construct it through
+  `make_provider`, with no change to this package. The providers page of the
+  manual shows a skeleton adapter.
+
 ### Changed
+- **Breaking: the provider interface is open.** `ProviderSpec` is built with
+  keywords and gains `credential_keys`, the environment variables the
+  adapter reads, and `endpoint_keys`, the keys of its configuration table;
+  `needs_credentials` is gone, being `!isempty(credential_keys)`.
+  `make_provider(::Val{name}, cfg)` drops the `key` and `secret` arguments:
+  an adapter that needs credentials reads them with `load_credentials!`,
+  which now returns a `Dict{String,String}` keyed by variable name
+  (`load_credentials!(names; env_path)` for an explicit list).
+  `KNOWN_PROVIDERS` is replaced by `registered_providers()`. A key in
+  `[alpaca]` or `[binance]` other than the adapter's endpoint roots is
+  rejected, as an unknown key in any other table is.
 - **Breaking: one return shape for the trade readers.** Every reader returns
   a `NamedTuple` whose `trades` holds the prints, empty when `each_page`
   consumed them, and whose `prints` counts them, followed by the reader's

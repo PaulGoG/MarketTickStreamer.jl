@@ -105,8 +105,8 @@ const DEFAULT_CONFIG = joinpath(PROJECT_ROOT, "config", "config.toml")
 _installed_in_depot() =
     any(d -> startswith(PROJECT_ROOT, joinpath(d, "packages")), DEPOT_PATH)
 
-# Keys accepted in each configuration table. Provider tables (KNOWN_PROVIDERS)
-# hold endpoint roots and accept any string-valued key.
+# Keys accepted in each configuration table. A table named after a registered
+# provider holds string values under the keys of its spec's `endpoint_keys`.
 const CONFIG_KEYS = Dict{String,Vector{String}}(
     "provider" => ["name", "feed"],
     "stream" => [
@@ -254,11 +254,13 @@ _draw_seed() = Int(rand(RandomDevice(), UInt64) >> 1)
 """
     _reject_unknown_keys(raw)
 
-Check the parsed TOML against `CONFIG_KEYS` and the known provider tables.
-Throws `ArgumentError` naming the offending table or key, so a misspelt
-entry cannot be silently ignored in favour of a default.
+Check the parsed TOML against `CONFIG_KEYS` and the tables of the registered
+providers ([`registered_providers`](@ref)), each against its spec's
+`endpoint_keys`. Throws `ArgumentError` naming the offending table or key, so
+a misspelt entry cannot be silently ignored in favor of a default.
 """
 function _reject_unknown_keys(raw::AbstractDict)
+    providers = registered_providers()
     for (name, value) in raw
         if haskey(CONFIG_KEYS, name)
             value isa AbstractDict || throw(ArgumentError("[$name] must be a table"))
@@ -270,14 +272,20 @@ function _reject_unknown_keys(raw::AbstractDict)
                     ),
                 )
             end
-        elseif name in KNOWN_PROVIDERS
+        elseif name in providers
             value isa AbstractDict || throw(ArgumentError("[$name] must be a table"))
+            known = provider_spec(name).endpoint_keys
             for (key, v) in value
+                key in known || throw(
+                    ArgumentError(
+                        "unknown config key $name.$key; known keys: $(join(known, ", "))",
+                    ),
+                )
                 v isa AbstractString ||
                     throw(ArgumentError("$name.$key must be a string, got $(repr(v))"))
             end
         else
-            tables = sort!([collect(keys(CONFIG_KEYS)); collect(KNOWN_PROVIDERS)])
+            tables = sort!([collect(keys(CONFIG_KEYS)); providers])
             throw(
                 ArgumentError(
                     "unknown config table [$name]; known tables: $(join(tables, ", "))",
@@ -681,30 +689,42 @@ function _resolve_config_date(spec::AbstractString, key::AbstractString, referen
     return d
 end
 
-load_credentials!(cfg::Config) = load_credentials!(; env_path = cfg.env_file)
+load_credentials!(cfg::Config) =
+    load_credentials!(provider_spec(cfg.provider).credential_keys; env_path = cfg.env_file)
 
 """
-    load_credentials!(cfg::Config) -> (key, secret)
-    load_credentials!(; env_path) -> (key, secret)
+    load_credentials!(cfg::Config) -> Dict{String,String}
+    load_credentials!(names; env_path) -> Dict{String,String}
 
-Load API credentials from the environment file (`credentials.env_file` of the
-configuration, or `env_path`), if it exists, into the process environment and
-return `(key_id, secret_key)`. Looks for `ALPACA_API_KEY_ID` /
-`ALPACA_SECRET_KEY`. Throws an error listing what is missing if either is
-absent.
+The values of the environment variables `names`, keyed by name; for a
+`Config`, the configured provider's `credential_keys` from the environment
+file `credentials.env_file`. The file, when it exists, is loaded into the
+process environment first, without overriding variables already set. Throws
+a [`CredentialError`](@ref) listing the variables still missing. A provider
+without credential keys gets an empty `Dict`, and the file is not read.
+
+```julia
+c = load_credentials!(cfg)          # Alpaca: "ALPACA_API_KEY_ID", "ALPACA_SECRET_KEY"
+c["ALPACA_API_KEY_ID"]
+```
 """
-function load_credentials!(; env_path::AbstractString)
+function load_credentials!(
+    names::AbstractVector{<:AbstractString};
+    env_path::AbstractString,
+)
+    creds = Dict{String,String}()
+    isempty(names) && return creds
     if isfile(env_path)
         Sys.isunix() &&
             (filemode(env_path) & 0o044) != 0 &&
             @warn "credentials file is group- or world-readable; chmod 600 recommended" env_path
         DotEnv.load!(env_path; override = false)
     end
-    key = get(ENV, "ALPACA_API_KEY_ID", "")
-    secret = get(ENV, "ALPACA_SECRET_KEY", "")
     missing_keys = String[]
-    isempty(key) && push!(missing_keys, "ALPACA_API_KEY_ID")
-    isempty(secret) && push!(missing_keys, "ALPACA_SECRET_KEY")
+    for n in names
+        v = get(ENV, n, "")
+        isempty(v) ? push!(missing_keys, String(n)) : (creds[String(n)] = v)
+    end
     isempty(missing_keys) || throw(
         CredentialError(
             missing_keys,
@@ -712,5 +732,5 @@ function load_credentials!(; env_path::AbstractString)
             "Provide them in $env_path or the environment (see .env.example).",
         ),
     )
-    return key, secret
+    return creds
 end

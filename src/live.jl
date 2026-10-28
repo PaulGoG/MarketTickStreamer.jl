@@ -13,7 +13,8 @@
 Supertype for market-data provider adapters.
 
 A concrete adapter supplies [`provider_spec`](@ref) and [`make_provider`](@ref)
-for the name it answers to, [`exchange_tz`](@ref), [`stream_protocol!`](@ref),
+for the name it answers to (the first registers it: see
+[`registered_providers`](@ref)), [`exchange_tz`](@ref), [`stream_protocol!`](@ref),
 [`market_clock`](@ref), [`historical_trades`](@ref) and its own message
 parsing. It overrides [`always_open`](@ref), [`session_days`](@ref) and
 [`feed_delay_ns`](@ref) where the venue departs from the defaults.
@@ -31,13 +32,14 @@ calendar, credentialed, closes overnight and at weekends) and
 abstract type AbstractProvider end
 
 """
-    ProviderSpec(feeds, backfill_feeds, bulk_feeds, tz, needs_credentials, max_page_limit,
+    ProviderSpec(; feeds, backfill_feeds, bulk_feeds = String[], tz,
+                 credential_keys = String[], endpoint_keys = String[], max_page_limit,
                  regular_session, price_unit, size_unit, timestamp_unit)
 
 What the configuration layer must know about a provider *before* any provider
 object exists: which feed names it accepts, the calendar its tape is filed
-under, whether it needs credentials at all, the largest REST page the venue
-serves, and the venue's regular session.
+under, the credentials and endpoint keys it reads, the largest REST page the
+venue serves, and the venue's regular session.
 
 Without it the config layer would have to hard-code one vendor's vocabulary:
 `provider.feed` would be validated against Alpaca's feed names for every
@@ -46,6 +48,13 @@ provider, and a 24-hour venue would have its days cut at midnight in New York.
 `bulk_feeds` names the feeds the venue also publishes as daily bulk files,
 which [`bulk_trades`](@ref) downloads; it is empty for a venue without such
 a service, and the configuration refuses `backfill.source = "bulk"` for it.
+
+`credential_keys` names the environment variables the adapter needs, which
+[`load_credentials!`](@ref) reads from the configured environment file or
+the process environment; it is empty for public market data, and then no
+credential is asked for. `endpoint_keys` names the keys of the provider's own
+configuration table `[<name>]`, endpoint roots as a rule; any other key in
+that table is rejected.
 
 `max_page_limit` exists because a venue may clamp an over-limit request
 instead of rejecting it, and a clamped page is indistinguishable from the last
@@ -67,12 +76,13 @@ Binance, which answers in milliseconds unless asked. It is written into
 every session sidecar, so the clock a capture was quantized to is known
 after the fact.
 """
-struct ProviderSpec
+Base.@kwdef struct ProviderSpec
     feeds::Vector{String}
     backfill_feeds::Vector{String}
-    bulk_feeds::Vector{String}
+    bulk_feeds::Vector{String} = String[]
     tz::TimeZone
-    needs_credentials::Bool
+    credential_keys::Vector{String} = String[]
+    endpoint_keys::Vector{String} = String[]
     max_page_limit::Int
     regular_session::Tuple{Float64,Float64}
     price_unit::String
@@ -80,37 +90,58 @@ struct ProviderSpec
     timestamp_unit::String
 end
 
-"""Provider names this build knows how to construct."""
-const KNOWN_PROVIDERS = ("alpaca", "binance")
-
 """
     provider_spec(name::AbstractString) -> ProviderSpec
     provider_spec(::Val{name}) -> ProviderSpec
 
-Static description of the provider called `name`. Implemented per adapter.
+Static description of the provider called `name`. Implemented per adapter;
+defining the `Val{name}` method is what registers the adapter
+([`registered_providers`](@ref)).
 """
 provider_spec(::Val{P}) where {P} = throw(
     ArgumentError(
-        "unknown provider \"$(P)\"; known providers: $(join(KNOWN_PROVIDERS, ", "))",
+        "unknown provider \"$(P)\"; registered providers: $(join(registered_providers(), ", "))",
     ),
 )
 
 provider_spec(name::AbstractString) = provider_spec(Val(Symbol(name)))
 
 """
-    make_provider(::Val{name}, cfg, key, secret) -> AbstractProvider
+    registered_providers() -> Vector{String}
 
-Construct the provider called `name` from configuration and credentials.
-`key`/`secret` are empty strings when the spec says none are needed.
-Implemented per adapter.
+The provider names a configuration may select, sorted: one for every
+`provider_spec(::Val{name})` method. The shipped adapters are `"alpaca"` and
+`"binance"`; an adapter defined in another package is registered by that
+method alone, and is listed, configurable and selectable once its package
+is loaded.
+"""
+function registered_providers()
+    names = String[]
+    for m in methods(provider_spec)
+        sig = Base.unwrap_unionall(m.sig)
+        sig isa DataType && length(sig.parameters) == 2 || continue
+        v = sig.parameters[2]
+        (v isa DataType && v <: Val && length(v.parameters) == 1) || continue
+        name = v.parameters[1]
+        name isa Symbol && push!(names, String(name))
+    end
+    return sort!(names)
+end
+
+"""
+    make_provider(::Val{name}, cfg::Config) -> AbstractProvider
+
+Construct the provider called `name` from the configuration. An adapter whose
+spec lists `credential_keys` reads them with [`load_credentials!`](@ref) here,
+so a provider that needs none never asks. Implemented per adapter.
 
 The fallback throws rather than returning anything: a fallback with a value
 would widen every caller's inferred provider type to include it, and then
 each provider method downstream would carry a branch with no matching method.
 """
-make_provider(::Val{P}, ::Config, ::AbstractString, ::AbstractString) where {P} = throw(
+make_provider(::Val{P}, ::Config) where {P} = throw(
     ArgumentError(
-        "unknown provider \"$(P)\"; known providers: $(join(KNOWN_PROVIDERS, ", "))",
+        "unknown provider \"$(P)\"; registered providers: $(join(registered_providers(), ", "))",
     ),
 )
 

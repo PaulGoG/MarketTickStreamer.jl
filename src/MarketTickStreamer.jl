@@ -105,7 +105,8 @@ public RawSink,
 
 # The provider implementer interface beyond the exported names: what an
 # adapter in another package defines or calls (see `AbstractProvider`).
-public stream_protocol!, feed_delay_ns, exchange_day_start_ns, spawn_watchdog, bump!
+public stream_protocol!,
+    feed_delay_ns, exchange_day_start_ns, spawn_watchdog, bump!, registered_providers
 
 include("errors.jl")
 include("schema.jl")

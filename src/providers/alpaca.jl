@@ -51,21 +51,23 @@ ws_url(p::AlpacaProvider) = "$(p.ws_base)/$(p.feed)"
 
 # US equities: the consolidated tape files a print under the New York calendar
 # date, and `sip` is the only backfill feed with the full tape.
-provider_spec(::Val{:alpaca}) = ProviderSpec(
-    ["iex", "sip", "delayed_sip"],
-    ["iex", "sip"],
-    String[],
-    tz"America/New_York",
-    true,
-    10_000,
-    (9.5, 16.0),
-    "USD",
-    "shares",
-    "nanosecond",
+provider_spec(::Val{:alpaca}) = ProviderSpec(;
+    feeds = ["iex", "sip", "delayed_sip"],
+    backfill_feeds = ["iex", "sip"],
+    tz = tz"America/New_York",
+    credential_keys = ["ALPACA_API_KEY_ID", "ALPACA_SECRET_KEY"],
+    endpoint_keys = ["trading_base", "data_base", "ws_base"],
+    max_page_limit = 10_000,
+    regular_session = (9.5, 16.0),
+    price_unit = "USD",
+    size_unit = "shares",
+    timestamp_unit = "nanosecond",
 )
 
-make_provider(::Val{:alpaca}, cfg::Config, key::AbstractString, secret::AbstractString) =
-    AlpacaProvider(cfg, key, secret)
+function make_provider(::Val{:alpaca}, cfg::Config)
+    c = load_credentials!(cfg)
+    return AlpacaProvider(cfg, c["ALPACA_API_KEY_ID"], c["ALPACA_SECRET_KEY"])
+end
 
 exchange_tz(::AlpacaProvider) = provider_spec(Val(:alpaca)).tz
 

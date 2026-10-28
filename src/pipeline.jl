@@ -207,15 +207,9 @@ session_id(
     feed::AbstractString = cfg.feed,
 ) = "$(cfg.provider)_$(feed)_$(Dates.format(Dates.now(UTC), SESSION_STAMP))"
 
-# Construct the configured provider. Credentials are loaded only for providers
-# that declare they need them: public crypto market data needs none, and
-# demanding an Alpaca key before streaming Binance would be a coupling rather
-# than a safeguard.
-function _provider_from_config(cfg::Config)
-    spec = provider_spec(cfg.provider)
-    key, secret = spec.needs_credentials ? load_credentials!(cfg) : ("", "")
-    return make_provider(Val(Symbol(cfg.provider)), cfg, key, secret)
-end
+# Construct the configured provider. The adapter loads the credentials its
+# spec lists, so public market data asks for none.
+_provider_from_config(cfg::Config) = make_provider(Val(Symbol(cfg.provider)), cfg)
 
 # Fail-fast free-space gate shared by stream and backfill startup.
 function _ensure_free_disk(cfg::Config)
