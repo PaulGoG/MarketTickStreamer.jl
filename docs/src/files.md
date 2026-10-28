@@ -77,7 +77,9 @@ Every file a session produces carries its identifier as a prefix.
 | Import | `import_<format>_<yyyymmdd-HHMMSS>`, `format` being `itch50` or `iex` |
 
 The identifier names the sidecar, `<id>.meta.toml`; the longest sidecar
-identifier that prefixes a part's name is that part's session.
+identifier that prefixes a part's name is that part's session. Identifiers
+are unique within a data tree: a session that starts in the same second as
+an earlier one there waits for the next second before taking its identifier.
 
 ## The raw line
 

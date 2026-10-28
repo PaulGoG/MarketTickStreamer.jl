@@ -1327,6 +1327,31 @@ hostname = "$(gethostname())"
             close(l1)
             l2 = acquire_session_lock(dir)                   # released → reacquirable
             close(l2)
+            # Identifiers are stamped to the second: one an earlier session's
+            # sidecar, raw part or log holds is not taken again; the next
+            # second's is.
+            write(
+                joinpath(dir, "ids.toml"),
+                "[stream]\nsymbols = [\"A\"]\n[storage]\ndata_dir = \"tree\"\n" *
+                "[logging]\nlog_dir = \"tree/logs\"\n",
+            )
+            idcfg = load_config(joinpath(dir, "ids.toml"))
+            mkpath(idcfg.raw_dir)
+            mkpath(idcfg.log_dir)
+            calls = Ref(0)
+            ids(seq) = (calls[] = 0; () -> seq[calls[]+=1])
+            @test MarketTickStreamer._fresh_session_id(ids(["free"]), idcfg) == "free"
+            @test calls[] == 1
+            for (held, mark) in (
+                ("a", joinpath(idcfg.raw_dir, "a.meta.toml")),
+                ("b", joinpath(idcfg.raw_dir, "b_part001.jsonl")),
+                ("c", joinpath(idcfg.log_dir, "c.log")),
+            )
+                write(mark, "")
+                t = @elapsed sid =
+                    MarketTickStreamer._fresh_session_id(ids([held, held * "2"]), idcfg)
+                @test sid == held * "2" && calls[] == 2 && t < 1.5
+            end
             # RAM ceiling fails loudly
             @test_throws ResourceError check_live_heap(0; context = "test")
             @test check_live_heap(1e9) === nothing

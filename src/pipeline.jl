@@ -198,9 +198,11 @@ const SESSION_STAMP = dateformat"yyyymmdd-HHMMSS"
 """
     session_id(cfg::Config; feed = cfg.feed) -> String
 
-Unique identifier for a capture session, `<provider>_<feed>_<yyyymmdd-HHMMSS>`
+Identifier for a capture session, `<provider>_<feed>_<yyyymmdd-HHMMSS>`
 (UTC start time). Prefixes every raw part file, provenance sidecar, and log
-file the session produces.
+file the session produces. The stamp has one-second resolution; the session
+runners make it unique within a data tree by waiting for the next second
+when a session started in the current one already holds the identifier.
 """
 session_id(
     cfg::Config;
@@ -234,6 +236,27 @@ _raw_files_with_prefix(dir::AbstractString, prefix::AbstractString) =
 
 _session_raw_files(cfg::Config, sid::AbstractString) =
     _raw_files_with_prefix(cfg.raw_dir, sid)
+
+# Whether an earlier session in this data tree holds `sid`: its sidecar, a raw
+# part or its log carries the identifier.
+_session_id_taken(cfg::Config, sid::AbstractString) =
+    isfile(joinpath(cfg.raw_dir, "$(sid).meta.toml")) ||
+    !isempty(_raw_files_with_prefix(cfg.raw_dir, sid)) ||
+    (cfg.log_to_file && isfile(joinpath(cfg.log_dir, "$(sid).log")))
+
+# A session identifier no earlier session in the tree holds. Identifiers are
+# stamped to the second, so two sessions started within one second would
+# share one, the second sidecar displacing the first and listing both
+# sessions' parts; `make_id` is called again once the clock has passed into
+# the next second.
+function _fresh_session_id(make_id, cfg::Config)
+    sid = make_id()
+    while _session_id_taken(cfg, sid)
+        sleep(1.001 - rem(time(), 1.0))
+        sid = make_id()
+    end
+    return sid
+end
 
 """
     acquire_session_lock(data_dir) -> lock
@@ -565,7 +588,7 @@ scoped to the call: the session runs under its own logger and the caller's
 global logger is untouched.
 """
 function run_stream(cfg::Config; provider::Union{AbstractProvider,Nothing} = nothing)
-    sid = session_id(cfg)
+    sid = _fresh_session_id(() -> session_id(cfg), cfg)
     stop = Threads.Atomic{Bool}(false)
     logger, log_io = setup_logging(cfg; session_id = sid, shutting_down = stop)
     try
@@ -725,7 +748,7 @@ caller's global logger is untouched.
 """
 function run_backfill(cfg::Config; provider::Union{AbstractProvider,Nothing} = nothing)
     prefix = cfg.backfill_source === :bulk ? "backfill_bulk_" : "backfill_"
-    sid = prefix * session_id(cfg; feed = cfg.backfill_feed)
+    sid = _fresh_session_id(() -> prefix * session_id(cfg; feed = cfg.backfill_feed), cfg)
     logger, log_io = setup_logging(cfg; session_id = sid)
     try
         return Logging.with_logger(logger) do

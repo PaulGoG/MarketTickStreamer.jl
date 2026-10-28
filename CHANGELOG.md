@@ -6,6 +6,14 @@ Notable changes to MarketTickStreamer. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- Two sessions started within one second on one data tree took the same
+  identifier, which is stamped to the second: the second sidecar displaced
+  the first into a numbered backup and listed both sessions' raw parts. A
+  session now waits for the next second when its identifier is held by a
+  sidecar, raw part or log of an earlier session. The identifier format is
+  unchanged.
+
 ## [2.0.1] - 2026-10-28
 
 The two capture scripts take their configuration the way the others do.
