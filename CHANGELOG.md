@@ -6,6 +6,18 @@ Notable changes to MarketTickStreamer. The format follows
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-10-28
+
+The release that puts the package in maintenance mode. It settles the four
+places where the 1.x Julia API was inconsistent or closed: modes become
+`Symbol`s, every trade reader returns one shape, refusals throw package
+exception types, and a provider adapter can live in another package. The
+file contract, the scripts and the configuration file stay as they were,
+apart from rejecting unknown keys in a provider table, so data trees and
+configurations written under 1.x carry over. The manual's "Migrating to
+2.0" page maps every 1.x call to its replacement, and the README states
+what maintenance covers.
+
 ### Added
 - `MarketTickStreamer.registered_providers()` lists the provider names a
   configuration may select. Defining `provider_spec(::Val{:name})` in
@@ -13,6 +25,9 @@ Notable changes to MarketTickStreamer. The format follows
   its `[name]` table, and the session runners construct it through
   `make_provider`, with no change to this package. The providers page of the
   manual shows a skeleton adapter.
+- A manual page, "Migrating to 2.0", and a "Maintenance" section in the
+  README: what is maintained, on which release line, and where new venues
+  and analysis methods belong.
 
 ### Changed
 - **Breaking: the provider interface is open.** `ProviderSpec` is built with
@@ -779,7 +794,8 @@ against the historical SIP tape.
 - An offline test suite driven by an in-process mock of the Alpaca REST and
   WebSocket APIs, with Aqua static quality assurance.
 
-[Unreleased]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v1.1.0...v2.0.0
 [1.1.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.8.0...v1.0.0
 [0.8.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.7.0...v0.8.0
