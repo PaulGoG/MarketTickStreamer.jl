@@ -260,33 +260,23 @@ function acquire_session_lock(data_dir::AbstractString)
     return pidlock::Pidfile.LockMonitor
 end
 
-_git_commit() =
+# State of the package's git checkout: commit, dirty flag, and whether either
+# could be read. An installed copy is not a checkout and a host may lack git;
+# both yield ("unknown", false, false), and `available` says the first two are
+# placeholders.
+function _git_state()
+    git(args) = String(
+        strip(read(pipeline(`git -C $(PROJECT_ROOT) $args`; stderr = devnull), String)),
+    )
     try
-        strip(
-            read(
-                pipeline(`git -C $(PROJECT_ROOT) rev-parse HEAD`; stderr = devnull),
-                String,
-            ),
-        )
+        commit = git(`rev-parse HEAD`)
+        dirty = !isempty(git(`status --porcelain`))
+        return (; commit, dirty, available = true)
     catch e
         e isa InterruptException && rethrow()
-        "unknown"
+        return (; commit = "unknown", dirty = false, available = false)
     end
-
-_git_dirty() =
-    try
-        !isempty(
-            strip(
-                read(
-                    pipeline(`git -C $(PROJECT_ROOT) status --porcelain`; stderr = devnull),
-                    String,
-                ),
-            ),
-        )
-    catch e
-        e isa InterruptException && rethrow()
-        false
-    end
+end
 
 _toml_value(v) = v
 _toml_value(v::Date) = string(v)
@@ -344,7 +334,8 @@ end
 
 Persist a provenance sidecar `<raw_dir>/<sid>.meta.toml` next to the
 session's raw files: session summary (id, status, pid, span, tick count,
-file list), provenance (git commit + dirty flag, Julia and package
+file list), provenance (git commit, dirty flag and whether the two could be
+read, Julia and package
 versions, hostname, the venue's timestamp unit, and the base name of a copy
 of the resolved `Manifest.toml` written alongside as `<sid>.manifest.toml`),
 a hardware
@@ -372,11 +363,13 @@ function write_session_meta(
         "raw_files" => [basename(f) for f in raw_files],
     )
     finished_utc === nothing || (session["finished_utc"] = string(finished_utc))
+    git = _git_state()
     meta = Dict{String,Any}(
         "session" => session,
         "provenance" => Dict{String,Any}(
-            "git_commit" => _git_commit(),
-            "git_dirty" => _git_dirty(),
+            "git_commit" => git.commit,
+            "git_dirty" => git.dirty,
+            "git_available" => git.available,
             "julia_version" => string(VERSION),
             "package_version" =>
                 string(something(pkgversion(MarketTickStreamer), "unknown")),

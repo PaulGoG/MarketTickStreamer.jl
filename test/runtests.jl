@@ -2247,10 +2247,13 @@ hostname = "$(gethostname())"
                 @test meta["config"]["feed"] == "iex"
                 @test meta["config"]["rng_seed"] == cfg.rng_seed
                 @test meta["provenance"]["timestamp_unit"] == "nanosecond"
-                @test occursin(
-                    r"^([0-9a-f]{40}|unknown)$",
-                    meta["provenance"]["git_commit"],
-                )
+                prov = meta["provenance"]
+                # git_available tells a real commit from the placeholders of a
+                # copy that is not a checkout.
+                @test prov["git_available"] isa Bool
+                @test prov["git_available"] ?
+                      occursin(r"^[0-9a-f]{40}$", prov["git_commit"]) :
+                      prov["git_commit"] == "unknown" && prov["git_dirty"] === false
                 # hardware fingerprint: results attributable to config + commit + hardware
                 hw = meta["hardware"]
                 @test !isempty(hw["cpu_model"])

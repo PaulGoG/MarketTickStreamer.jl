@@ -128,7 +128,11 @@ compaction dropped; `raw_files`, the base names of the session's parts;
 `truncated`, and per format `unresolved` and `symbols` for ITCH, `feed`,
 `packets`, `segments`, `gaps` and `duplicates` for IEX).
 
-`[provenance]`: `git_commit`, `git_dirty`, `julia_version`,
+`[provenance]`: `git_commit`, `git_dirty`, `git_available` (false when the
+package was not run from a git checkout, an installed copy for instance, or
+git is missing; `git_commit` then reads `"unknown"` and `git_dirty` `false`,
+and `package_version` with the manifest copy identifies the code; sidecars
+written before 1.1.0 lack the key), `julia_version`,
 `package_version`, `hostname`, `timestamp_unit` (the venue's resolution:
 `"nanosecond"` on the SIP, `"microsecond"` on Binance; a Binance sidecar
 without it was recorded in milliseconds), and `manifest`, the base name of

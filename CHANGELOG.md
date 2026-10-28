@@ -16,6 +16,10 @@ Notable changes to MarketTickStreamer. The format follows
   `stream_protocol!`, `feed_delay_ns`, `exchange_day_start_ns`,
   `spawn_watchdog` and `bump!`, is declared `public`: documented, versioned
   with the package and reached qualified.
+- The sidecar's `[provenance]` table records `git_available`: `false` when
+  the package did not run from a git checkout (an installed copy) or git is
+  missing, in which case `git_commit = "unknown"` and `git_dirty = false`
+  are placeholders rather than a clean tree.
 
 ### Changed
 - A live session that ends on a fatal stream error or on exhausted
