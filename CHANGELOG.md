@@ -6,6 +6,11 @@ Notable changes to MarketTickStreamer. The format follows
 
 ## [Unreleased]
 
+## [2.0.2] - 2026-10-29
+
+Sessions started within one second of each other on one data tree get
+distinct identifiers.
+
 ### Fixed
 - Two sessions started within one second on one data tree took the same
   identifier, which is stamped to the second: the second sidecar displaced
@@ -811,7 +816,8 @@ against the historical SIP tape.
 - An offline test suite driven by an in-process mock of the Alpaca REST and
   WebSocket APIs, with Aqua static quality assurance.
 
-[Unreleased]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v2.0.1...HEAD
+[Unreleased]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v2.0.2...HEAD
+[2.0.2]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v2.0.1...v2.0.2
 [2.0.1]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v1.1.0...v2.0.0
 [1.1.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v1.0.0...v1.1.0
