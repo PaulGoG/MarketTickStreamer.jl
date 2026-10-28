@@ -6,6 +6,14 @@ Notable changes to MarketTickStreamer. The format follows
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-28
+
+Corrections to how a session records its own end, and to which vendor
+requests are retried, found in an audit of the 1.0 code. A failed live
+session now reads `failed` in its sidecar, and the sidecar says whether its
+git commit is real. This is the last release of the 1.x series; 2.0
+changes the Julia API and keeps the files and the configuration.
+
 ### Added
 - `save_session_figures` and `save_overview_figures` take `non_price`, the
   sale-condition table of the price-forming population, and
@@ -720,7 +728,8 @@ against the historical SIP tape.
 - An offline test suite driven by an in-process mock of the Alpaca REST and
   WebSocket APIs, with Aqua static quality assurance.
 
-[Unreleased]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.8.0...v1.0.0
 [0.8.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v0.6.0...v0.7.0
