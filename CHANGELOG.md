@@ -6,6 +6,11 @@ Notable changes to MarketTickStreamer. The format follows
 
 ## [Unreleased]
 
+### Added
+- `scripts/stream.jl` and `scripts/backfill.jl` take `--config <path>`, as
+  the other scripts do; the configuration path as their only argument still
+  works. Giving it both ways, or passing a second argument, is refused.
+
 ## [2.0.0] - 2026-10-28
 
 The release that puts the package in maintenance mode. It settles the four

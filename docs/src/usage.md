@@ -26,9 +26,8 @@ Every script activates and instantiates the scripts environment itself
 (`scripts/Project.toml`: the package by path, plus CairoMakie and UnicodePlots
 for the figures and the dashboard plots), so a fresh clone needs no
 preparation. Each reads `config/config.toml` unless given another
-configuration: `stream.jl` and `backfill.jl` take its path as the first
-argument; `compact.jl`, `replay.jl`, `visualize.jl`, `inventory.jl` and
-`monitor.jl` take `--config <path>`; `import.jl` takes `--config=<path>`.
+configuration with `--config <path>` (or `--config=<path>`); `stream.jl` and
+`backfill.jl` also take the path as their only argument.
 
 ```bash
 julia --threads=auto scripts/stream.jl   # live capture

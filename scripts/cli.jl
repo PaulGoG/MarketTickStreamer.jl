@@ -45,7 +45,26 @@ end
 
 """
     config_path(opts) -> String
+    config_path(opts, positional) -> String
 
-The `--config` value, or the repository's `config/config.toml`.
+The `--config` value, or the repository's `config/config.toml`. The second
+form, used by `stream.jl` and `backfill.jl`, also takes the path as the only
+positional argument; a path given both ways, or a second positional
+argument, throws `ArgumentError`.
 """
 config_path(opts) = get(opts, "config", joinpath(@__DIR__, "..", "config", "config.toml"))
+
+function config_path(opts, positional)
+    length(positional) <= 1 || throw(
+        ArgumentError(
+            "expected at most one configuration path, got $(length(positional)) arguments",
+        ),
+    )
+    isempty(positional) && return config_path(opts)
+    haskey(opts, "config") && throw(
+        ArgumentError(
+            "configuration given twice: --config $(opts["config"]) and $(only(positional))",
+        ),
+    )
+    return only(positional)
+end
