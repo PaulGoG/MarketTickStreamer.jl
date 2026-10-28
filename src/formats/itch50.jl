@@ -44,8 +44,13 @@ function _itch50_tape(category::UInt8)::String
 end
 
 # A known message type shorter than its specification: the file is corrupt.
-@noinline _itch50_short(t::UInt8, len::Integer, expected::Integer) =
-    error("ITCH $(Char(t)) message of $len bytes, expected $expected")
+@noinline _itch50_short(name::AbstractString, t::UInt8, len::Integer, expected::Integer) =
+    throw(
+        IntegrityError(
+            name,
+            "$name: ITCH $(Char(t)) message of $len bytes, expected $expected",
+        ),
+    )
 
 # Reduce a live order by `n` executed or cancelled shares, removing it once
 # exhausted.
@@ -131,8 +136,8 @@ end
 # Returns (messages, truncated): `truncated` is true when the stream ended
 # inside a length prefix or a message, or inside a gzip member, as a
 # Range-request prefix does. A zero length ends the walk (end-of-session
-# marker).
-function _itch50_scan(f, io::IO; chunk::Integer = 8 << 20)
+# marker). `name` labels the file in the error raised for an oversized message.
+function _itch50_scan(f, io::IO; chunk::Integer = 8 << 20, name::AbstractString = "stream")
     buf = Vector{UInt8}(undef, chunk)
     len = 0           # buf[1:len] holds unparsed bytes
     pos = 1
@@ -167,8 +172,11 @@ function _itch50_scan(f, io::IO; chunk::Integer = 8 << 20)
                 if ended
                     truncated = true
                 elseif pos == 1 && len == length(buf)
-                    error(
-                        "ITCH message of $mlen bytes exceeds the $(length(buf))-byte read buffer",
+                    throw(
+                        IntegrityError(
+                            name,
+                            "$name: ITCH message of $mlen bytes exceeds the $(length(buf))-byte read buffer",
+                        ),
                     )
                 end
                 break
@@ -189,7 +197,7 @@ function _itch50_voided(path::AbstractString)
     voided = Set{UInt64}()
     io = _open_day_file(path)
     try
-        _itch50_scan(io) do buf, m, len
+        _itch50_scan(io; name = basename(path)) do buf, m, len
             buf[m] == UInt8('B') && push!(voided, _be64(buf, m + 11))
         end
     finally
@@ -314,12 +322,13 @@ function itch50_trades(
         return nothing
     end
 
+    file_name = basename(path)
     io = _open_day_file(path)
     scan = try
-        _itch50_scan(io) do buf, m, len
+        _itch50_scan(io; name = file_name) do buf, m, len
             t = buf[m]
             if t == UInt8('R')
-                len >= 39 || _itch50_short(t, len, 39)
+                len >= 39 || _itch50_short(file_name, t, len, 39)
                 k = _be16(buf, m + 1) + 1
                 name = _alpha(buf, m + 11, 8)
                 names[k] = name
@@ -330,14 +339,14 @@ function itch50_trades(
                 sel && (n_symbols[] += 1)
             elseif t == UInt8('A') || t == UInt8('F')
                 expected = t == UInt8('A') ? 36 : 40
-                len >= expected || _itch50_short(t, len, expected)
+                len >= expected || _itch50_short(file_name, t, len, expected)
                 locate = _be16(buf, m + 1)
                 selected[locate+1] || return nothing
                 ref = _be64(buf, m + 11)
                 orders[ref] =
                     ItchOrder(locate, buf[m+19], _be32(buf, m + 32), _be32(buf, m + 20))
             elseif t == UInt8('E')
-                len >= 31 || _itch50_short(t, len, 31)
+                len >= 31 || _itch50_short(file_name, t, len, 31)
                 locate = _be16(buf, m + 1)
                 selected[locate+1] || return nothing
                 ref = _be64(buf, m + 11)
@@ -351,7 +360,7 @@ function itch50_trades(
                 print!(locate, ts, o.price, n, _be64(buf, m + 23), "displayed", o.side)
                 _itch50_reduce!(orders, ref, o, n)
             elseif t == UInt8('C')
-                len >= 36 || _itch50_short(t, len, 36)
+                len >= 36 || _itch50_short(file_name, t, len, 36)
                 locate = _be16(buf, m + 1)
                 selected[locate+1] || return nothing
                 ref = _be64(buf, m + 11)
@@ -365,18 +374,18 @@ function itch50_trades(
                 end
                 o === nothing || _itch50_reduce!(orders, ref, o, n)
             elseif t == UInt8('X')
-                len >= 23 || _itch50_short(t, len, 23)
+                len >= 23 || _itch50_short(file_name, t, len, 23)
                 locate = _be16(buf, m + 1)
                 selected[locate+1] || return nothing
                 ref = _be64(buf, m + 11)
                 o = get(orders, ref, nothing)
                 o === nothing || _itch50_reduce!(orders, ref, o, _be32(buf, m + 19))
             elseif t == UInt8('D')
-                len >= 19 || _itch50_short(t, len, 19)
+                len >= 19 || _itch50_short(file_name, t, len, 19)
                 selected[_be16(buf, m+1)+1] || return nothing
                 delete!(orders, _be64(buf, m + 11))
             elseif t == UInt8('U')
-                len >= 35 || _itch50_short(t, len, 35)
+                len >= 35 || _itch50_short(file_name, t, len, 35)
                 locate = _be16(buf, m + 1)
                 selected[locate+1] || return nothing
                 ref_orig = _be64(buf, m + 11)
@@ -387,7 +396,7 @@ function itch50_trades(
                 orders[ref_new] =
                     ItchOrder(locate, o === nothing ? 0x00 : o.side, price, n)
             elseif t == UInt8('P')
-                len >= 44 || _itch50_short(t, len, 44)
+                len >= 44 || _itch50_short(file_name, t, len, 44)
                 locate = _be16(buf, m + 1)
                 selected[locate+1] || return nothing
                 ts = _be48(buf, m + 5)
@@ -395,7 +404,7 @@ function itch50_trades(
                 price = _be32(buf, m + 32)
                 print!(locate, ts, price, n, _be64(buf, m + 36), "hidden", 0x00)
             elseif t == UInt8('Q')
-                len >= 40 || _itch50_short(t, len, 40)
+                len >= 40 || _itch50_short(file_name, t, len, 40)
                 locate = _be16(buf, m + 1)
                 selected[locate+1] || return nothing
                 shares = _be64(buf, m + 11)
@@ -416,7 +425,7 @@ function itch50_trades(
                 price = _be32(buf, m + 27)
                 print!(locate, ts, price, shares, _be64(buf, m + 31), kind, 0x00)
             elseif t == UInt8('B')
-                len >= 19 || _itch50_short(t, len, 19)
+                len >= 19 || _itch50_short(file_name, t, len, 19)
                 # In the other modes the voided set accounts for the break,
                 # counted at the print.
                 broken === :keep && (n_broken[] += 1)
@@ -448,7 +457,8 @@ Download one full-day ITCH 5.0 file from `emi.nasdaq.com/ITCH/` into
 `dir/itch50/`, resuming an interrupted transfer, and return its path; a URL
 the server does not know (404) returns `nothing`. The server publishes no
 checksum, so the file's size is checked against the `Content-Length` it
-announces; a size that does not match is an error and the file is removed.
+announces; a size that does not match throws an [`IntegrityError`](@ref)
+and the file is removed.
 A file already present with the announced size is reused.
 
 ```julia
@@ -471,9 +481,12 @@ function fetch_itch50(
     got = filesize(path)
     if got != expected
         rm(path; force = true)
-        error(
-            "size mismatch for $(basename(path)): announced $expected bytes, got $got; " *
-            "the download was discarded",
+        throw(
+            IntegrityError(
+                path,
+                "size mismatch for $(basename(path)): announced $expected bytes, got $got; " *
+                "the download was discarded",
+            ),
         )
     end
     return path
@@ -497,6 +510,6 @@ function _announced_length(url::AbstractString, policy::RestPolicy)
     resp.status == 404 && return nothing
     resp.status == 200 || throw(HTTP.StatusError(resp.status, "HEAD", String(url), resp))
     len = HTTP.header(resp, "Content-Length", "")
-    isempty(len) && error("no Content-Length announced for $url")
+    isempty(len) && throw(VendorError(String(url), "no Content-Length announced for $url"))
     return parse(Int64, len)
 end

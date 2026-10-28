@@ -125,6 +125,31 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
         # justified by measurement — see bench/benchmarks.jl.
     end
 
+    @testset "exceptions: one supertype, typed fields, plain messages" begin
+        for T in (
+            ResourceError,
+            IntegrityError,
+            VendorError,
+            SessionError,
+            CredentialError,
+            FatalStreamError,
+        )
+            @test T <: MarketTickStreamerError <: Exception
+        end
+        @test sprint(showerror, ResourceError(:disk, "only 1.2 GiB free")) ==
+              "ResourceError: only 1.2 GiB free"
+        @test sprint(showerror, FatalStreamError("auth failed")) ==
+              "FatalStreamError: auth failed"
+        # A refusal names its resource: a handler branches on a field, not on text.
+        err = try
+            check_live_heap(0; context = "test")
+        catch e
+            e
+        end
+        @test err isa ResourceError && err.resource === :heap
+        @test occursin("during test", err.msg)
+    end
+
     @testset "schema / timestamps" begin
         ns = rfc3339_to_ns("2026-07-30T14:30:00.123456789Z")
         @test ns % MarketTickStreamer.NS_PER_SEC == 123_456_789
@@ -744,12 +769,8 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
                 ) == 22
                 # Memory guard: refused up front without filters, while
                 # accumulating with them; the fraction itself is validated.
-                @test_throws ErrorException read_processed(
-                    out,
-                    "AAPL";
-                    mem_fraction = 1e-15,
-                )
-                @test_throws ErrorException read_processed(
+                @test_throws ResourceError read_processed(out, "AAPL"; mem_fraction = 1e-15)
+                @test_throws ResourceError read_processed(
                     out,
                     "AAPL";
                     price_forming = true,
@@ -826,7 +847,7 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
                 "[stream]\nsymbols = [\"AAPL\"]\n[storage]\ndata_dir = \".\"\n" *
                 "[limits]\nread_mem_fraction = 1e-15\n",
             )
-            @test_throws ErrorException read_processed(load_config(p))
+            @test_throws ResourceError read_processed(load_config(p))
         end
         # The window is resolved on each date's own clock: 09:30 New York is
         # 14:30 UTC under standard time, 13:30 UTC under daylight time, and a
@@ -1300,12 +1321,12 @@ hostname = "$(gethostname())"
             @test reconcile_sessions!(dir) == 0              # idempotent
             # single-instance lock
             l1 = acquire_session_lock(dir)
-            @test_throws ErrorException acquire_session_lock(dir)
+            @test_throws SessionError acquire_session_lock(dir)
             close(l1)
             l2 = acquire_session_lock(dir)                   # released → reacquirable
             close(l2)
             # RAM ceiling fails loudly
-            @test_throws ErrorException check_live_heap(0; context = "test")
+            @test_throws ResourceError check_live_heap(0; context = "test")
             @test check_live_heap(1e9) === nothing
         end
         # spill compaction produces the same result as in-memory compaction
@@ -1336,7 +1357,7 @@ hostname = "$(gethostname())"
         @test MarketTickStreamer._spill_parent("/data/processed/", nothing) == "/data/"
         @test MarketTickStreamer._spill_parent("/data/processed", "/mnt/scratch") ==
               "/mnt/scratch"
-        @test_throws ErrorException MarketTickStreamer._ensure_spill_space(
+        @test_throws ResourceError MarketTickStreamer._ensure_spill_space(
             "/mnt/small",
             10 * 2^30,
             2 * 2^30,
@@ -1758,7 +1779,13 @@ hostname = "$(gethostname())"
             write(joinpath(raw, "$(sid3)_part001.jsonl"), line(1))
             ch3 = follow_source(raw; session = sid3, poll_s = 0.02, idle_timeout_s = 0.1)
             @test take!(ch3) == sample_trade(1)
-            @test_throws Exception collect(ch3)
+            stalled = try
+                collect(ch3)
+                nothing
+            catch e
+                e isa TaskFailedException ? e.task.exception : e
+            end
+            @test stalled isa SessionError && endswith(stalled.path, "$(sid3).meta.toml")
             @test !isopen(ch3)
         end
     end
@@ -2709,8 +2736,8 @@ hostname = "$(gethostname())"
         n = parse_csv(agg^3; each_page = pg -> push!(pages, length(pg)), page_rows = 4)
         @test n == 6 && pages == [4, 2]
         # A wrong column count and a row outside the day are errors, not silence.
-        @test_throws ErrorException parse_csv("7,64000.5,0.25,$us,True\n")
-        @test_throws ErrorException parse_csv(
+        @test_throws IntegrityError parse_csv("7,64000.5,0.25,$us,True\n")
+        @test_throws IntegrityError parse_csv(
             "7,64000.5,0.25,10,12,$(us + 86_400_000_000),True,True\n",
         )
     end
@@ -2816,7 +2843,7 @@ hostname = "$(gethostname())"
                 base = "http://127.0.0.1:$rest_port"
                 p = BinanceProvider("aggTrade", base, "ws://unused", base)
                 bad = joinpath(dir, "bad")
-                @test_throws ErrorException bulk_trades(
+                @test_throws IntegrityError bulk_trades(
                     p,
                     "BTCUSDT",
                     MOCK_BINANCE_EPOCH;
@@ -3464,7 +3491,7 @@ hostname = "$(gethostname())"
             # not a capture at all
             bad = joinpath(dir, "bad.bin")
             write(bad, zeros(UInt8, 64))
-            @test_throws ErrorException iex_hist_trades(bad)
+            @test_throws IntegrityError iex_hist_trades(bad)
         end
     end
 
@@ -3607,7 +3634,7 @@ hostname = "$(gethostname())"
                 @test ranges == ["bytes=0-8388607"]              # verified copy reused
                 @test fetch_iex_hist(Date(2020, 1, 3), dir; api_base = api, policy) ===
                       nothing
-                @test_throws ErrorException fetch_iex_hist(
+                @test_throws VendorError fetch_iex_hist(
                     Date(2020, 1, 2),
                     dir;
                     feed = "DPLS",
@@ -3639,7 +3666,7 @@ hostname = "$(gethostname())"
                 # a 206 whose range does not start where the partial ends is refused
                 mis = joinpath(dir, "misaligned.bin")
                 write(mis * ".partial", payload[1:1_000_000])
-                @test_throws ErrorException MarketTickStreamer._download_resumable(
+                @test_throws VendorError MarketTickStreamer._download_resumable(
                     "http://127.0.0.1:$port/f/misaligned.gz",
                     mis,
                     policy,
@@ -3720,7 +3747,7 @@ hostname = "$(gethostname())"
                 # a connection that fails for good ends the transfer; what was
                 # appended is a prefix of the file, whole chunks only
                 pf = joinpath(dir, "failing.bin")
-                @test_throws ErrorException MarketTickStreamer._download_resumable(
+                @test_throws VendorError MarketTickStreamer._download_resumable(
                     "http://127.0.0.1:$port/f/failing.gz",
                     pf,
                     par;

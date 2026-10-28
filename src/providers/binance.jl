@@ -300,7 +300,7 @@ end
 function _expected_sha256(checksum_path::AbstractString)
     tokens = split(strip(read(checksum_path, String)))
     (isempty(tokens) || length(first(tokens)) != 64) &&
-        error("malformed checksum file: $checksum_path")
+        throw(IntegrityError(checksum_path, "malformed checksum file: $checksum_path"))
     return lowercase(String(first(tokens)))
 end
 
@@ -322,15 +322,19 @@ function _fetch_bulk(p::BinanceProvider, url::AbstractString, dir::AbstractStrin
         _sha256_hex(path) == _expected_sha256(sums) &&
         return path
     _download_resumable(url * ".CHECKSUM", sums, p.rest).found || return nothing
-    _download_resumable(url, path, p.rest).found ||
-        error("bulk file listed with a checksum but missing: $url")
+    _download_resumable(url, path, p.rest).found || throw(
+        VendorError(String(url), "bulk file listed with a checksum but missing: $url"),
+    )
     want = _expected_sha256(sums)
     got = _sha256_hex(path)
     if got != want
         rm(path; force = true)
-        error(
-            "checksum mismatch for $(basename(path)): expected $want, got $got; " *
-            "the download was discarded",
+        throw(
+            IntegrityError(
+                path,
+                "checksum mismatch for $(basename(path)): expected $want, got $got; " *
+                "the download was discarded",
+            ),
         )
     end
     return path
@@ -384,12 +388,18 @@ function _parse_bulk_csv(
             first_line = false
             all(isdigit, fields[1]) || continue
         end
-        length(fields) == cols || error(
-            "$name: expected $cols columns for feed \"$feed\", got $(length(fields)): $line",
+        length(fields) == cols || throw(
+            IntegrityError(
+                name,
+                "$name: expected $cols columns for feed \"$feed\", got $(length(fields)): $line",
+            ),
         )
         t = _bulk_trade(fields, sym, cols)
-        day_lo <= t.time_ns < day_hi || error(
-            "$name: a row dated $(trading_date(t.time_ns; tz = tz"UTC")) in the file of $date",
+        day_lo <= t.time_ns < day_hi || throw(
+            IntegrityError(
+                name,
+                "$name: a row dated $(trading_date(t.time_ns; tz = tz"UTC")) in the file of $date",
+            ),
         )
         push!(page, t)
         if length(page) >= page_rows
@@ -422,7 +432,7 @@ prints on the same clock.
 The zip and its `.CHECKSUM` are stored under `dest_dir/binance/SYMBOL/` and
 kept: they are the vendor's own record of the day. A stored file whose
 checksum verifies is reused; a download whose checksum does not match is
-deleted and the day fails. A day the venue has not published (HTTP 404)
+deleted and the day fails with an [`IntegrityError`](@ref). A day the venue has not published (HTTP 404)
 returns nothing, logged at `@info` — the dump of a day appears on the
 following UTC day.
 
@@ -450,9 +460,12 @@ function bulk_trades(
     end
     archive = ZipReader(Mmap.mmap(path))
     entries = zip_names(archive)
-    length(entries) == 1 || error(
-        "$(basename(path)): expected one entry, found $(length(entries)): " *
-        join(entries, ", "),
+    length(entries) == 1 || throw(
+        IntegrityError(
+            path,
+            "$(basename(path)): expected one entry, found $(length(entries)): " *
+            join(entries, ", "),
+        ),
     )
     csv = zip_readentry(archive, only(entries))
     return _parse_bulk_csv(

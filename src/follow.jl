@@ -150,7 +150,7 @@ starts at the current end of the files, for a consumer that wants activity
 from attach onwards. `poll_s` is the interval between reads when nothing
 new has arrived. `idle_timeout_s` bounds how long the files may stay
 unchanged while the sidecar still says `running`; past it the channel
-closes with an error, so a consumer following a session whose process died
+closes with a [`SessionError`](@ref), so a consumer following a session whose process died
 unreconciled does not wait forever. Lines that do not parse are skipped
 and warned about, as [`read_raw`](@ref) does.
 
@@ -190,9 +190,12 @@ function follow_source(
             status == "running" || break
             if n == 0
                 idle = time() - last_growth
-                idle > idle_timeout_s && error(
-                    "no new data for $(round(Int, idle)) s while " *
-                    "$(basename(sidecar)) still says running",
+                idle > idle_timeout_s && throw(
+                    SessionError(
+                        sidecar,
+                        "no new data for $(round(Int, idle)) s while " *
+                        "$(basename(sidecar)) still says running",
+                    ),
                 )
                 sleep(poll_s)
             end

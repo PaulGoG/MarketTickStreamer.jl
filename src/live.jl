@@ -217,16 +217,6 @@ delayed tape tail after the close.
 feed_delay_ns(::AbstractProvider) = Int64(0)
 
 """
-    FatalStreamError(msg)
-
-A stream error that must not trigger reconnection (bad credentials,
-connection-limit exceeded, invalid subscription). Aborts the session.
-"""
-struct FatalStreamError <: Exception
-    msg::String
-end
-
-"""
     LiveSession
 
 Handle for a running live stream: the tick channel plus control state.

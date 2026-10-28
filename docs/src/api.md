@@ -15,6 +15,18 @@ README.
 MarketTickStreamer
 ```
 
+## Errors
+
+An invalid argument or configuration value throws `ArgumentError`. Every
+other refusal or failure of the package throws one of the types below, so a
+caller can tell a full disk from a corrupt vendor file without reading the
+message.
+
+```@autodocs
+Modules = [MarketTickStreamer]
+Pages = ["errors.jl"]
+```
+
 ## Configuration and credentials
 
 ```@autodocs

@@ -249,7 +249,7 @@ whole sample in memory.
 
 The read is guarded: it refuses a selection whose prints would occupy more
 than `mem_fraction` of the free memory at [`BYTES_PER_PRINT`](@ref) each,
-with an error that names [`eachday`](@ref). Without a window or population
+with a [`ResourceError`](@ref) that names [`eachday`](@ref). Without a window or population
 filter the refusal comes before any row is read, from the files' row counts;
 with a filter the vector is checked as it grows, day by day. The `Config`
 form takes `mem_fraction` from `limits.read_mem_fraction`.
@@ -266,11 +266,14 @@ function read_processed(
         throw(ArgumentError("mem_fraction must be in (0, 1], got $(mem_fraction)"))
     it = eachday(paths; kwargs...)
     budget = mem_fraction * Sys.free_memory()
-    refuse(n) = error(
-        "read_processed: $n prints ≈ $(round(Int, n * BYTES_PER_PRINT / 2^20)) MiB in " *
-        "memory exceed mem_fraction = $(mem_fraction) of free memory " *
-        "($(round(Int, Sys.free_memory() / 2^20)) MiB); iterate eachday instead or " *
-        "narrow the selection",
+    refuse(n) = throw(
+        ResourceError(
+            :memory,
+            "read_processed: $n prints ≈ $(round(Int, n * BYTES_PER_PRINT / 2^20)) MiB in " *
+            "memory exceed mem_fraction = $(mem_fraction) of free memory " *
+            "($(round(Int, Sys.free_memory() / 2^20)) MiB); iterate eachday instead or " *
+            "narrow the selection",
+        ),
     )
     out = Trade[]
     if it.window === nothing && !it.price_forming

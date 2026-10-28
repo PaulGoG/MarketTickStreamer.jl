@@ -245,13 +245,17 @@ function _download_resumable(
             # every status, where `_with_retry` retries only RETRYABLE_STATUS.
             bad_status != 0 &&
                 throw(HTTP.StatusError(bad_status, "GET", String(url), bad_message[]))
-            bad_start >= 0 && error(
-                "$url answered the range from byte $bad_start, not the requested $have: " *
-                "refusing to splice",
+            bad_start >= 0 && throw(
+                VendorError(
+                    String(url),
+                    "$url answered the range from byte $bad_start, not the requested $have: " *
+                    "refusing to splice",
+                ),
             )
         end
         done && break
-        filesize(tmp) > before || error("no progress downloading $url at byte $before")
+        filesize(tmp) > before ||
+            throw(VendorError(String(url), "no progress downloading $url at byte $before"))
         progress(filesize(tmp))
     end
     if !found
@@ -372,16 +376,26 @@ function _fetch_range(
             # judged outside the handler, where an error is not a transport failure
             resp.status in RETRYABLE_STATUS &&
                 throw(HTTP.StatusError(resp.status, "GET", String(url), resp))
-            resp.status == 206 ||
-                error("$url answered bytes $from-$b with status $(resp.status), not 206")
-            start == from || error(
-                "$url answered the range from byte $start, not the requested $from: " *
-                "refusing to splice",
+            resp.status == 206 || throw(
+                VendorError(
+                    String(url),
+                    "$url answered bytes $from-$b with status $(resp.status), not 206",
+                ),
+            )
+            start == from || throw(
+                VendorError(
+                    String(url),
+                    "$url answered the range from byte $start, not the requested $from: " *
+                    "refusing to splice",
+                ),
             )
         end
-        position(buf) > got || error("no progress downloading $url at byte $(a + got)")
+        position(buf) > got || throw(
+            VendorError(String(url), "no progress downloading $url at byte $(a + got)"),
+        )
     end
-    position(buf) == len || error("$url sent more than bytes $a-$b")
+    position(buf) == len ||
+        throw(VendorError(String(url), "$url sent more than bytes $a-$b"))
     return take!(buf)
 end
 

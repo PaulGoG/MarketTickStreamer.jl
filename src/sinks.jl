@@ -394,7 +394,8 @@ group ([`check_live_heap`](@ref)).
 The spill pass writes a verbatim copy of the input, so it needs scratch space
 of the input's own size. `scratch_dir` places it; the default is the directory
 containing `out_dir`, not `tempdir()` (see [`SPILL_HEADROOM`](@ref)). The
-free space is checked up front and compaction refuses to start without it.
+free space is checked up front and compaction refuses to start without it
+([`ResourceError`](@ref)).
 
 `footprint_factor` is the estimated in-memory size of the parsed input per
 input byte, `spill_headroom` the scratch space required as a multiple of the
@@ -537,10 +538,13 @@ function _ensure_spill_space(
     headroom::Real = SPILL_HEADROOM,
 )
     gib(x) = round(x / 2^30; digits = 2)
-    free < headroom * bytes && error(
-        "spill compaction of $(gib(bytes)) GiB needs $(gib(headroom * bytes)) " *
-        "GiB of scratch space, but $(parent) has only $(gib(free)) GiB free; " *
-        "pass scratch_dir to place it on another filesystem",
+    free < headroom * bytes && throw(
+        ResourceError(
+            :scratch,
+            "spill compaction of $(gib(bytes)) GiB needs $(gib(headroom * bytes)) " *
+            "GiB of scratch space, but $(parent) has only $(gib(free)) GiB free; " *
+            "pass scratch_dir to place it on another filesystem",
+        ),
     )
     return nothing
 end

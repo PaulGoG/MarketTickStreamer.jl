@@ -6,6 +6,18 @@ Notable changes to MarketTickStreamer. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **Breaking: package exception types.** An operation refused or failed for
+  a reason outside its arguments throws a subtype of
+  `MarketTickStreamerError` instead of `ErrorException`: `ResourceError`
+  (`resource` is `:disk`, `:scratch`, `:heap` or `:memory`),
+  `IntegrityError` (checksum or size mismatch, malformed vendor file),
+  `VendorError` (a vendor lists no file, answers a Range request from the
+  wrong offset, or stops sending), `SessionError` (the data tree is locked,
+  or a followed session stalls) and `CredentialError`. `FatalStreamError` is
+  now a subtype as well. `ArgumentError` still marks an invalid argument or
+  configuration value.
+
 ## [1.1.0] - 2026-10-28
 
 Corrections to how a session records its own end, and to which vendor

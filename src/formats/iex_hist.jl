@@ -37,10 +37,15 @@ end
 _iex_tape(tape::AbstractString, ::AbstractString) = String(tape)
 _iex_tape(tape::AbstractDict, sym::AbstractString) = String(get(tape, sym, ""))
 
-@noinline _iex_short(t::UInt8, len::Integer) =
-    error("IEX $(Char(t)) message of $len bytes, expected at least 38")
+@noinline _iex_short(name::AbstractString, t::UInt8, len::Integer) = throw(
+    IntegrityError(
+        name,
+        "$name: IEX $(Char(t)) message of $len bytes, expected at least 38",
+    ),
+)
 
-@noinline _iex_malformed(blen::Integer) = error("pcapng block of $blen bytes is malformed")
+@noinline _iex_malformed(name::AbstractString, blen::Integer) =
+    throw(IntegrityError(name, "$name: pcapng block of $blen bytes is malformed"))
 
 # Walk the captured packets of a pcap or pcapng stream, calling `f(buf, i, n)`
 # with `buf[i:i+n-1]` the link-layer frame. Returns `(; packets, truncated)`:
@@ -68,7 +73,7 @@ function _iex_packets(f, io::IO; chunk::Integer = 8 << 20, name::AbstractString 
             cut && (truncated = true)
         end
         if container === :unknown
-            len >= 4 || error("not a pcap or pcapng capture: $name")
+            len >= 4 || throw(IntegrityError(name, "not a pcap or pcapng capture: $name"))
             magic = (buf[1], buf[2], buf[3], buf[4])
             if magic == (0x0a, 0x0d, 0x0d, 0x0a)
                 container = :pcapng
@@ -79,11 +84,12 @@ function _iex_packets(f, io::IO; chunk::Integer = 8 << 20, name::AbstractString 
                 end
                 swap = magic[1] == 0xa1
                 lt = swap ? _be32(buf, 21) : _le32(buf, 21)
-                lt == 1 || error("pcap link type $lt is not Ethernet")
+                lt == 1 ||
+                    throw(IntegrityError(name, "$name: pcap link type $lt is not Ethernet"))
                 container = :pcap
                 pos = 25
             else
-                error("not a pcap or pcapng capture: $name")
+                throw(IntegrityError(name, "not a pcap or pcapng capture: $name"))
             end
         end
         if container === :pcap
@@ -97,8 +103,11 @@ function _iex_packets(f, io::IO; chunk::Integer = 8 << 20, name::AbstractString 
                     if ended
                         truncated = true
                     elseif pos == 1 && len == length(buf)
-                        error(
-                            "pcap record of $incl bytes exceeds the $(length(buf))-byte read buffer",
+                        throw(
+                            IntegrityError(
+                                name,
+                                "$name: pcap record of $incl bytes exceeds the $(length(buf))-byte read buffer",
+                            ),
                         )
                     end
                     break
@@ -116,35 +125,48 @@ function _iex_packets(f, io::IO; chunk::Integer = 8 << 20, name::AbstractString 
                 btype = _le32(buf, pos)
                 if btype == 0x0a0d0d0a              # Section Header Block
                     order = _le32(buf, pos + 8)
-                    order == 0x4d3c2b1a &&
-                        error("big-endian pcapng sections are not supported")
-                    order == 0x1a2b3c4d ||
-                        error("pcapng section header without a byte-order magic")
+                    order == 0x4d3c2b1a && throw(
+                        IntegrityError(
+                            name,
+                            "$name: big-endian pcapng sections are not supported",
+                        ),
+                    )
+                    order == 0x1a2b3c4d || throw(
+                        IntegrityError(
+                            name,
+                            "$name: pcapng section header without a byte-order magic",
+                        ),
+                    )
                 end
                 blen = Int(_le32(buf, pos + 4))
-                (blen >= 12 && blen % 4 == 0) || _iex_malformed(blen)
+                (blen >= 12 && blen % 4 == 0) || _iex_malformed(name, blen)
                 if pos + blen - 1 > len             # block incomplete
                     if ended
                         truncated = true
                     elseif pos == 1 && len == length(buf)
-                        error(
-                            "pcapng block of $blen bytes exceeds the $(length(buf))-byte read buffer",
+                        throw(
+                            IntegrityError(
+                                name,
+                                "$name: pcapng block of $blen bytes exceeds the $(length(buf))-byte read buffer",
+                            ),
                         )
                     end
                     break
                 end
                 if btype == 0x00000001              # Interface Description Block
-                    blen >= 20 || _iex_malformed(blen)
+                    blen >= 20 || _iex_malformed(name, blen)
                     lt = _le16(buf, pos + 8)
-                    lt == 1 || error("pcapng link type $lt is not Ethernet")
+                    lt == 1 || throw(
+                        IntegrityError(name, "$name: pcapng link type $lt is not Ethernet"),
+                    )
                 elseif btype == 0x00000006          # Enhanced Packet Block
-                    blen >= 32 || _iex_malformed(blen)
+                    blen >= 32 || _iex_malformed(name, blen)
                     caplen = Int(_le32(buf, pos + 20))
-                    caplen <= blen - 32 || _iex_malformed(blen)
+                    caplen <= blen - 32 || _iex_malformed(name, blen)
                     f(buf, pos + 28, caplen)
                     packets += 1
                 elseif btype == 0x00000003          # Simple Packet Block
-                    blen >= 16 || _iex_malformed(blen)
+                    blen >= 16 || _iex_malformed(name, blen)
                     f(buf, pos + 12, blen - 16)
                     packets += 1
                 end
@@ -205,15 +227,16 @@ end
 # needs this before it emits anything.
 function _iex_voided(path::AbstractString)
     voided = Set{Int64}()
+    name = basename(path)
     io = _open_day_file(path)
     try
-        _iex_packets(io; name = basename(path)) do buf, i, n
+        _iex_packets(io; name) do buf, i, n
             s, seglen = _iex_segment(buf, i, n)
             (seglen >= 40 && buf[s] == 0x01) || return nothing
             haskey(IEX_PROTOCOLS, _le16(buf, s + 2)) || return nothing
             _iex_blocks(buf, s, seglen, Int(_le16(buf, s + 14))) do buf, m, len
                 (len >= 1 && buf[m] == UInt8('B')) || return nothing
-                len >= 38 || _iex_short(buf[m], len)
+                len >= 38 || _iex_short(name, buf[m], len)
                 push!(voided, reinterpret(Int64, _le64(buf, m + 30)))
                 return nothing
             end
@@ -273,6 +296,7 @@ function iex_hist_trades(
     )
     wanted = symbols === nothing ? nothing : Set{String}(uppercase.(String.(symbols)))
     voided = broken === :keep ? Set{Int64}() : _iex_voided(path)
+    file_name = basename(path)
 
     next_seq = Dict{UInt32,UInt64}()    # next expected sequence number per session
     gapped = Set{UInt32}()              # sessions whose gap has been logged
@@ -300,7 +324,7 @@ function iex_hist_trades(
         len >= 1 || return nothing
         t = buf[m]
         if t == UInt8('T')
-            len >= 38 || _iex_short(t, len)
+            len >= 38 || _iex_short(file_name, t, len)
             sym = _iex_symbol(buf, m + 10)
             wanted === nothing || sym in wanted || return nothing
             id = reinterpret(Int64, _le64(buf, m + 30))
@@ -333,7 +357,7 @@ function iex_hist_trades(
             )
             prints[] += 1
         elseif t == UInt8('B')
-            len >= 38 || _iex_short(t, len)
+            len >= 38 || _iex_short(file_name, t, len)
             # In the other modes the voided set accounts for the break,
             # counted at the print.
             broken === :keep && (n_broken[] += 1)
@@ -343,7 +367,7 @@ function iex_hist_trades(
 
     io = _open_day_file(path)
     scan = try
-        _iex_packets(io; name = basename(path)) do buf, i, n
+        _iex_packets(io; name = file_name) do buf, i, n
             s, seglen = _iex_segment(buf, i, n)
             seglen >= 40 || return nothing
             buf[s] == 0x01 || return nothing
@@ -444,7 +468,8 @@ function iex_hist_index(
     resp.status == 404 && return nothing
     resp.status == 200 || throw(HTTP.StatusError(resp.status, "GET", url, resp))
     entries = JSON.parse(resp.body)
-    entries isa AbstractVector || error("unexpected HIST index for $date")
+    entries isa AbstractVector ||
+        throw(VendorError(String(url), "unexpected HIST index for $date"))
     return [Dict{String,Any}(String(k) => v for (k, v) in pairs(e)) for e in entries]
 end
 
@@ -456,11 +481,11 @@ Download the HIST capture of `date` for `feed` (`"TOPS"` or `"DEEP"`,
 case-insensitive; the version is whatever IEX lists for that day) into
 `dir/iex/`, resuming an interrupted transfer, verify it against the CRC-32C
 the file host announces (`x-goog-hash`), and return its path. `nothing`
-when IEX lists no files for the date, an error naming the feeds listed when
-the feed is not among them. A file already present is reused when its size
+when IEX lists no files for the date, a [`VendorError`](@ref) naming the
+feeds listed when the feed is not among them. A file already present is reused when its size
 matches the index entry and its CRC-32C the host's, and fetched again
 otherwise; a fresh download that fails the CRC-32C check is deleted and the
-call fails.
+call throws an [`IntegrityError`](@ref).
 """
 function fetch_iex_hist(
     date::Date,
@@ -473,9 +498,12 @@ function fetch_iex_hist(
     entries === nothing && return nothing
     want = uppercase(String(feed))
     e = findfirst(x -> uppercase(String(x["feed"])) == want, entries)
-    e === nothing && error(
-        "no $want file listed for $date; listed: " *
-        join(unique(String(x["feed"]) for x in entries), ", "),
+    e === nothing && throw(
+        VendorError(
+            String(api_base),
+            "no $want file listed for $date; listed: " *
+            join(unique(String(x["feed"]) for x in entries), ", "),
+        ),
     )
     entry = entries[e]
     day = Dates.format(date, dateformat"yyyymmdd")
@@ -490,22 +518,30 @@ function fetch_iex_hist(
         (announced === nothing || _crc32c_hex(path) == announced) && return path
     end
     r = _download_resumable(link, path, policy)
-    r.found || error("file listed but missing: $link")
+    r.found || throw(VendorError(link, "file listed but missing: $link"))
     want_crc = _crc32c_from_headers(r.headers)
     if want_crc !== nothing
         got_crc = _crc32c_hex(path)
         if got_crc != want_crc
             rm(path; force = true)
-            error(
-                "CRC-32C mismatch for $name: expected $want_crc, got $got_crc; " *
-                "the download was discarded",
+            throw(
+                IntegrityError(
+                    path,
+                    "CRC-32C mismatch for $name: expected $want_crc, got $got_crc; " *
+                    "the download was discarded",
+                ),
             )
         end
     end
     got = filesize(path)
     if got != n_bytes
         rm(path; force = true)
-        error("size mismatch for $name: listed $n_bytes bytes, got $got")
+        throw(
+            IntegrityError(
+                path,
+                "size mismatch for $name: listed $n_bytes bytes, got $got",
+            ),
+        )
     end
     return path
 end

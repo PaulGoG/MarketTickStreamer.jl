@@ -701,9 +701,12 @@ function load_credentials!(; env_path::AbstractString)
     missing_keys = String[]
     isempty(key) && push!(missing_keys, "ALPACA_API_KEY_ID")
     isempty(secret) && push!(missing_keys, "ALPACA_SECRET_KEY")
-    isempty(missing_keys) || error(
-        "missing credentials: $(join(missing_keys, ", ")). " *
-        "Provide them in $env_path or the environment (see .env.example).",
+    isempty(missing_keys) || throw(
+        CredentialError(
+            missing_keys,
+            "missing credentials: $(join(missing_keys, ", ")). " *
+            "Provide them in $env_path or the environment (see .env.example).",
+        ),
     )
     return key, secret
 end

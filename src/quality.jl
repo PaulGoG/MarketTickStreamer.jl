@@ -228,8 +228,8 @@ free_disk_gb(path::AbstractString) = Base.diskstat(path).available / 2^30
     check_live_heap(limit_mb; context = "") -> Nothing
 
 Config-gated RAM ceiling: if the live heap exceeds `limit_mb`, force a
-garbage collection; if it still exceeds the ceiling, throw an error
-naming `context`, so the process stops before the OOM killer ends it. Call from
+garbage collection; if it still exceeds the ceiling, throw a
+[`ResourceError`](@ref) naming `context`, so the process stops before the OOM killer ends it. Call from
 long accumulation loops (backfill pages, compaction groups).
 """
 function check_live_heap(limit_mb::Real; context::AbstractString = "")
@@ -237,11 +237,14 @@ function check_live_heap(limit_mb::Real; context::AbstractString = "")
     live_mb > limit_mb || return nothing
     GC.gc()
     live_mb = Base.gc_live_bytes() / 2^20
-    live_mb > limit_mb && error(
-        "live heap $(round(live_mb; digits = 0)) MiB exceeds limits.max_live_heap_mb = " *
-        "$(limit_mb)" *
-        (isempty(context) ? "" : " during $context") *
-        "; stopping before the OS kills the process",
+    live_mb > limit_mb && throw(
+        ResourceError(
+            :heap,
+            "live heap $(round(live_mb; digits = 0)) MiB exceeds limits.max_live_heap_mb = " *
+            "$(limit_mb)" *
+            (isempty(context) ? "" : " during $context") *
+            "; stopping before the OS kills the process",
+        ),
     )
     return nothing
 end

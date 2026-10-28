@@ -62,7 +62,14 @@ export monitor_raw
 export replay_source, follow_source, processed_files
 export corpus_inventory, eachday, read_processed, trades_table, ProcessedDays
 export RestPolicy
-export AbstractProvider, LiveSession, FatalStreamError, live_source, stop!, tee, snapshots
+export MarketTickStreamerError,
+    ResourceError,
+    IntegrityError,
+    VendorError,
+    SessionError,
+    CredentialError,
+    FatalStreamError
+export AbstractProvider, LiveSession, live_source, stop!, tee, snapshots
 export AlpacaProvider, BinanceProvider
 export market_clock, historical_trades, historical_trade_count, bulk_trades, condition_map
 export itch50_trades,
@@ -100,6 +107,7 @@ public RawSink,
 # adapter in another package defines or calls (see `AbstractProvider`).
 public stream_protocol!, feed_delay_ns, exchange_day_start_ns, spawn_watchdog, bump!
 
+include("errors.jl")
 include("schema.jl")
 include("config.jl")
 include("sinks.jl")

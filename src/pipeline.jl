@@ -220,9 +220,12 @@ end
 # Fail-fast free-space gate shared by stream and backfill startup.
 function _ensure_free_disk(cfg::Config)
     free = free_disk_gb(cfg.raw_dir)
-    free < cfg.min_free_disk_gb && error(
-        "only $(round(free; digits = 2)) GiB free on $(cfg.raw_dir), " *
-        "below limits.min_free_disk_gb = $(cfg.min_free_disk_gb); not starting",
+    free < cfg.min_free_disk_gb && throw(
+        ResourceError(
+            :disk,
+            "only $(round(free; digits = 2)) GiB free on $(cfg.raw_dir), " *
+            "below limits.min_free_disk_gb = $(cfg.min_free_disk_gb); not starting",
+        ),
     )
     return nothing
 end
@@ -243,7 +246,7 @@ _session_raw_files(cfg::Config, sid::AbstractString) =
 
 One session per data tree: takes a PID-file lock at
 `<data_dir>/.session.lock` and throws if another
-live process already holds it: two backfills interleaving on one raw
+live process already holds it ([`SessionError`](@ref)): two backfills interleaving on one raw
 directory would corrupt both. Stale locks from dead processes are
 broken automatically; release with `close(lock)`.
 """
@@ -251,9 +254,12 @@ function acquire_session_lock(data_dir::AbstractString)
     mkpath(data_dir)
     path = joinpath(data_dir, ".session.lock")
     pidlock = Pidfile.trymkpidlock(path; stale_age = 600.0)
-    pidlock === false && error(
-        "another session already holds $path; one capture/backfill per data " *
-        "tree (stale locks from dead processes clear automatically)",
+    pidlock === false && throw(
+        SessionError(
+            path,
+            "another session already holds $path; one capture/backfill per data " *
+            "tree (stale locks from dead processes clear automatically)",
+        ),
     )
     # `trymkpidlock` returns `Union{LockMonitor,Bool}`; the guard above settles
     # it, but only an assertion narrows the binding for callers of `close`.
