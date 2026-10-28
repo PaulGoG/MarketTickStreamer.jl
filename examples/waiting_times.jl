@@ -70,8 +70,8 @@ factor, which is how a method meant for the live feed is rehearsed offline.
 """
 function consume(paths::Vector{String}; price_forming_only::Bool = false, speed::Real = 0.0)
     source =
-        speed > 0 ? replay_source(paths; pace = "recorded", speed = speed) :
-        replay_source(paths; pace = "max")
+        speed > 0 ? replay_source(paths; pace = :recorded, speed = speed) :
+        replay_source(paths; pace = :max)
 
     # Both outputs are lossless. A lossy tap drops ticks when it falls behind, which is the
     # right trade for a live dashboard and precisely the wrong one for a

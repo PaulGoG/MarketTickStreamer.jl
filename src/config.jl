@@ -8,6 +8,10 @@
 
 Validated, typed view of `config/config.toml`. Constructed via [`load_config`](@ref).
 Field groups mirror the TOML tables; see `config/config.toml` for semantics.
+A key with a fixed set of values is a `String` in the file and a `Symbol`
+here (`processed_format`, `processed_compression`, `replay_pace`,
+`replay_clock`, `backfill_source`, `log_level`, `channels`); names from
+outside the package (provider, feeds, symbols, paths) stay strings.
 """
 Base.@kwdef struct Config
     # [provider]
@@ -15,7 +19,7 @@ Base.@kwdef struct Config
     feed::String
     # [stream]
     symbols::Vector{String}
-    channels::Vector{String}
+    channels::Vector{Symbol}
     require_market_open::Bool
     wait_for_open::Bool
     stop_at_market_close::Bool
@@ -30,8 +34,8 @@ Base.@kwdef struct Config
     bulk_dir::String
     flush_interval_s::Float64
     flush_max_ticks::Int
-    processed_format::String
-    processed_compression::String
+    processed_format::Symbol
+    processed_compression::Symbol
     # [limits]
     max_session_hours::Float64
     max_raw_file_mb::Int
@@ -45,15 +49,15 @@ Base.@kwdef struct Config
     compact_footprint_factor::Float64
     read_mem_fraction::Float64
     # [replay]
-    replay_pace::String
+    replay_pace::Symbol
     replay_speed::Float64
     replay_max_gap_s::Float64
-    replay_clock::String
+    replay_clock::Symbol
     # [backfill]
     backfill_start::Date
     backfill_end::Date
     backfill_feed::String
-    backfill_source::String
+    backfill_source::Symbol
     backfill_page_limit::Int
     backfill_rate_sleep_s::Float64
     backfill_resume::Bool
@@ -71,7 +75,7 @@ Base.@kwdef struct Config
     monitor_top_symbols::Int
     monitor_rate_window_s::Float64
     # [logging]
-    log_level::String
+    log_level::Symbol
     log_to_file::Bool
     log_dir::String
     # [credentials]
@@ -579,7 +583,7 @@ function load_config(path::AbstractString = _default_config_path())
         provider = provider,
         feed = feed,
         symbols = symbols,
-        channels = channels,
+        channels = Symbol.(channels),
         require_market_open = _cfg_value(st, "stream", "require_market_open", Bool, true),
         wait_for_open = _cfg_value(st, "stream", "wait_for_open", Bool, false),
         stop_at_market_close = _cfg_value(st, "stream", "stop_at_market_close", Bool, true),
@@ -602,8 +606,8 @@ function load_config(path::AbstractString = _default_config_path())
         ),
         flush_interval_s = flush_interval,
         flush_max_ticks = flush_max_ticks,
-        processed_format = fmt,
-        processed_compression = compression,
+        processed_format = Symbol(fmt),
+        processed_compression = Symbol(compression),
         max_session_hours = max_session_hours,
         max_raw_file_mb = max_raw_file_mb,
         channel_capacity = channel_capacity,
@@ -615,14 +619,14 @@ function load_config(path::AbstractString = _default_config_path())
         spill_headroom = spill_headroom,
         compact_footprint_factor = compact_footprint_factor,
         read_mem_fraction = read_mem_fraction,
-        replay_pace = pace,
+        replay_pace = Symbol(pace),
         replay_speed = replay_speed,
         replay_max_gap_s = replay_max_gap_s,
-        replay_clock = replay_clock,
+        replay_clock = Symbol(replay_clock),
         backfill_start = bf_start,
         backfill_end = bf_end,
         backfill_feed = bf_feed,
-        backfill_source = bf_source,
+        backfill_source = Symbol(bf_source),
         backfill_page_limit = page_limit,
         backfill_rate_sleep_s = rate_sleep,
         backfill_resume = _cfg_value(bf, "backfill", "resume", Bool, true),
@@ -636,7 +640,7 @@ function load_config(path::AbstractString = _default_config_path())
         monitor_refresh_s = mon_refresh,
         monitor_top_symbols = mon_top,
         monitor_rate_window_s = mon_window,
-        log_level = level,
+        log_level = Symbol(level),
         log_to_file = _cfg_value(lg, "logging", "log_to_file", Bool, true),
         log_dir = _resolve(
             _cfg_value(lg, "logging", "log_dir", String, "logs"),

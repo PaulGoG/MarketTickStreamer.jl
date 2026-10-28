@@ -88,17 +88,17 @@ auth_payload(p::AlpacaProvider) =
     subscribe_payload(p, symbols, channels) -> String
 
 Build the JSON subscription message for the requested channels
-(`"trades"`/`"quotes"`/`"bars"`), e.g.
+(`:trades`, `:quotes`, `:bars`), e.g.
 `{"action":"subscribe","trades":["AAPL","MSFT"]}`.
 """
 function subscribe_payload(
     ::AlpacaProvider,
     symbols::Vector{String},
-    channels::Vector{String},
+    channels::Vector{Symbol},
 )
     d = Dict{String,Any}("action" => "subscribe")
     for c in channels
-        d[c] = symbols
+        d[String(c)] = symbols
     end
     return JSON.json(d)
 end

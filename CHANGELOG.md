@@ -7,6 +7,17 @@ Notable changes to MarketTickStreamer. The format follows
 ## [Unreleased]
 
 ### Changed
+- **Breaking: modes are `Symbol`s.** Keywords that choose among a fixed set
+  of behaviors take a `Symbol`: `replay_source(...; pace = :recorded | :max,
+  clock = :auto | :recv | :exchange)`, `compact_raw(...; format = :csv |
+  :arrow, compression = :none | :zstd | :lz4)` (`:none` replaces `nothing`)
+  and `run_import(...; format = :itch50 | :iex)`. The matching `Config`
+  fields hold the `Symbol` (`processed_format`, `processed_compression`,
+  `replay_pace`, `replay_clock`, `backfill_source`, `log_level`, and
+  `channels` as a `Vector{Symbol}`), as does the `format` column of
+  `corpus_inventory`. The configuration file and the sidecar's config
+  snapshot keep the strings, so both read as before. Names from outside the
+  package (providers, feeds, symbols, conditions, paths) stay strings.
 - **Breaking: package exception types.** An operation refused or failed for
   a reason outside its arguments throws a subtype of
   `MarketTickStreamerError` instead of `ErrorException`: `ResourceError`

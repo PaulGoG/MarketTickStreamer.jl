@@ -325,7 +325,7 @@ end
     corpus_inventory(cfg::Config; symbols = nothing)
 
 What a processed tree holds, one row per symbol, sorted by symbol:
-`symbol`, `format` (`"csv"`, `"arrow"` or `"mixed"`), `n_days`,
+`symbol`, `format` (`:csv`, `:arrow` or `:mixed`), `n_days`,
 `first_date`, `last_date`, `n_prints`, `bytes`. Row counts come from the
 files' own metadata (Arrow) or line counts (CSV), so no print is parsed;
 safesave backups and partial files are not counted. `symbols` restricts the
@@ -345,7 +345,7 @@ function corpus_inventory(
         symbols isa AbstractString ? [String(symbols)] : collect(String, symbols)
     inventory = DataFrame(
         symbol = String[],
-        format = String[],
+        format = Symbol[],
         n_days = Int[],
         first_date = Date[],
         last_date = Date[],
@@ -355,7 +355,7 @@ function corpus_inventory(
     for s in sort!(unique(syms))
         files = processed_files(processed_dir, s)
         isempty(files) && continue
-        exts = unique(endswith(f, ".arrow") ? "arrow" : "csv" for f in files)
+        exts = unique(endswith(f, ".arrow") ? :arrow : :csv for f in files)
         # processed_files lists only names that match, so neither `something`
         # can throw; they narrow the types for inference.
         dates = [
@@ -365,7 +365,7 @@ function corpus_inventory(
             inventory,
             (
                 s,
-                length(exts) == 1 ? only(exts) : "mixed",
+                length(exts) == 1 ? only(exts) : :mixed,
                 length(files),
                 minimum(dates),
                 maximum(dates),

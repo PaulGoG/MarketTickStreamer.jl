@@ -4,7 +4,7 @@
 # that its sidecar names the file it came from.
 
 """Formats `run_import` reads: Nasdaq TotalView-ITCH 5.0 day files and IEX HIST captures."""
-const IMPORT_FORMATS = ("itch50", "iex")
+const IMPORT_FORMATS = (:itch50, :iex)
 
 """
     run_import(cfg, path; format, date = nothing, symbols = cfg.symbols, broken = :drop,
@@ -17,7 +17,7 @@ configured provider's calendar, and the sidecar records the file (name,
 size, SHA-256, format) and the reader's statistics under `session.source`,
 beside the usual provenance. Returns the processed files written.
 
-`format` is `"itch50"` ([`itch50_trades`](@ref)) or `"iex"`
+`format` is `:itch50` ([`itch50_trades`](@ref)) or `:iex`
 ([`iex_hist_trades`](@ref)). For either format `date` is the session date,
 read from the file name ([`itch50_date`](@ref), [`iex_hist_date`](@ref)) when
 not given; ITCH timestamps count from midnight and are dated by it.
@@ -41,7 +41,7 @@ which displaces the existing files into safesave backups.
 function run_import(
     cfg::Config,
     path::AbstractString;
-    format::AbstractString,
+    format::Symbol,
     date::Union{Nothing,Date} = nothing,
     symbols::Union{Nothing,AbstractVector{<:AbstractString}} = cfg.symbols,
     broken::Symbol = :drop,
@@ -51,7 +51,7 @@ function run_import(
 )
     format in IMPORT_FORMATS || throw(
         ArgumentError(
-            "format must be one of $(join(IMPORT_FORMATS, ", ")), got \"$format\"",
+            "format must be one of $(join(map(repr, IMPORT_FORMATS), ", ")), got $(repr(format))",
         ),
     )
     isfile(path) || throw(ArgumentError("no such file: $path"))
@@ -81,7 +81,7 @@ function _run_import(
     cfg::Config,
     sid::AbstractString,
     path::AbstractString,
-    format::AbstractString,
+    format::Symbol,
     date::Union{Nothing,Date},
     symbols::Union{Nothing,AbstractVector{<:AbstractString}},
     broken::Symbol,
@@ -121,7 +121,7 @@ function _run_import(
                 )
             end
         try
-            stats = if format == "itch50"
+            stats = if format === :itch50
                 itch50_trades(path, day; symbols, broken, each_page = sink_page)
             else
                 iex_hist_trades(path; symbols, broken, tape, each_page = sink_page)
@@ -158,12 +158,12 @@ end
 # The vendor file as the sidecar records it: identity and checksum, computed
 # once before the reader runs, and what the reader counted, merged in by
 # `_import_stats!` when it returns. `stats` is `nothing` when the reader never ran.
-function _import_source(path::AbstractString, format::AbstractString, stats)
+function _import_source(path::AbstractString, format::Symbol, stats)
     src = Dict{String,Any}(
         "file" => basename(path),
         "bytes" => filesize(path),
         "sha256" => _sha256_hex(path),
-        "format" => String(format),
+        "format" => string(format),
     )
     return stats === nothing ? src : _import_stats!(src, stats)
 end
@@ -177,9 +177,9 @@ function _import_stats!(src::AbstractDict, stats)
 end
 
 # The session date of a vendor file: as given, or read from its name.
-_import_day(path::AbstractString, format::AbstractString, date::Union{Nothing,Date}) =
+_import_day(path::AbstractString, format::Symbol, date::Union{Nothing,Date}) =
     date !== nothing ? date :
-    format == "itch50" ? itch50_date(basename(path)) : iex_hist_date(basename(path))
+    format === :itch50 ? itch50_date(basename(path)) : iex_hist_date(basename(path))
 
 # The symbols whose processed day already exists in the tree: the import
 # would displace them. Every symbol directory is checked when the import is

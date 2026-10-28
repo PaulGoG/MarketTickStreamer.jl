@@ -18,7 +18,7 @@ function main()
     )
     length(positional) == 2 ||
         throw(ArgumentError("usage: julia scripts/import.jl <itch50|iex> <file> [options]"))
-    format, file = positional
+    format, file = Symbol(positional[1]), positional[2]
     cfg = load_config(config_path(opts))
     symbols =
         "all" in flags ? nothing :

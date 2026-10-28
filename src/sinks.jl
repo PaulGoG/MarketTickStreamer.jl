@@ -234,22 +234,22 @@ function _write_group(
     out_dir::AbstractString,
     sym::AbstractString,
     date::Date,
-    format::AbstractString,
-    compression::Union{Nothing,Symbol} = nothing,
+    format::Symbol,
+    compression::Symbol = :none,
 )
     ts = sort(trades; by = t -> t.time_ns)
     out = trades_table(ts)
     dir = joinpath(out_dir, sym)
     mkpath(dir)
-    path = joinpath(dir, "$(date).$(format == "csv" ? "csv" : "arrow")")
+    path = joinpath(dir, "$(date).$(format)")
     return _safesave(path) do tmp
-        if format == "csv"
+        if format === :csv
             CSV.write(tmp, out)
         else
             for c in DICTIONARY_COLUMNS
                 out[!, c] = Arrow.DictEncode(out[!, c])
             end
-            Arrow.write(tmp, out; compress = compression)
+            Arrow.write(tmp, out; compress = compression === :none ? nothing : compression)
         end
     end
 end
@@ -369,11 +369,11 @@ verified before the first line is read.
 const SPILL_HEADROOM = 1.1
 
 """
-    compact_raw(raw_paths, out_dir; format = "csv", dedup = true,
+    compact_raw(raw_paths, out_dir; format = :csv, dedup = true,
                 mem_fraction = 0.5, tz = tz"America/New_York",
                 max_live_heap_mb = nothing, scratch_dir = nothing,
                 footprint_factor = 4.0, spill_headroom = SPILL_HEADROOM,
-                max_open_spill_files = 256, compression = nothing) -> Vector{String}
+                max_open_spill_files = 256, compression = :none) -> Vector{String}
 
 Compact raw NDJSON files into per-symbol, per-trading-day analysis files
 (`out_dir/SYMBOL/YYYY-MM-DD.csv|.arrow`), sorted by `time_ns`. An existing
@@ -408,7 +408,7 @@ takes all of them from `[limits]`.
 Arrow output stores the `symbol`, `exchange`, `conditions` and `tape` columns
 dictionary-encoded, which costs nothing to read and takes a liquid US equity
 day from 65 to 44 bytes per print. `compression` (`:zstd` or `:lz4`, Arrow
-only) compresses the record batches as well — 8 bytes per print with `:zstd`
+only; `:none` by default) compresses the record batches as well — 8 bytes per print with `:zstd`
 on the same day — at the price of memory-mapped reads: an uncompressed file is
 mapped and touched lazily, a compressed one is decompressed on load (64 ms
 against under 1 ms for that day). Uncompressed is the default.
@@ -422,7 +422,7 @@ compact_raw(raw_paths::AbstractVector{<:AbstractString}, out_dir::AbstractString
 function _compact_raw(
     raw_paths::AbstractVector{<:AbstractString},
     out_dir::AbstractString;
-    format::AbstractString = "csv",
+    format::Symbol = :csv,
     dedup::Bool = true,
     mem_fraction::Real = 0.5,
     tz::TimeZone = tz"America/New_York",
@@ -431,17 +431,15 @@ function _compact_raw(
     footprint_factor::Real = 4.0,
     spill_headroom::Real = SPILL_HEADROOM,
     max_open_spill_files::Integer = 256,
-    compression::Union{Nothing,Symbol} = nothing,
+    compression::Symbol = :none,
 )
-    format in ("csv", "arrow") ||
-        throw(ArgumentError("format must be \"csv\" or \"arrow\""))
-    compression in (nothing, :zstd, :lz4) || throw(
-        ArgumentError(
-            "compression must be nothing, :zstd or :lz4, got $(repr(compression))",
-        ),
+    format in (:csv, :arrow) ||
+        throw(ArgumentError("format must be :csv or :arrow, got $(repr(format))"))
+    compression in (:none, :zstd, :lz4) || throw(
+        ArgumentError("compression must be :none, :zstd or :lz4, got $(repr(compression))"),
     )
-    (compression === nothing || format == "arrow") ||
-        throw(ArgumentError("compression applies to format = \"arrow\" only"))
+    (compression === :none || format === :arrow) ||
+        throw(ArgumentError("compression applies to format = :arrow only"))
     0 < mem_fraction <= 1 ||
         throw(ArgumentError("mem_fraction must be in (0, 1], got $(mem_fraction)"))
     footprint_factor > 0 ||
@@ -511,8 +509,7 @@ _compact_raw(
     raw_paths,
     cfg.processed_dir;
     format = cfg.processed_format,
-    compression = cfg.processed_compression == "none" ? nothing :
-                  Symbol(cfg.processed_compression),
+    compression = cfg.processed_compression,
     dedup,
     mem_fraction = cfg.compact_mem_fraction,
     tz = cfg.exchange_tz,
@@ -598,14 +595,14 @@ end
 function _compact_spill(
     raw_paths::AbstractVector{<:AbstractString},
     out_dir::AbstractString;
-    format::AbstractString,
+    format::Symbol,
     dedup::Bool,
     tz::TimeZone,
     max_live_heap_mb::Union{Nothing,Real},
     scratch_dir::Union{Nothing,AbstractString} = nothing,
     spill_headroom::Real = SPILL_HEADROOM,
     max_open_spill_files::Integer = 256,
-    compression::Union{Nothing,Symbol} = nothing,
+    compression::Symbol = :none,
 )
     bytes = sum(filesize, raw_paths; init = 0)
     mkpath(out_dir)

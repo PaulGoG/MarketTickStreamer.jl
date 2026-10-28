@@ -216,8 +216,8 @@ function consume(
     speed::Real = 0.0,
 )
     source =
-        speed > 0 ? replay_source(paths; pace = "recorded", speed = speed) :
-        replay_source(paths; pace = "max")
+        speed > 0 ? replay_source(paths; pace = :recorded, speed = speed) :
+        replay_source(paths; pace = :max)
 
     # Persistence is lossless; the diagnostic is lossy and
     # yields. Reversing this would let a slow dashboard throttle acquisition,

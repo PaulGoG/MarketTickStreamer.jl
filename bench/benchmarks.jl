@@ -45,7 +45,7 @@ const RAW_FILE = let sink = open_raw_sink(BENCH_DIR, "bench")
 end
 # One processed Arrow day of the synthetic tape: the file every query reads.
 const PROCESSED_FILE = with_logger(NullLogger()) do
-    first(compact_raw([RAW_FILE], joinpath(BENCH_DIR, "processed"); format = "arrow"))
+    first(compact_raw([RAW_FILE], joinpath(BENCH_DIR, "processed"); format = :arrow))
 end
 
 suite["schema"] = BenchmarkGroup()
@@ -72,7 +72,7 @@ suite["compaction"] = BenchmarkGroup()
 suite["compaction"]["read_raw_10k"] = @benchmarkable read_raw([$RAW_FILE])
 suite["compaction"]["deduplicate_11k"] = @benchmarkable deduplicate_trades($DUPED)
 suite["compaction"]["compact_csv_10k"] = @benchmarkable(
-    compact_raw([$RAW_FILE], out; format = "csv"),
+    compact_raw([$RAW_FILE], out; format = :csv),
     setup = (out = mktempdir()),
     teardown = (rm(out; recursive = true, force = true)),
     samples = 10,
@@ -82,7 +82,7 @@ suite["compaction"]["compact_csv_10k"] = @benchmarkable(
 suite["replay"] = BenchmarkGroup()
 # Unpaced drain: the ceiling on how fast a consumer can be fed from disk.
 suite["replay"]["max_rate_10k"] = @benchmarkable(
-    length(collect(replay_source([$RAW_FILE]; pace = "max"))),
+    length(collect(replay_source([$RAW_FILE]; pace = :max))),
     samples = 10,
     evals = 1,
 )

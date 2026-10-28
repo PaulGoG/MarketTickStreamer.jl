@@ -10,22 +10,22 @@
 # Which timestamp paces and orders the replay. Backfilled records carry
 # `recv_ns = 0`, so a recording without a complete receive clock can only be
 # replayed on exchange time.
-function _replay_clock(trades::Vector{Trade}, clock::AbstractString)
-    clock == "exchange" && return "exchange"
+function _replay_clock(trades::Vector{Trade}, clock::Symbol)
+    clock === :exchange && return :exchange
     n_missing = count(t -> t.recv_ns <= 0, trades)
-    if clock == "recv"
+    if clock === :recv
         n_missing > 0 && throw(
             ArgumentError(
-                "clock = \"recv\" but $n_missing of $(length(trades)) records " *
-                "carry no receive timestamp (backfilled); use \"exchange\" or \"auto\"",
+                "clock = :recv but $n_missing of $(length(trades)) records " *
+                "carry no receive timestamp (backfilled); use :exchange or :auto",
             ),
         )
-        return "recv"
+        return :recv
     end
-    n_missing == 0 && return "recv"
+    n_missing == 0 && return :recv
     @info "recording has no complete receive clock; replaying on exchange time" missing =
         n_missing
-    return "exchange"
+    return :exchange
 end
 
 _recv_stamp(t::Trade) = t.recv_ns
@@ -102,26 +102,26 @@ _is_processed(path::AbstractString) = endswith(path, ".arrow") || endswith(path,
 function _replay_processed!(
     ch::Channel{Trade},
     days::Vector{Tuple{Date,Vector{String}}},
-    clock::AbstractString,
+    clock::Symbol,
     sch::Union{Nothing,ReplaySchedule},
 )
-    resolved = ""
+    resolved = :unresolved
     for (_, files) in days
         trades = reduce(vcat, (_trades_from_processed(f) for f in files); init = Trade[])
         isempty(trades) && continue
-        if isempty(resolved)
+        if resolved === :unresolved
             # The clock is settled on the first day and held: a replay that
             # changed clocks between days would have no single time axis.
             resolved = _replay_clock(trades, clock)
-        elseif resolved == "recv" && any(t -> t.recv_ns <= 0, trades)
+        elseif resolved === :recv && any(t -> t.recv_ns <= 0, trades)
             throw(
                 ArgumentError(
                     "replaying on the receive clock, but $(join(basename.(files), ", ")) " *
-                    "holds records without a receive timestamp; use clock = \"exchange\"",
+                    "holds records without a receive timestamp; use clock = :exchange",
                 ),
             )
         end
-        stamp = resolved == "recv" ? _recv_stamp : _exchange_stamp
+        stamp = resolved === :recv ? _recv_stamp : _exchange_stamp
         issorted(trades; by = stamp) || sort!(trades; by = stamp, alg = MergeSort)
         _emit_paced!(ch, trades, stamp, sch)
     end
@@ -129,8 +129,8 @@ function _replay_processed!(
 end
 
 """
-    replay_source(paths; pace = "recorded", speed = 1.0, max_gap_s = Inf,
-                  clock = "auto", capacity = 100_000) -> Channel{Trade}
+    replay_source(paths; pace = :recorded, speed = 1.0, max_gap_s = Inf,
+                  clock = :auto, capacity = 100_000) -> Channel{Trade}
 
 Create a channel that replays recorded trades, ordered by the replay clock.
 `paths` are either raw NDJSON files (`.jsonl`) or processed day files
@@ -148,26 +148,26 @@ cannot be mixed.
   included: replaying a week at `speed = 1` takes a week unless `max_gap_s`
   shortens the closures.
 
-- `pace = "recorded"`: honor the original inter-arrival times of the replay
+- `pace = :recorded`: honor the original inter-arrival times of the replay
   clock against an absolute schedule, compressed by `speed` (e.g.
   `speed = 60.0` replays an hour in a minute), so the timing error does not
   accumulate over a session.
-- `pace = "max"`: emit as fast as the consumer takes them (throughput mode).
+- `pace = :max`: emit as fast as the consumer takes them (throughput mode).
 
 `max_gap_s` caps every gap on the replay clock, in recorded seconds before
 `speed` applies: a longer gap is replayed as `max_gap_s`, and timing within
 the session is untouched. The default `Inf` replays every gap. It needs no
 notion of a market closure, so it serves a venue that trades around the clock
-as well. It has no effect at `pace = "max"`.
+as well. It has no effect at `pace = :max`.
 
 The replay clock is selected by `clock`:
 
-- `"recv"`: local receive time — what a live consumer experienced, network
+- `:recv`: local receive time — what a live consumer experienced, network
   jitter included. Throws if any record lacks it.
-- `"exchange"`: the venue's own timestamps — the only clock a backfilled
+- `:exchange`: the venue's own timestamps — the only clock a backfilled
   recording has.
-- `"auto"` (default): `"recv"` when every record carries a receive timestamp,
-  otherwise `"exchange"`, logged at `@info`. For processed files the choice is
+- `:auto` (default): `:recv` when every record carries a receive timestamp,
+  otherwise `:exchange`, logged at `@info`. For processed files the choice is
   made on the first day and held.
 
 The channel closes when the recording is exhausted, which ends the
@@ -177,21 +177,21 @@ channel with that error, and the consumer's iteration rethrows it.
 """
 function replay_source(
     paths::AbstractVector{<:AbstractString};
-    pace::AbstractString = "recorded",
+    pace::Symbol = :recorded,
     speed::Real = 1.0,
     max_gap_s::Real = Inf,
-    clock::AbstractString = "auto",
+    clock::Symbol = :auto,
     capacity::Integer = 100_000,
 )
-    pace in ("recorded", "max") ||
-        throw(ArgumentError("pace must be \"recorded\" or \"max\""))
+    pace in (:recorded, :max) ||
+        throw(ArgumentError("pace must be :recorded or :max, got $(repr(pace))"))
     speed > 0 || throw(ArgumentError("speed must be positive"))
     max_gap_s > 0 || throw(ArgumentError("max_gap_s must be positive, got $max_gap_s"))
-    clock in ("auto", "recv", "exchange") ||
-        throw(ArgumentError("clock must be \"auto\", \"recv\" or \"exchange\""))
+    clock in (:auto, :recv, :exchange) ||
+        throw(ArgumentError("clock must be :auto, :recv or :exchange, got $(repr(clock))"))
     # One fresh schedule per replay, anchored on its first emitted print.
     new_schedule() =
-        pace == "recorded" ? ReplaySchedule(Float64(speed), Float64(max_gap_s)) : nothing
+        pace === :recorded ? ReplaySchedule(Float64(speed), Float64(max_gap_s)) : nothing
     n_processed = count(_is_processed, paths)
     if n_processed > 0
         n_processed == length(paths) ||
@@ -203,7 +203,7 @@ function replay_source(
     end
     trades = read_raw(paths)
     resolved = _replay_clock(trades, clock)
-    stamp = resolved == "recv" ? _recv_stamp : _exchange_stamp
+    stamp = resolved === :recv ? _recv_stamp : _exchange_stamp
     sort!(trades; by = stamp, alg = MergeSort)
     return Channel{Trade}(capacity; spawn = true) do ch
         _emit_paced!(ch, trades, stamp, new_schedule())

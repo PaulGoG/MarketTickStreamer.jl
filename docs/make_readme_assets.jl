@@ -75,7 +75,7 @@ function replay_gif(raw_paths; n_frames::Int = 120, fps::Int = 12, hold_s::Real 
     # Drain once at maximum rate; the animation paces the *drawing*, which is
     # what a reader can see, rather than the wall-clock of the replay itself.
     trades = Trade[]
-    for t in replay_source(collect(raw_paths); pace = "max")
+    for t in replay_source(collect(raw_paths); pace = :max)
         push!(trades, t)
     end
     isempty(trades) && error("replay produced no ticks")

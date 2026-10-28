@@ -175,11 +175,11 @@ end
                 write_batch!(sink, trades)
                 close_sink!(sink)
                 read_raw(sink.path)
-                for format in ("csv", "arrow")
-                    files = compact_raw([sink.path], joinpath(dir, format); format)
-                    collect(replay_source(files; pace = "max"))
+                for format in (:csv, :arrow)
+                    files = compact_raw([sink.path], joinpath(dir, string(format)); format)
+                    collect(replay_source(files; pace = :max))
                 end
-                collect(replay_source(sink.path; pace = "max"))
+                collect(replay_source(sink.path; pace = :max))
                 session_report([sink.path])
             end
             filter_price_forming(trades)

@@ -285,7 +285,7 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             rejected(binance * base * "[backfill]\nsource = \"rest\"\nfeed = \"trade\"\n")
             write(p, binance * base * "[backfill]\nsource = \"bulk\"\nfeed = \"trade\"\n")
             c = load_config(p)
-            @test c.backfill_source == "bulk" && c.backfill_feed == "trade"
+            @test c.backfill_source === :bulk && c.backfill_feed == "trade"
             @test endswith(c.bulk_dir, joinpath("data", "bulk"))
             @test c.backfill_keep_raw
             # Dropping the raw copy needs the vendor file as the record.
@@ -294,13 +294,13 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             write(p, binance * base * "[backfill]\nsource = \"bulk\"\nkeep_raw = false\n")
             @test !load_config(p).backfill_keep_raw
             write(p, base)
-            @test load_config(p).backfill_source == "rest"
+            @test load_config(p).backfill_source === :rest
             write(p, binance * base)
             @test load_config(p).backfill_page_limit == 1000
             write(p, base)
             c = load_config(p)
             @test c.backfill_page_limit == 10_000
-            @test c.replay_clock == "auto"
+            @test c.replay_clock === :auto
             @test c.replay_max_gap_s == Inf
             @test c.read_mem_fraction == 0.5
             write(p, base * "[replay]\nmax_gap_s = 3600\n")
@@ -375,13 +375,13 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             )
             close_sink!(sink)
             out = joinpath(dir, "processed")
-            files = compact_raw([sink.path], out; format = "csv")
+            files = compact_raw([sink.path], out; format = :csv)
             @test length(files) == 2                       # one per symbol, same day
             @test all(isfile, files)
             # safesave: a recompaction takes the canonical names and the files
             # it displaces survive as numbered backups.
             before = Dict(f => read(f) for f in files)
-            files2 = compact_raw([sink.path], out; format = "csv")
+            files2 = compact_raw([sink.path], out; format = :csv)
             @test files2 == files
             for f in files
                 base, ext = splitext(f)
@@ -389,14 +389,14 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
                 @test read(base * "_#1" * ext) == before[f]
             end
             @test !any(occursin(".partial", f) for (_, _, fs) in walkdir(out) for f in fs)
-            arrow_files = compact_raw([sink.path], joinpath(dir, "arrow"); format = "arrow")
+            arrow_files = compact_raw([sink.path], joinpath(dir, "arrow"); format = :arrow)
             @test length(arrow_files) == 2
             # Arrow stores the low-cardinality columns dictionary-encoded and
             # reads back the same table the CSV holds, compressed or not.
             zstd_files = compact_raw(
                 [sink.path],
                 joinpath(dir, "zstd");
-                format = "arrow",
+                format = :arrow,
                 compression = :zstd,
             )
             for (c, a, z) in zip(files, arrow_files, zstd_files)
@@ -419,7 +419,7 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             @test_throws ArgumentError compact_raw(
                 [sink.path],
                 joinpath(dir, "x");
-                format = "arrow",
+                format = :arrow,
                 compression = :gzip,
             )
             # Empty text reads back as "", whether the file quotes it or leaves
@@ -441,7 +441,7 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
                 dir,
                 "EMPTY",
                 Date(2025, 7, 30),
-                "csv",
+                :csv,
             )
             @test MarketTickStreamer._trades_from_processed(p) == [t1, t2]
             write(
@@ -488,14 +488,16 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             write_batch!(sink, [sample_trade(i) for i in 1:50])
             close_sink!(sink)
             # max pace: everything, in recv order
-            got = collect(replay_source(sink.path; pace = "max"))
+            got = collect(replay_source(sink.path; pace = :max))
             @test length(got) == 50
             @test issorted(got; by = t -> t.recv_ns)
             # recorded pace at high compression still delivers everything
-            got2 = collect(replay_source(sink.path; pace = "recorded", speed = 1e9))
+            got2 = collect(replay_source(sink.path; pace = :recorded, speed = 1e9))
             @test length(got2) == 50
-            @test_throws ArgumentError replay_source(sink.path; pace = "warp")
-            @test_throws ArgumentError replay_source(sink.path; clock = "wall")
+            @test_throws ArgumentError replay_source(sink.path; pace = :warp)
+            # A mode is a Symbol; the 1.x string spelling is a type error.
+            @test_throws TypeError replay_source(sink.path; pace = "max")
+            @test_throws ArgumentError replay_source(sink.path; clock = :wall)
             # A backfilled recording has no receive clock. `auto` must pace it
             # on exchange time rather than emit at full speed; `recv` refuses.
             spaced(n, gap_ns) = [
@@ -512,7 +514,7 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
                 ) for i in 0:n
             ]
             function paced_span(path; kwargs...)
-                ch = replay_source(path; pace = "recorded", kwargs...)
+                ch = replay_source(path; pace = :recorded, kwargs...)
                 take!(ch)
                 t0 = time()
                 n = 1
@@ -527,13 +529,13 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             n, span = paced_span(bsink.path)
             @test n == 26
             @test 0.45 <= span <= 1.0               # 25 gaps of 20 ms
-            @test_throws ArgumentError replay_source(bsink.path; clock = "recv")
+            @test_throws ArgumentError replay_source(bsink.path; clock = :recv)
             # Absolute schedule: 400 gaps of 2.5 ms take 1 s. Sleeping each gap
             # on its own adds one timer overshoot per gap and runs markedly long.
             dsink = open_raw_sink(dir, "d")
             write_batch!(dsink, spaced(400, 2_500_000))
             close_sink!(dsink)
-            n, span = paced_span(dsink.path; clock = "exchange")
+            n, span = paced_span(dsink.path; clock = :exchange)
             @test n == 401
             @test 0.95 <= span <= 1.2
             # max_gap_s: two bursts of ten 20 ms gaps, 30 s apart. Replayed
@@ -587,8 +589,8 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             sink = open_raw_sink(dir, "corpus")
             write_batch!(sink, trades)
             close_sink!(sink)
-            for format in ("csv", "arrow")
-                out = joinpath(dir, format)
+            for format in (:csv, :arrow)
+                out = joinpath(dir, string(format))
                 compact_raw([sink.path], out; format, tz = tz"UTC")
                 aapl = processed_files(out, "AAPL")
                 @test basename.(aapl) ==
@@ -598,28 +600,26 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
                 @test_throws ArgumentError processed_files(out, "NVDA")
                 # One symbol: the days in order, every field intact — including
                 # an empty condition list and an all-numeric one.
-                got = collect(replay_source(aapl; pace = "max"))
+                got = collect(replay_source(aapl; pace = :max))
                 @test got == filter(t -> t.symbol == "AAPL", expected)
                 # Two symbols: merged on the clock within each day.
                 both = [aapl; processed_files(out, "MSFT")]
-                @test collect(replay_source(both; pace = "max")) == expected
-                @test collect(replay_source(reverse(both); pace = "max")) == expected
+                @test collect(replay_source(both; pace = :max)) == expected
+                @test collect(replay_source(reverse(both); pace = :max)) == expected
             end
             out = joinpath(dir, "arrow")
             files = processed_files(out, "AAPL")
             # Backups are not replayed, raw and processed do not mix, the
             # receive clock needs receive timestamps.
-            @test_throws ArgumentError replay_source([files[1], sink.path]; pace = "max")
+            @test_throws ArgumentError replay_source([files[1], sink.path]; pace = :max)
             @test_throws ArgumentError replay_source(
                 [joinpath(out, "AAPL", "2025-07-30_#1.arrow")];
-                pace = "max",
+                pace = :max,
             )
             @test_throws ArgumentError replay_source([
                 joinpath(out, "AAPL", "2025-01-01.arrow"),
             ])
-            @test_throws Exception collect(
-                replay_source(files; pace = "max", clock = "recv"),
-            )
+            @test_throws Exception collect(replay_source(files; pace = :max, clock = :recv))
             # Streaming: a day is opened only when the one before is spent. With
             # the second day unreadable the first still arrives in full, and
             # the failure reaches the consumer afterwards.
@@ -629,7 +629,7 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             write(joinpath(broken, basename(files[2])), "not an arrow file")
             ch = replay_source(
                 processed_files(dirname(broken), "AAPL");
-                pace = "max",
+                pace = :max,
                 capacity = 1,
             )
             first_day = [take!(ch) for _ in 1:5]
@@ -639,7 +639,7 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             # 1e6x is 0.0864 s, not zero and not per-day re-anchored.
             two = processed_files(out, "AAPL"; to = Date(2025, 7, 31))
             t_start = time()
-            n = length(collect(replay_source(two; pace = "recorded", speed = 1.0e6)))
+            n = length(collect(replay_source(two; pace = :recorded, speed = 1.0e6)))
             elapsed = time() - t_start
             @test n == 10
             @test 0.08 <= elapsed < 1.0
@@ -648,7 +648,7 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             t_start = time()
             n = length(
                 collect(
-                    replay_source(two; pace = "recorded", speed = 1.0e5, max_gap_s = 60.0),
+                    replay_source(two; pace = :recorded, speed = 1.0e5, max_gap_s = 60.0),
                 ),
             )
             elapsed = time() - t_start
@@ -684,8 +684,8 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             sink = open_raw_sink(dir, "corpus")
             write_batch!(sink, [aapl; msft])
             close_sink!(sink)
-            for format in ("csv", "arrow")
-                out = joinpath(dir, format)
+            for format in (:csv, :arrow)
+                out = joinpath(dir, string(format))
                 compact_raw([sink.path], out; format, tz = tz"UTC")
                 # Inventory from metadata: counts, span, bytes of the canonical files.
                 inv = corpus_inventory(out)
@@ -787,7 +787,7 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             end
             # Backups are neither counted nor read.
             out = joinpath(dir, "arrow")
-            compact_raw([sink.path], out; format = "arrow", tz = tz"UTC")
+            compact_raw([sink.path], out; format = :arrow, tz = tz"UTC")
             @test isfile(joinpath(out, "AAPL", "2025-07-30_#1.arrow"))
             @test corpus_inventory(out).n_days == [3, 2]
             @test corpus_inventory(out).bytes[1] ==
@@ -833,7 +833,7 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             )
             cfg = load_config(p)
             @test cfg.processed_dir == joinpath(dir, "processed")
-            compact_raw([sink.path], cfg.processed_dir; format = "csv", tz = tz"UTC")
+            compact_raw([sink.path], cfg.processed_dir; format = :csv, tz = tz"UTC")
             @test corpus_inventory(cfg).symbol == ["AAPL", "MSFT"]
             @test read_processed(cfg) == all_trades
             @test length(read_processed(cfg, "AAPL"; window = :regular)) == 18
@@ -914,7 +914,7 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             m = rep[rep.symbol .== "MSFT", :][1, :]
             @test isnan(m.median_latency_ms)                 # backfill: no latency defined
             # compaction deduplicates by default
-            files = compact_raw([sink.path], joinpath(dir, "p"); format = "csv")
+            files = compact_raw([sink.path], joinpath(dir, "p"); format = :csv)
             df = CSV.read(files[findfirst(contains("AAPL"), files)], DataFrame)
             @test nrow(df) == 21                             # 26 raw AAPL rows − 5 duplicates
             # over-budget inputs reroute through spill compaction transparently
@@ -929,7 +929,7 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
                     MarketTickStreamer._compact_raw(
                         [sink.path],
                         mktempdir(dir);
-                        format = "csv",
+                        format = :csv,
                         mem_fraction,
                     )
                 end
@@ -1338,11 +1338,11 @@ hostname = "$(gethostname())"
             )
             write_batch!(sink, [sample_trade(i) for i in 1:5])   # duplicates
             close_sink!(sink)
-            mem = compact_raw([sink.path], joinpath(dir, "mem"); format = "csv")
+            mem = compact_raw([sink.path], joinpath(dir, "mem"); format = :csv)
             spill = compact_raw(
                 [sink.path],
                 joinpath(dir, "spill");
-                format = "csv",
+                format = :csv,
                 mem_fraction = 1e-12,
             )            # force the spill path
             @test length(mem) == length(spill) == 2
@@ -1382,7 +1382,7 @@ hostname = "$(gethostname())"
             files = compact_raw(
                 [sink.path],
                 joinpath(dir, "out");
-                format = "csv",
+                format = :csv,
                 mem_fraction = 1e-12,
                 scratch_dir = scratch,
             )
@@ -1907,13 +1907,13 @@ hostname = "$(gethostname())"
             @test cfg.compact_mem_fraction == 0.5
             @test cfg.spill_headroom == 1.1
             @test cfg.compact_footprint_factor == 4.0
-            @test cfg.processed_compression == "none"
+            @test cfg.processed_compression === :none
             write(
                 p,
                 base *
                 "[storage]\nprocessed_format = \"arrow\"\nprocessed_compression = \"zstd\"\n",
             )
-            @test load_config(p).processed_compression == "zstd"
+            @test load_config(p).processed_compression === :zstd
             for bad in (
                 "[storage]\nprocessed_compression = \"zstd\"\n",          # csv cannot honor it
                 "[storage]\nprocessed_format = \"arrow\"\nprocessed_compression = \"gzip\"\n",
@@ -2148,11 +2148,11 @@ hostname = "$(gethostname())"
             sink = open_raw_sink(dir, "lru")
             write_batch!(sink, trades)
             close_sink!(sink)
-            mem = compact_raw([sink.path], joinpath(dir, "mem"); format = "csv")
+            mem = compact_raw([sink.path], joinpath(dir, "mem"); format = :csv)
             spill = compact_raw(
                 [sink.path],
                 joinpath(dir, "spill");
-                format = "csv",
+                format = :csv,
                 mem_fraction = 1e-12,
                 max_open_spill_files = 2,
             )
@@ -2259,9 +2259,9 @@ hostname = "$(gethostname())"
                 @test count(t -> t.symbol == "AAPL", trades) == 8
                 @test all(t -> t.recv_ns > 0, trades)
                 # captured raw feeds straight into compaction + replay
-                files = compact_raw(result.raw_files, joinpath(dir, "proc"); format = "csv")
+                files = compact_raw(result.raw_files, joinpath(dir, "proc"); format = :csv)
                 @test !isempty(files)
-                @test length(collect(replay_source(result.raw_files; pace = "max"))) == 14
+                @test length(collect(replay_source(result.raw_files; pace = :max))) == 14
                 # A finished session read through the file-following source: same prints,
                 # file order.
                 @test collect(follow_source(cfg.raw_dir)) == trades
@@ -2882,7 +2882,7 @@ hostname = "$(gethostname())"
                         end_date = string(MOCK_BINANCE_EPOCH + Day(2)),
                     ),
                 )
-                @test cfg.backfill_source == "bulk" && cfg.backfill_feed == "trade"
+                @test cfg.backfill_source === :bulk && cfg.backfill_feed == "trade"
                 files = run_backfill(cfg)
                 @test length(files) == 3
                 rows = CSV.read(first(sort(files)), DataFrame)
@@ -3868,11 +3868,11 @@ hostname = "$(gethostname())"
                 "[stream]\nsymbols = [\"AAPL\", \"MSFT\"]\n[storage]\ndata_dir = \"data\"\nprocessed_format = \"csv\"\n[logging]\nlog_to_file = false\n",
             )
             cfg = load_config(p)
-            files = run_import(cfg, file; format = "itch50")
+            files = run_import(cfg, file; format = :itch50)
             @test length(files) == 2
             @test sort(basename.(dirname.(files))) == ["AAPL", "MSFT"]
             @test all(endswith("2019-12-30.csv"), files)
-            @test length(collect(replay_source(files; pace = "max"))) == 5
+            @test length(collect(replay_source(files; pace = :max))) == 5
             metas = filter(endswith(".meta.toml"), readdir(cfg.raw_dir; join = true))
             @test length(metas) == 1
             meta = TOML.parsefile(only(metas))
@@ -3893,13 +3893,13 @@ hostname = "$(gethostname())"
             @test_throws ArgumentError run_import(
                 cfg,
                 file;
-                format = "itch50",
+                format = :itch50,
                 symbols = ["AAPL"],
             )
             files2 = run_import(
                 cfg,
                 file;
-                format = "itch50",
+                format = :itch50,
                 symbols = ["AAPL"],
                 keep_raw = false,
                 replace = true,
@@ -3909,17 +3909,17 @@ hostname = "$(gethostname())"
             @test length(raws) == 1                       # the first session's part only
             metas = filter(endswith(".meta.toml"), readdir(cfg.raw_dir; join = true))
             @test length(metas) == 2
-            @test_throws ArgumentError run_import(cfg, file; format = "csv")
+            @test_throws ArgumentError run_import(cfg, file; format = :csv)
             # an IEX file whose name carries no date needs `date`
             anon = joinpath(dir, "capture.pcap.gz")
             write(anon, zeros(UInt8, 16))
-            @test_throws ArgumentError run_import(cfg, anon; format = "iex")
+            @test_throws ArgumentError run_import(cfg, anon; format = :iex)
             @test iex_hist_date("20200102_IEXTP1_TOPS1.6.pcap.gz") == Date(2020, 1, 2)
             @test_throws ArgumentError iex_hist_date("capture.pcap.gz")
             @test_throws ArgumentError run_import(
                 cfg,
                 joinpath(dir, "missing.gz");
-                format = "iex",
+                format = :iex,
             )
         end
     end

@@ -30,7 +30,7 @@ for trade in ch                      # terminates when the recording ends
 end
 ```
 
-`pace = "max"` drops the pacing and emits as fast as the consumer takes
+`pace = :max` drops the pacing and emits as fast as the consumer takes
 them, which is the mode for throughput work; `speed` compresses recorded
 time, so `speed = 60.0` replays an hour of tape in a minute.
 
@@ -41,7 +41,7 @@ next day is opened, so a symbol-year replays in the memory of its busiest day.
 
 ```julia
 files = processed_files("data/processed", "AAPL"; from = Date(2026, 5, 1))
-for trade in replay_source(files; pace = "max")
+for trade in replay_source(files; pace = :max)
     # ... an estimator run over months of tape
 end
 ```
@@ -120,7 +120,7 @@ layer produces objects that compare equal.
 ## Guarantees
 
 **Ordering.** Replay emits in ascending order of its clock, sorted on load:
-`recv_ns` when every record carries one, `time_ns` otherwise (`clock = "auto"`;
+`recv_ns` when every record carries one, `time_ns` otherwise (`clock = :auto`;
 either can be forced). Backfilled records have `recv_ns = 0`, so a backfilled
 recording replays on exchange time. The live source emits in arrival order,
 which is *not* the same as ascending `time_ns`: a consolidated tape
@@ -146,8 +146,8 @@ backpressure rather than into unbounded memory growth. Blocking is the
 default because dropping ticks silently would corrupt the arrival statistics
 the package exists to measure.
 
-**Determinism.** Replaying the same files with `pace = "max"` yields the
-identical sequence every time. With `pace = "recorded"` the *sequence* is
+**Determinism.** Replaying the same files with `pace = :max` yields the
+identical sequence every time. With `pace = :recorded` the *sequence* is
 identical but the *timing* is approximate: gaps under a millisecond are not
 resolvable by `sleep`, so they are emitted back to back.
 

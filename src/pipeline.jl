@@ -25,10 +25,10 @@ function setup_logging(
     shutting_down::Threads.Atomic{Bool} = Threads.Atomic{Bool}(false),
 )
     level = Dict(
-        "debug" => Logging.Debug,
-        "info" => Logging.Info,
-        "warn" => Logging.Warn,
-        "error" => Logging.Error,
+        :debug => Logging.Debug,
+        :info => Logging.Info,
+        :warn => Logging.Warn,
+        :error => Logging.Error,
     )[cfg.log_level]
     quiet(logger) = EarlyFilteredLogger(
         log -> !(shutting_down[] && startswith(string(log._module), "HTTP")),
@@ -286,6 +286,8 @@ end
 
 _toml_value(v) = v
 _toml_value(v::Date) = string(v)
+# A mode is a Symbol in `Config` and a string in the file it came from.
+_toml_value(v::Symbol) = string(v)
 # The sidecar snapshots the whole effective config, and TOML has no timezone
 # type; the IANA name is what identifies it anyway.
 _toml_value(v::TimeZone) = string(v)
@@ -728,7 +730,7 @@ Logging is scoped to the call: the session runs under its own logger and the
 caller's global logger is untouched.
 """
 function run_backfill(cfg::Config; provider::Union{AbstractProvider,Nothing} = nothing)
-    prefix = cfg.backfill_source == "bulk" ? "backfill_bulk_" : "backfill_"
+    prefix = cfg.backfill_source === :bulk ? "backfill_bulk_" : "backfill_"
     sid = prefix * session_id(cfg; feed = cfg.backfill_feed)
     logger, log_io = setup_logging(cfg; session_id = sid)
     try
@@ -778,7 +780,7 @@ function _run_backfill(
                 # A bulk day is one file, a REST day a walk of pages; both
                 # stream through the same sink, so everything downstream of
                 # this point is one path.
-                n = if cfg.backfill_source == "bulk"
+                n = if cfg.backfill_source === :bulk
                     bulk_trades(
                         provider,
                         sym,
@@ -827,7 +829,7 @@ function _run_backfill(
             stored += n_stored
             summary.ticks = total
             summary.ticks_processed = stored
-            cfg.backfill_source == "bulk" && sleep(cfg.backfill_rate_sleep_s)
+            cfg.backfill_source === :bulk && sleep(cfg.backfill_rate_sleep_s)
             @info "backfilled" symbol = sym day trades = n stored = n_stored
         end
         @info "backfill finished" status = summary.status days = length(processed) ticks =
