@@ -6,6 +6,15 @@ Notable changes to MarketTickStreamer. The format follows
 
 ## [Unreleased]
 
+### Added
+- The setup sections of the README and the manual give the `[sources]` entry
+  a dependent project writes for this unregistered package, with `rev` on a
+  release tag.
+- The suite checks that the version cited in the README and `CITATION.cff`
+  is the latest release, has a dated CHANGELOG section matching
+  `date-released`, and is the tag the installation recipes pin; on a release
+  commit it must equal the `Project.toml` version.
+
 ## [2.0.2] - 2026-10-29
 
 Sessions started within one second of each other on one data tree get

@@ -54,6 +54,25 @@ a clone:
 julia -i activate.jl        # activates and instantiates, then leaves a REPL
 ```
 
+A project or package that depends on MarketTickStreamer names the repository
+in its `Project.toml`, since the package is not registered; `rev` pins a
+release tag and `[compat]` holds the major:
+
+```toml
+[deps]
+MarketTickStreamer = "57360e3f-416d-4026-814a-7f453c6dc1fa"
+
+[sources]
+MarketTickStreamer = {url = "https://github.com/PaulGoG/MarketTickStreamer.jl", rev = "v2.0.2"}
+
+[compat]
+MarketTickStreamer = "2"
+```
+
+`Pkg.add(url = "https://github.com/PaulGoG/MarketTickStreamer.jl", rev = "v2.0.2")`
+writes the same entry into the active project. `rev = "main"` follows
+development instead of a release.
+
 The package has no plotting dependency. The diagnostic figures are a package
 extension that loads with CairoMakie, and the monitor's terminal plots one
 that loads with UnicodePlots:
@@ -70,9 +89,9 @@ own environment with both installed.
 Relative paths in a configuration (`storage.data_dir`, `logging.log_dir`,
 `credentials.env_file`) are relative to the configuration file, so the shipped
 `config/config.toml` writes to `data/` and `logs/` of the clone. A project that
-installs the package (`Pkg.add(url = ...)`) copies that file and passes the
-copy's path to `load_config`; the installed file,
-`MarketTickStreamer.DEFAULT_CONFIG`, is a read-only template.
+depends on the package copies that file and passes the copy's path to
+`load_config`; the installed file, `MarketTickStreamer.DEFAULT_CONFIG`, is a
+read-only template.
 
 For credentials, `cp .env.example .env` and fill in `ALPACA_API_KEY_ID` and
 `ALPACA_SECRET_KEY` (free keys at https://alpaca.markets). Paper-account keys

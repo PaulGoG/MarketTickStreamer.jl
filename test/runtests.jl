@@ -125,6 +125,50 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
         # justified by measurement — see bench/benchmarks.jl.
     end
 
+    @testset "release metadata: README, CITATION.cff, CHANGELOG and Project.toml agree" begin
+        # The cited version (README BibTeX, CITATION.cff) is the latest
+        # release. Project.toml carries it on a release commit and the next
+        # -DEV version between releases. Checked here so a tag whose README,
+        # CITATION.cff or CHANGELOG lags fails in CI rather than after
+        # publication.
+        root = pkgdir(MarketTickStreamer)
+        project = pkgversion(MarketTickStreamer)
+        readme = read(joinpath(root, "README.md"), String)
+        cff = read(joinpath(root, "CITATION.cff"), String)
+        changelog = read(joinpath(root, "CHANGELOG.md"), String)
+        index = read(joinpath(root, "docs", "src", "index.md"), String)
+
+        bibtex = match(r"version\s*=\s*\{([0-9][^}]*)\}", readme)
+        @test bibtex !== nothing
+        cited = VersionNumber(bibtex[1])
+        cff_version = match(r"^version:\s*\"([^\"]+)\""m, cff)
+        @test cff_version !== nothing
+        @test VersionNumber(cff_version[1]) == cited
+
+        if isempty(project.prerelease)
+            @test cited == project
+            @test occursin("## [$project] - ", changelog)
+        else
+            @test cited < project
+        end
+
+        section = match(
+            Regex("^## \\[\\Q$cited\\E\\] - (\\d{4}-\\d{2}-\\d{2})\$", "m"),
+            changelog,
+        )
+        @test section !== nothing
+        released = match(r"^date-released:\s*\"(\d{4}-\d{2}-\d{2})\""m, cff)
+        @test released !== nothing
+        @test section !== nothing && released !== nothing && section[1] == released[1]
+
+        # The installation recipes pin the cited release tag.
+        for text in (readme, index)
+            revs = [m[1] for m in eachmatch(r"rev = \"(v[^\"]+)\"", text)]
+            @test !isempty(revs)
+            @test all(==("v$cited"), revs)
+        end
+    end
+
     @testset "exceptions: one supertype, typed fields, plain messages" begin
         for T in (
             ResourceError,

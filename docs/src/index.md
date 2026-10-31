@@ -56,9 +56,25 @@ diagnostics):
 julia -i activate.jl        # activates and instantiates, then leaves a REPL
 ```
 
-It can also be added to another environment by URL (`Pkg.add(url = ...)`);
-that project copies `config/config.toml` and passes its own path to
-`load_config`.
+A project or package that depends on MarketTickStreamer names the repository
+in its `Project.toml`, since the package is not registered; `rev` pins a
+release tag and `[compat]` holds the major:
+
+```toml
+[deps]
+MarketTickStreamer = "57360e3f-416d-4026-814a-7f453c6dc1fa"
+
+[sources]
+MarketTickStreamer = {url = "https://github.com/PaulGoG/MarketTickStreamer.jl", rev = "v2.0.2"}
+
+[compat]
+MarketTickStreamer = "2"
+```
+
+`Pkg.add(url = "https://github.com/PaulGoG/MarketTickStreamer.jl", rev = "v2.0.2")`
+writes the same entry into the active project. `rev = "main"` follows
+development instead of a release. That project copies `config/config.toml`
+and passes its own path to `load_config`.
 
 ## Acquisition model
 
