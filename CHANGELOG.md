@@ -6,6 +6,11 @@ Notable changes to MarketTickStreamer. The format follows
 
 ## [Unreleased]
 
+## [2.0.3] - 2026-10-31
+
+Dependent projects get their installation entry, and the TLS stack
+distrusts the certificate keys compromised in October 2026.
+
 ### Added
 - The setup sections of the README and the manual give the `[sources]` entry
   a dependent project writes for this unregistered package, with `rev` on a
@@ -832,7 +837,8 @@ against the historical SIP tape.
 - An offline test suite driven by an in-process mock of the Alpaca REST and
   WebSocket APIs, with Aqua static quality assurance.
 
-[Unreleased]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v2.0.2...HEAD
+[Unreleased]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v2.0.3...HEAD
+[2.0.3]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v2.0.2...v2.0.3
 [2.0.2]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v2.0.1...v2.0.2
 [2.0.1]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v1.1.0...v2.0.0

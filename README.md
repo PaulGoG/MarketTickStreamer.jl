@@ -63,13 +63,13 @@ release tag and `[compat]` holds the major:
 MarketTickStreamer = "57360e3f-416d-4026-814a-7f453c6dc1fa"
 
 [sources]
-MarketTickStreamer = {url = "https://github.com/PaulGoG/MarketTickStreamer.jl", rev = "v2.0.2"}
+MarketTickStreamer = {url = "https://github.com/PaulGoG/MarketTickStreamer.jl", rev = "v2.0.3"}
 
 [compat]
 MarketTickStreamer = "2"
 ```
 
-`Pkg.add(url = "https://github.com/PaulGoG/MarketTickStreamer.jl", rev = "v2.0.2")`
+`Pkg.add(url = "https://github.com/PaulGoG/MarketTickStreamer.jl", rev = "v2.0.3")`
 writes the same entry into the active project. `rev = "main"` follows
 development instead of a release.
 
@@ -319,7 +319,7 @@ Citation metadata is in [`CITATION.cff`](CITATION.cff). BibTeX:
 @software{MarketTickStreamer_jl,
   author  = {Gogîță, Paul-Adrian},
   title   = {MarketTickStreamer.jl: provider-agnostic tick-by-tick market data acquisition and paced replay in Julia},
-  version = {2.0.2},
+  version = {2.0.3},
   year    = {2026},
   url     = {https://github.com/PaulGoG/MarketTickStreamer.jl}
 }
