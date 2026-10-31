@@ -15,6 +15,13 @@ Notable changes to MarketTickStreamer. The format follows
   `date-released`, and is the tag the installation recipes pin; on a release
   commit it must equal the `Project.toml` version.
 
+### Security
+- HTTP.jl 1.11.1 is the floor. It requires OpenSSL.jl 1.7.1 and MbedTLS.jl
+  1.1.11, which reject certificate chains through the eight eMudhra
+  intermediate CA keys compromised in October 2026, and it drops credential
+  headers on cross-origin redirects. Every venue connection is TLS, so an
+  environment resolved before this release should be updated.
+
 ## [2.0.2] - 2026-10-29
 
 Sessions started within one second of each other on one data tree get
