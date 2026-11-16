@@ -774,11 +774,16 @@ function _copy_exclusive(src::AbstractString, dst::AbstractString)
     end
     done = false
     try
+        copied = 0
         open(src) do io
             while !eof(io)
-                write(out, read(io, 1 << 20))
+                copied += write(out, read(io, 1 << 20))
             end
         end
+        # Off the I/O thread a short write (a full disk) reports no error.
+        filesize(out) == copied || throw(
+            IntegrityError(dst, "backup copy holds $(filesize(out)) of $copied bytes"),
+        )
         close(out)
         done = true
     finally

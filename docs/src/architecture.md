@@ -110,8 +110,9 @@ confines that change to `sinks.jl`.
 
 ## 4. Concurrency model
 
-Plain Julia tasks, no locks. The producer (WebSocket read loop) `put!`s into
-the bounded channel; the sink task drains it with a poll/batch loop
+Plain Julia tasks; the one lock orders a stop against the registration of a
+new connection. The producer (WebSocket read loop) `put!`s into the bounded
+channel; the sink task drains it with a poll/batch loop
 (0.05 s idle poll, negligible against a 30 s flush interval). Closing the
 channel is the only shutdown signal: producer exit (deadline, fatal error,
 retry exhaustion, `stop!`) closes it, the sink drains what remains, flushes,

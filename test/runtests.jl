@@ -3159,6 +3159,37 @@ hostname = "$(gethostname())"
         end
     end
 
+    @testset "live E2E: prints without a recorded connection complete a session" begin
+        # An adapter that never calls spawn_watchdog records no opening; its
+        # prints alone show that the session reached the venue.
+        @eval struct FeedProvider <: MarketTickStreamer.AbstractProvider end
+        @eval MarketTickStreamer.always_open(::FeedProvider) = true
+        @eval function MarketTickStreamer.stream_protocol!(
+            ch,
+            ::FeedProvider,
+            cfg,
+            s;
+            kwargs...,
+        )
+            foreach(i -> put!(ch, sample_trade(i)), 1:3)
+            while !s.stop[]
+                sleep(0.05)
+            end
+        end
+        mktempdir() do dir
+            cfg = load_config(
+                mock_config_toml(
+                    dir;
+                    ws_port = 9999,
+                    rest_port = 9998,
+                    max_session_hours = 0.0005,       # 1.8 s
+                ),
+            )
+            result = run_stream(cfg; provider = FeedProvider())
+            @test result.status == "completed" && result.ticks == 3
+        end
+    end
+
     @testset "live E2E: a connection limit after a reconnect is retried" begin
         mktempdir() do dir
             ws_port, rest_port = freeport(9011), freeport(9021)
