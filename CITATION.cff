@@ -18,8 +18,8 @@ authors:
   - family-names: "Gogîță"
     given-names: "Paul-Adrian"
     email: "gogitapaul@yahoo.ro"
-version: "2.0.3"
-date-released: "2026-10-31"
+version: "2.1.0"
+date-released: "2026-11-16"
 license: MIT
 repository-code: "https://github.com/PaulGoG/MarketTickStreamer.jl"
 url: "https://PaulGoG.github.io/MarketTickStreamer.jl/stable/"

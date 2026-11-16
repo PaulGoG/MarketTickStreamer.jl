@@ -6,6 +6,8 @@ Notable changes to MarketTickStreamer. The format follows
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-11-16
+
 A Binance bulk backfill counts breaks in the trade-id sequence; corrections
 to session shutdown, reconnection and exit status, to the tail and
 survival-function diagnostics, and to what the documentation states about
@@ -974,7 +976,8 @@ against the historical SIP tape.
 - An offline test suite driven by an in-process mock of the Alpaca REST and
   WebSocket APIs, with Aqua static quality assurance.
 
-[Unreleased]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v2.0.3...HEAD
+[Unreleased]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v2.0.3...v2.1.0
 [2.0.3]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v2.0.2...v2.0.3
 [2.0.2]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v2.0.1...v2.0.2
 [2.0.1]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v2.0.0...v2.0.1
