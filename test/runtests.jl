@@ -431,6 +431,23 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             close_sink!(sink)
             @test length(read_raw(sink.path)) == 60
         end
+        # Closed while a put! waits on the full channel (stop!'s bound on a
+        # stuck producer): the print already in it is written, no error.
+        mktempdir() do dir
+            sink = open_raw_sink(dir, "pending")
+            ch = Channel{Trade}(1)
+            put!(ch, sample_trade(1))
+            pending = @async try
+                put!(ch, sample_trade(2))
+            catch
+            end
+            yield()
+            close(ch)
+            @test run_sink!(ch, sink; flush_interval_s = 0.01) == 1
+            wait(pending)
+            close_sink!(sink)
+            @test read_raw(sink.path) == [sample_trade(1)]
+        end
     end
 
     @testset "compaction" begin
@@ -2780,6 +2797,29 @@ hostname = "$(gethostname())"
                 close(ws)
                 close(rest)
             end
+        end
+    end
+
+    @testset "live: a provider error is retried until the attempts run out" begin
+        # Any error out of stream_protocol! other than FatalStreamError counts
+        # as a disconnect; the session fails once the attempts are used up.
+        @eval struct FailingProvider <: MarketTickStreamer.AbstractProvider end
+        @eval MarketTickStreamer.stream_protocol!(
+            ch,
+            ::FailingProvider,
+            cfg,
+            s;
+            kwargs...,
+        ) = error("unexpected")
+        mktempdir() do dir
+            cfg = load_config(mock_config_toml(dir; ws_port = 9999, rest_port = 9998))
+            s = @test_logs (:error, r"reconnection attempts exhausted") match_mode = :any begin
+                s = live_source(FailingProvider(), cfg)
+                collect(s.channel)
+                s
+            end
+            @test s.outcome[] === :failed
+            @test s.opens[] == 0
         end
     end
 

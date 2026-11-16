@@ -163,7 +163,8 @@ interrupt (tested).
   loop meets the end of the stream and returns. A producer still waiting
   for an upgrade the server never answers has no socket to sever yet; five
   seconds after `stop!` the tick channel is closed regardless, so the sinks
-  finish and the session ends.
+  finish and the session ends, as `failed` when no connection of the session
+  ever opened.
 - **Resource guards**: free-disk check before and during a session
   (`limits.min_free_disk_gb`; a breach mid-session stops the stream through
   `stop!`); compaction reroutes raw inputs whose estimated footprint

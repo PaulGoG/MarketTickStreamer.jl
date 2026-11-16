@@ -77,10 +77,10 @@ unchanged.
   silent peer, and read the socket concurrently with the protocol loop,
   which could leave one of the two readers waiting for good. A producer
   still waiting for an upgrade the server never answers is out of reach of
-  both; five seconds after `stop!` its channel is closed and the session
-  marked `failed`, so it ends at its deadline whatever state the connection
-  is in. A connection that opens while `stop!` runs is severed by one side
-  or the other.
+  both; five seconds after `stop!` its channel is closed, so the session
+  ends at its deadline whatever state the connection is in, as `failed`
+  when none of its connections opened. A connection that opens while
+  `stop!` runs is severed by one side or the other.
 - A producer that ended on its own left its deadline and close guards
   running; they end with it. A reconnect backoff ends at a stop request or
   at the session deadline.
@@ -95,7 +95,8 @@ unchanged.
 - An error that escapes the live producer marks the session `failed` and is
   logged to the session's log; it ended the session as `completed`.
 - A print put into the channel just before the producer closed it could be
-  left unwritten by the sink.
+  left unwritten by the sink, and a channel closed while a print waited to
+  enter it made the sink throw.
 - An ITCH file that ends before the End of Messages event, which closes
   every trading day, is reported `truncated` even when it was cut between
   two messages. A symbol whose Stock Directory message is repeated is

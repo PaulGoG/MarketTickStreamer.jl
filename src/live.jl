@@ -270,6 +270,8 @@ fatal stream error, exhausted reconnection attempts or an unexpected error.
 [`spawn_watchdog`](@ref) call records each) and `opened_at` holds the
 `time()` of the latest; the reconnect loop judges a connection by them.
 `grace` records that [`stop!`](@ref) has armed its bound on the producer.
+`ws` is written and read under `wslock`, which orders a stop against a
+connection being registered.
 """
 struct LiveSession
     channel::Channel{Trade}
@@ -280,6 +282,7 @@ struct LiveSession
     opens::Threads.Atomic{Int}
     opened_at::Threads.Atomic{Float64}
     grace::Threads.Atomic{Bool}
+    wslock::ReentrantLock
 end
 
 LiveSession(channel, stop, ws, stats, outcome = Ref(:running)) = LiveSession(
@@ -291,6 +294,7 @@ LiveSession(channel, stop, ws, stats, outcome = Ref(:running)) = LiveSession(
     Threads.Atomic{Int}(0),
     Threads.Atomic{Float64}(0.0),
     Threads.Atomic{Bool}(false),
+    ReentrantLock(),
 )
 
 """
@@ -308,16 +312,15 @@ which can leave one of the two readers waiting forever.
 A producer blocked before its connection is registered (an upgrade request
 the server never answers) cannot be reached through a socket; if the channel
 is still open `STOP_GRACE_S` seconds after the first request, it is closed
-here and the session is marked failed, so the consumers end whatever state
-the producer is in.
+here, so the consumers end whatever state the producer is in.
 """
 function stop!(s::LiveSession)
-    s.stop[] = true
-    # Pairs with the provider's registration (`_register_ws!`): of the two
-    # sides, at least one sees the other's write, so a connection opened
-    # during the stop is severed by one of them.
-    Threads.atomic_fence()
-    ws = s.ws[]
+    # Under the lock the provider registers a connection with
+    # (`_register_ws!`): either it sees the flag or this sees its socket.
+    ws = lock(s.wslock) do
+        s.stop[] = true
+        s.ws[]
+    end
     ws === nothing || _close_ws(ws)
     Threads.atomic_xchg!(s.grace, true) || Threads.@spawn begin
         sleep(STOP_GRACE_S)
@@ -326,7 +329,6 @@ function stop!(s::LiveSession)
                 @warn "producer did not end after the stop request; closing its channel" grace_s =
                     STOP_GRACE_S
             finally
-                s.outcome[] === :running && (s.outcome[] = :failed)
                 close(s.channel)
             end
         end
@@ -334,14 +336,16 @@ function stop!(s::LiveSession)
     return nothing
 end
 
-# Provider side of the stop handshake: publish `ws`, then test the stop flag.
-# Returns `true` when the session is stopping, the connection then severed.
+# Provider side of the stop handshake: register `ws` and test the stop flag
+# under the session's lock. Returns `true` when the session is stopping, the
+# connection then severed.
 function _register_ws!(s::LiveSession, ws)
-    s.ws[] = ws
-    Threads.atomic_fence()
-    s.stop[] || return false
-    _close_ws(ws)
-    return true
+    stopping = lock(s.wslock) do
+        s.ws[] = ws
+        s.stop[]
+    end
+    stopping && _close_ws(ws)
+    return stopping
 end
 
 # Seconds `stop!` waits for the producer to close the channel itself.
@@ -420,7 +424,9 @@ forever. A protocol loop spawns it on connect, writes `time()` into
 `alive[] = false` and `wait`s the task. Both atomics are written by the
 protocol loop and read by this task on another thread.
 
-The call also records the connection as opened (`s.opens`, `s.opened_at`).
+The call also records the connection as opened (`s.opens`, `s.opened_at`)
+and restarts `last_frame` at that instant, so a connection the watchdog cuts
+was open for at least `stale_timeout_s`.
 """
 function spawn_watchdog(
     ws,
@@ -429,7 +435,9 @@ function spawn_watchdog(
     alive::Threads.Atomic{Bool},
     stale_timeout_s::Float64,
 )
-    s.opened_at[] = time()
+    t = time()
+    s.opened_at[] = t
+    last_frame[] = t
     Threads.atomic_add!(s.opens, 1)
     return Threads.@spawn begin
         while alive[] && !s.stop[]

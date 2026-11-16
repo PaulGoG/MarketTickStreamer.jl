@@ -163,9 +163,20 @@ function run_sink!(
         last_flush = time()
     end
     while true
+        closed = false
         while isready(ch) && length(buf) < flush_max_ticks
-            push!(buf, take!(ch))
+            t = try
+                take!(ch)
+            catch e
+                # Closed with a put! still pending, which `isready` counted:
+                # nothing more arrives.
+                (e isa InvalidStateException && !isopen(ch)) || rethrow()
+                closed = true
+                break
+            end
+            push!(buf, t)
         end
+        closed && break
         if length(buf) >= flush_max_ticks ||
            (!isempty(buf) && time() - last_flush >= flush_interval_s)
             write_buffer()
@@ -767,9 +778,12 @@ function _copy_exclusive(src::AbstractString, dst::AbstractString)
                 write(out, read(io, 1 << 20))
             end
         end
-    finally
+    catch
         close(out)
+        rm(dst; force = true)               # no incomplete backup holds the slot
+        rethrow()
     end
+    close(out)
     return true
 end
 
