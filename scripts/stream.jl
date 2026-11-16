@@ -15,6 +15,9 @@ function main()
     for f in result.raw_files
         println("  ", f)
     end
+    # A session ended by a fatal stream error or exhausted reconnections
+    # returns normally; the nonzero status lets a supervisor restart it.
+    result.status == "failed" && exit(1)
 end
 
 run_entrypoint(main)

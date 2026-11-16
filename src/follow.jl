@@ -25,8 +25,10 @@ _session_parts(t::RawTail) = _session_parts(t.dir, t.prefix)
 """
     latest_session_prefix(dir) -> String
 
-Prefix (session id) of the most recently modified raw part file in `dir`.
-Throws if none exist.
+Session id of the most recently modified raw part file in `dir`: the longest
+sidecar id that prefixes the part's name (a backfill names its parts
+`<id>_<SYMBOL>_<DATE>`), or the name up to `_partNNN` when no sidecar
+matches. Throws if no part exists.
 """
 function latest_session_prefix(dir::AbstractString)
     best, best_m = nothing, -Inf
@@ -37,7 +39,19 @@ function latest_session_prefix(dir::AbstractString)
         t > best_m && ((best, best_m) = (m[1], t))
     end
     best === nothing && throw(ArgumentError("no raw session files found in $dir"))
-    return String(best)
+    return String(something(_sidecar_id(dir, best), best))
+end
+
+# The longest sidecar id in `dir` that prefixes `prefix`, or `nothing`.
+function _sidecar_id(dir::AbstractString, prefix::AbstractString)
+    best = nothing
+    for f in readdir(dir)
+        endswith(f, ".meta.toml") || continue
+        id = chopsuffix(f, ".meta.toml")
+        startswith(prefix, id) || continue
+        (best === nothing || length(id) > length(best)) && (best = id)
+    end
+    return best
 end
 
 # Start at the current end of every existing part: only what is appended
@@ -91,13 +105,7 @@ end
 # symbol and date after it, so the longest sidecar id that prefixes the file
 # prefix is the session's.
 function _sidecar_path(dir::AbstractString, prefix::AbstractString)
-    best = nothing
-    for f in readdir(dir)
-        endswith(f, ".meta.toml") || continue
-        id = chopsuffix(f, ".meta.toml")
-        startswith(prefix, id) || continue
-        (best === nothing || length(id) > length(best)) && (best = id)
-    end
+    best = _sidecar_id(dir, prefix)
     best === nothing && throw(
         ArgumentError(
             "no sidecar for session $prefix in $dir: follow_source follows sessions " *

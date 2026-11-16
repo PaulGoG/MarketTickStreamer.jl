@@ -4,6 +4,13 @@
 # A log file holds plain text: CSI escape sequences (color, cursor control) are removed.
 _strip_ansi(s) = replace(string(s), r"\e\[[0-9;?]*[ -/]*[@-~]" => "")
 
+# A log value as one line of plain text. An `(exception, backtrace)` pair is
+# rendered as the error message; printed as a tuple, the backtrace is a list
+# of raw pointers.
+_log_value(v) = _strip_ansi(v)
+_log_value(v::Tuple{Exception,Any}) =
+    replace(_strip_ansi(sprint(showerror, v[1])), r"\s*\n\s*" => " ")
+
 """
     setup_logging(cfg; session_id, shutting_down = Threads.Atomic{Bool}(false))
         -> (logger, io)
@@ -49,7 +56,7 @@ function setup_logging(
             " ",
             _strip_ansi(args.message),
             isempty(args.kwargs) ? "" :
-            " | " * join(("$k=$(_strip_ansi(v))" for (k, v) in args.kwargs), " "),
+            " | " * join(("$k=$(_log_value(v))" for (k, v) in args.kwargs), " "),
         )
     end
     return quiet(TeeLogger(console, MinLevelLogger(file, level))), io
@@ -148,7 +155,8 @@ the next boundary triggers one call per boundary crossed, before it is
 folded, so a window without prints still yields its snapshot, with `n`
 unchanged. A late print, one behind the window already open, folds into that
 window: the boundary never retreats. The final call carries the last print's
-timestamp and `final = true`; an empty stream makes no call.
+timestamp and `final = true`; an empty stream makes no call. Under `:recv` a
+print with `recv_ns = 0` (backfilled or imported) throws an `ArgumentError`.
 
 Snapshots are a function of the sequence alone, never of wall time, so a
 replay at any pace reproduces them exactly, and consumers fed by one
@@ -179,6 +187,15 @@ function snapshots(
     last_ns = typemin(Int64)
     for t in ch
         τ = clock === :exchange ? t.time_ns : t.recv_ns
+        # A print that never crossed the wire has no place on the receive
+        # clock, and stepping the boundary from zero to the present would
+        # make one call per period since 1970.
+        (clock === :recv && τ <= 0) && throw(
+            ArgumentError(
+                "snapshots on clock = :recv met a print without a receive timestamp " *
+                "(recv_ns = 0, a backfilled or imported print); use clock = :exchange",
+            ),
+        )
         n == 0 && (boundary = fld(τ, period_ns) * period_ns + period_ns)
         while τ >= boundary
             on_snapshot(boundary, n, false)
@@ -496,7 +513,7 @@ function reconcile_sessions!(raw_dir::AbstractString)
         samehost =
             get(get(meta, "provenance", Dict{String,Any}()), "hostname", "") ==
             gethostname()
-        pid == getpid() && continue                 # our own freshly-started sidecar
+        pid == getpid() && continue                 # this process's own sidecar
         samehost && pid > 0 && isdir("/proc/$pid") && continue   # genuinely running
         s["status"] = "aborted"
         s["reconciled_utc"] = string(Dates.now(UTC))
@@ -559,16 +576,21 @@ function _with_session(
             rethrow()
         end
     finally
-        meta_path = summary.meta_path
-        meta_path === nothing || finalize_session_meta(
-            meta_path,
-            summary.status;
-            ticks = summary.ticks,
-            ticks_processed = summary.ticks_processed,
-            raw_files = _session_raw_files(cfg, sid),
-            source = summary.source,
-        )
-        close(slock)
+        # The lock is released even when the sidecar cannot be finalized (a
+        # full disk, for one), so the next session is not refused for it.
+        try
+            meta_path = summary.meta_path
+            meta_path === nothing || finalize_session_meta(
+                meta_path,
+                summary.status;
+                ticks = summary.ticks,
+                ticks_processed = summary.ticks_processed,
+                raw_files = _session_raw_files(cfg, sid),
+                source = summary.source,
+            )
+        finally
+            close(slock)
+        end
     end
 end
 
@@ -583,9 +605,13 @@ Run one complete live capture session:
 4. shutdown on Ctrl-C, market close, low disk, session deadline or stream
    termination.
 
-Returns `(; ticks, raw_files)`. Blocks until the session ends. Logging is
-scoped to the call: the session runs under its own logger and the caller's
-global logger is untouched.
+Returns `(; ticks, raw_files, status)`, `status` being the one written to the
+sidecar: `"completed"`, `"interrupted"`, or `"failed"` after a fatal stream
+error or exhausted reconnections, which end the session without an exception.
+A session that finds the market closed and does not wait returns no ticks,
+no files and `"completed"`. Blocks until the session ends. Logging is scoped
+to the call: the session runs under its own logger and the caller's global
+logger is untouched.
 """
 function run_stream(cfg::Config; provider::Union{AbstractProvider,Nothing} = nothing)
     sid = _fresh_session_id(() -> session_id(cfg), cfg)
@@ -611,6 +637,9 @@ function _run_stream(
     delay > 0 &&
         @info "delayed feed; market-hours guards shifted" delay_s = delay ÷ NS_PER_SEC
     return _with_session(cfg, sid) do summary, start_meta
+        # What an interrupt returns before the sink exists (during the wait
+        # for the open, say).
+        summary.result = (; ticks = 0, raw_files = String[], status = "interrupted")
         clock = nothing
         # A venue that never closes has no open to wait for and no close to
         # stop at; the session deadline is the only bound that applies.
@@ -631,7 +660,7 @@ function _run_stream(
                 else
                     @info "market closed; not streaming (set stream.wait_for_open to wait)" next_open =
                         clock.next_open
-                    return (; ticks = 0, raw_files = String[])
+                    return (; ticks = 0, raw_files = String[], status = "completed")
                 end
             end
             clock.is_open && @info "market open" next_close = clock.next_close
@@ -697,7 +726,8 @@ function _run_stream(
             end
             close_sink!(sink)
             files = _session_raw_files(cfg, sid)
-            summary.result = (; ticks = summary.ticks, raw_files = files)
+            summary.result =
+                (; ticks = summary.ticks, raw_files = files, status = summary.status)
             @info "session finished" status = summary.status ticks = summary.ticks files =
                 length(files) meta = meta_path frames = session.stats[].frames reconnects =
                 session.stats[].reconnects

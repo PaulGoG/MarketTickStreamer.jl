@@ -45,7 +45,7 @@ end
 mock_binance_total(trades_per_day::Integer) = MOCK_BINANCE_DAYS * trades_per_day
 
 # The day's dump as the venue serves it: one CSV entry, no header, booleans
-# capitalised, timestamps in microseconds (the unit since 2025-01-01).
+# capitalized, timestamps in microseconds (the unit since 2025-01-01).
 # `repeat_head` rows are written twice, the day's first ones ahead of the full
 # day, as in ETHUSDT-trades-2026-07-24.zip.
 function mock_binance_bulk_csv(

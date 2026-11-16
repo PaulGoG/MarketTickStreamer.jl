@@ -275,8 +275,8 @@ omits it, `:mark` appends `"broken"`, `:keep` leaves it; the first two
 read the file twice. `each_page` and `page_rows` stream the prints as in
 [`itch50_trades`](@ref). The statistics count captured packets, IEX-TP
 segments with messages, message blocks, emitted prints, voided prints
-(Trade Breaks seen, under `:keep`), sequence gaps and duplicate segments,
-and whether the capture ended inside a record.
+(Trade Breaks seen for the selected symbols, under `:keep`), sequence gaps
+and duplicate segments, and whether the capture ended inside a record.
 """
 function iex_hist_trades(
     path::AbstractString;
@@ -349,7 +349,9 @@ function iex_hist_trades(
             len >= 38 || _iex_short(file_name, t, len)
             # In the other modes the voided set accounts for the break,
             # counted at the print.
-            broken === :keep && (n_broken[] += 1)
+            broken === :keep &&
+                (wanted === nothing || _iex_symbol(buf, m + 10) in wanted) &&
+                (n_broken[] += 1)
         end
         return nothing
     end

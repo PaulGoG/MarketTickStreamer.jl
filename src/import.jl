@@ -55,6 +55,16 @@ function run_import(
         ),
     )
     isfile(path) || throw(ArgumentError("no such file: $path"))
+    # Both formats are US-equity session files. Under another calendar the
+    # evening prints would be filed under the next date, past the collision
+    # check.
+    cfg.exchange_tz == ITCH50_TZ || throw(
+        ArgumentError(
+            "run_import files prints on the New York calendar, and provider " *
+            "\"$(cfg.provider)\" is on $(cfg.exchange_tz); use a configuration whose " *
+            "provider is on America/New_York (\"alpaca\")",
+        ),
+    )
     sid = _fresh_session_id(
         () -> "import_$(format)_$(Dates.format(Dates.now(UTC), SESSION_STAMP))",
         cfg,
@@ -193,7 +203,7 @@ function _import_collisions(cfg::Config, day::Date, symbols)
         filter(s -> isdir(joinpath(cfg.processed_dir, s)), readdir(cfg.processed_dir)) :
         String[]
     else
-        String.(symbols)
+        uppercase.(String.(symbols))        # as the readers select them
     end
     return [s for s in syms if _processed_exists(cfg, s, day)]
 end

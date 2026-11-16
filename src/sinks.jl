@@ -268,6 +268,15 @@ _read_processed(path::AbstractString) =
     CSV.read(path, DataFrame; types = PROCESSED_STRING_COLUMNS)
 
 # The prints of one processed file, in file order (ascending `time_ns`).
+# The prints of several processed files, in the order given.
+function _trades_from_processed(paths::AbstractVector{<:AbstractString})
+    trades = Trade[]
+    for path in paths
+        append!(trades, _trades_from_processed(path))
+    end
+    return trades
+end
+
 function _trades_from_processed(path::AbstractString)
     df = _read_processed(path)
     return _columns_to_trades(

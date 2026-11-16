@@ -398,8 +398,12 @@ function load_config(path::AbstractString = _default_config_path())
         ),
     )
     max_session_hours = _cfg_value(lim, "limits", "max_session_hours", Float64, 8.0)
-    max_session_hours > 0 ||
-        throw(ArgumentError("limits.max_session_hours must be > 0, got $max_session_hours"))
+    # The deadline is an Int64 of nanoseconds, which holds about 2.56e6 hours.
+    0 < max_session_hours < 2.5e6 || throw(
+        ArgumentError(
+            "limits.max_session_hours must be > 0 and below 2.5e6, got $max_session_hours",
+        ),
+    )
     max_raw_file_mb = _cfg_value(lim, "limits", "max_raw_file_mb", Int, 1024)
     max_raw_file_mb >= 1 ||
         throw(ArgumentError("limits.max_raw_file_mb must be >= 1, got $max_raw_file_mb"))
@@ -566,6 +570,11 @@ function load_config(path::AbstractString = _default_config_path())
     non_price = if qual === nothing
         deepcopy(NON_PRICE_CONDITIONS)
     else
+        qual isa AbstractDict || throw(
+            ArgumentError(
+                "quality.non_price_conditions must be a table of tape = [codes], got $(repr(qual))",
+            ),
+        )
         d = Dict{String,Vector{String}}()
         for (tape, codes) in qual
             codes isa AbstractVector || throw(

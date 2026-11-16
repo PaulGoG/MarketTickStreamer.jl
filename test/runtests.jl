@@ -298,7 +298,7 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             binance = "[provider]\nname = \"binance\"\n"
             p = joinpath(dir, "bounds.toml")
             rejected(body) = (write(p, body); @test_throws ArgumentError load_config(p))
-            # a misspelt table or key must not fall back to a default
+            # a misspelled table or key must not fall back to a default
             rejected("[strem]\nsymbols = [\"A\"]\n")
             rejected(base * "stale_timout_s = 5.0\n")
             # types
@@ -1676,7 +1676,7 @@ hostname = "$(gethostname())"
             for τ in (0.5, 0.9, 0.99)
                 got = example_call(mod, :waiting_quantile, acc, τ)
                 want = exact[max(1, round(Int, τ * length(exact)))]
-                # Bin centres over five orders of magnitude: accurate to a bin
+                # Bin centers over five orders of magnitude: accurate to a bin
                 # width, not to the digit. A P² sketch on these gaps misses by 10x+.
                 @test 0.8 * want <= got <= 1.25 * want
             end
@@ -2187,7 +2187,7 @@ hostname = "$(gethostname())"
                 end
                 # Terminal control sequences never reach the log file.
                 Base.CoreLogging.with_logger(lb) do
-                    @info "colour \e[31mred\e[0m" note = "\e[1mbold\e[0m"
+                    @info "color \e[31mred\e[0m" note = "\e[1mbold\e[0m"
                 end
             end
             close(ioa)
@@ -2196,7 +2196,7 @@ hostname = "$(gethostname())"
             b = read(joinpath(cfg.log_dir, "b.log"), String)
             @test !occursin("socket teardown", a) && occursin("own record", a)
             @test occursin("socket teardown", b) && occursin("own record", b)
-            @test occursin("colour red", b) && occursin("note=bold", b)
+            @test occursin("color red", b) && occursin("note=bold", b)
             @test !occursin("\e[", b)
         end
     end
@@ -3251,7 +3251,7 @@ hostname = "$(gethostname())"
         @test length(E(1, 0, 1, 1, 1)) == 33 && length(Q(1, 0, 1, "A", 1, 1, 'O')) == 42
         # Market Category → tape: Nasdaq C, NYSE A, NYSE American and the other
         # exchanges B (as the SIP itself stamps them), unknown categories "".
-        @test [MarketTickStreamer._itch50_tape(UInt8(c)) for c in "QGSNAPZVM "] == ["C", "C", "C", "A", "B", "B", "B", "B", "", ""]
+        @test [MarketTickStreamer._itch50_tape(UInt8(c)) for c in "QGSNAPZVMX "] == ["C", "C", "C", "A", "B", "B", "B", "B", "B", "", ""]
         T0 = 34_200_000_000_000                                        # 09:30 ET in ns
         day0 = 1_577_682_000_000_000_000                               # 2019-12-30 05:00 UTC
         stream = vcat(
@@ -4101,7 +4101,7 @@ using UnicodePlots: UnicodePlots
 
     @testset "static QA (JET)" begin
         # `report_package` does not reach extension modules, so their entry
-        # points are analysed call by call.
+        # points are analyzed call by call.
         if JET_ENABLED
             trades = [sample_trade(i) for i in 1:60]
             JET.@test_call target_modules = (makie_ext,) tick_theme()
@@ -4125,7 +4125,7 @@ using UnicodePlots: UnicodePlots
         end
     end
 
-    @testset "figures: axis labelling" begin
+    @testset "figures: axis labeling" begin
         E = makie_ext
         # log ticks: plain decimals on short spans, exponent + collapse on long
         v, l = E._log_ticks(0.5, 80.0)

@@ -110,7 +110,7 @@ Base.show(io::IO, it::ProcessedDays) = print(
 # population applied in that order (an integer comparison before a
 # dictionary lookup).
 function _load_day(it::ProcessedDays, date::Date, files::Vector{String})
-    trades = reduce(vcat, (_trades_from_processed(f) for f in files); init = Trade[])
+    trades = _trades_from_processed(files)
     issorted(trades; by = t -> t.time_ns) ||
         sort!(trades; by = t -> t.time_ns, alg = MergeSort)
     if it.window !== nothing

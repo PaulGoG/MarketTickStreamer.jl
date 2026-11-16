@@ -107,7 +107,7 @@ function _replay_processed!(
 )
     resolved = :unresolved
     for (_, files) in days
-        trades = reduce(vcat, (_trades_from_processed(f) for f in files); init = Trade[])
+        trades = _trades_from_processed(files)
         isempty(trades) && continue
         if resolved === :unresolved
             # The clock is settled on the first day and held: a replay that

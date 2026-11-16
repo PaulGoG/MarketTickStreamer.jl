@@ -35,11 +35,11 @@ end
 # The tape of a symbol from the Stock Directory's Market Category byte. Nasdaq
 # listings (Q G S) are tape C; under the CTA plan NYSE listings (N) are tape A
 # and those of the other exchanges (A NYSE American, P NYSE Arca, Z Cboe BZX,
-# V IEX) tape B.
+# V IEX, M NYSE Texas, a value added in June 2025) tape B.
 function _itch50_tape(category::UInt8)::String
     category in (UInt8('Q'), UInt8('G'), UInt8('S')) && return "C"
     category == UInt8('N') && return "A"
-    category in (UInt8('A'), UInt8('P'), UInt8('Z'), UInt8('V')) && return "B"
+    category in (UInt8('A'), UInt8('P'), UInt8('Z'), UInt8('V'), UInt8('M')) && return "B"
     return ""
 end
 
@@ -198,7 +198,8 @@ function _itch50_voided(path::AbstractString)
     io = _open_day_file(path)
     try
         _itch50_scan(io; name = basename(path)) do buf, m, len
-            buf[m] == UInt8('B') && push!(voided, _be64(buf, m + 11))
+            # A short B is left to the main pass, which reports it.
+            buf[m] == UInt8('B') && len >= 19 && push!(voided, _be64(buf, m + 11))
         end
     finally
         close(io)
@@ -237,12 +238,13 @@ the first two read the file twice, the voided ids being collected first.
 `each_page` receives pages of `page_rows` prints as they are decoded and the
 returned `trades` is then empty; without it the prints are accumulated in
 `trades`. Every reader of the package returns this shape: `trades`, then
-`prints`, then its own statistics. `messages` counts every framed message, `prints` the emitted
-prints, `broken` the prints voided by a Broken Trade message (under `:keep`,
-the Broken Trade messages seen), `unresolved` the `E` messages
-whose order was unknown (a file cut before its Add Order), `symbols` the
-selected symbols found in the directory, and `truncated` whether the file
-ended inside a message, as a partial download does.
+`prints`, then its own statistics. `messages` counts every framed message,
+`prints` the emitted prints, `broken` the prints voided by a Broken Trade
+message (under `:keep`, the Broken Trade messages seen for the selected
+symbols), `unresolved` the `E` messages whose order was unknown (a file cut
+before its Add Order), `symbols` the selected symbols found in the directory,
+and `truncated` whether the file ended inside a message, as a partial
+download does.
 """
 function itch50_trades(
     path::AbstractString,
@@ -418,7 +420,7 @@ function itch50_trades(
                 len >= 19 || _itch50_short(file_name, t, len, 19)
                 # In the other modes the voided set accounts for the break,
                 # counted at the print.
-                broken === :keep && (n_broken[] += 1)
+                broken === :keep && selected[_be16(buf, m+1)+1] && (n_broken[] += 1)
             end
             return nothing
         end

@@ -126,7 +126,12 @@ function _with_retry(f, policy::RestPolicy)
             ra =
                 status ? tryparse(Float64, HTTP.header(e.response, "Retry-After", "")) :
                 nothing
-            delay = ra !== nothing ? ra : _backoff_delay(policy.rng, 1.0, attempt, Inf)
+            # A Retry-After that is not a non-negative number of seconds (an HTTP
+            # date, a negative value) falls back to the backoff schedule.
+            delay =
+                ra !== nothing && isfinite(ra) && ra >= 0 ? ra :
+                _backoff_delay(policy.rng, 1.0, attempt, Inf)
+            delay = min(delay, 60.0)
             if status
                 @warn "REST status $(e.status); retrying" attempt delay =
                     round(delay; digits = 1)
@@ -134,7 +139,7 @@ function _with_retry(f, policy::RestPolicy)
                 @warn "REST transport failure; retrying" attempt delay =
                     round(delay; digits = 1) exception = e
             end
-            sleep(min(delay, 60.0))
+            sleep(delay)
         end
     end
 end

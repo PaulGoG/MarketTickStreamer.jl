@@ -260,9 +260,8 @@ logging layer reads the same flag to mute transport-teardown noise, so the flag
 belongs to one session and not to the process.
 
 `outcome` records how the producer ended: `:running` while it streams,
-`:completed` when it stopped on request, at the deadline or after the server
-closed the stream, `:failed` after a fatal stream error or exhausted
-reconnection attempts.
+`:completed` when it stopped on request or at the deadline, `:failed` after a
+fatal stream error or exhausted reconnection attempts.
 """
 struct LiveSession
     channel::Channel{Trade}
@@ -284,23 +283,28 @@ drain.
 function stop!(s::LiveSession)
     s.stop[] = true
     ws = s.ws[]
-    if ws !== nothing
+    ws === nothing || _close_ws(ws)
+    return nothing
+end
+
+# Close `ws`, severing the transport when the closing handshake has not
+# completed after `grace_s`. `close(ws)` sends a CLOSE frame and then reads
+# until the peer's arrives, so on a peer that has gone silent it blocks until
+# TCP gives up; the timer is armed first for that reason.
+function _close_ws(ws; grace_s::Real = 5.0)
+    sever = Timer(grace_s) do _
         try
-            close(ws)
+            close(ws.io)
         catch e
             e isa InterruptException && rethrow()
         end
-        # close() is a handshake; an unresponsive peer that never acks the
-        # CLOSE frame would hang the read loop, so sever the transport after
-        # a short grace if it is still open.
-        Threads.@spawn begin
-            sleep(5.0)
-            try
-                close(ws.io)
-            catch e
-                e isa InterruptException && rethrow()
-            end
-        end
+    end
+    try
+        close(ws)
+    catch e
+        e isa InterruptException && rethrow()
+    finally
+        close(sever)
     end
     return nothing
 end
@@ -377,11 +381,7 @@ function spawn_watchdog(
         while alive[] && !s.stop[]
             if time() - last_frame[] > stale_timeout_s
                 @warn "stale connection; closing" stale_timeout_s
-                try
-                    close(ws)
-                catch e
-                    e isa InterruptException && rethrow()
-                end
+                _close_ws(ws)
                 break
             end
             sleep(0.25)   # fine-grained so connection teardown isn't held up
@@ -482,7 +482,11 @@ function live_source(
                     cfg.reconnect_max_delay_s,
                 )
                 @info "reconnecting" attempt delay = round(delay; digits = 1)
-                sleep(delay)
+                # Slept in slices, so a stop request or the deadline ends the wait.
+                wake = min(time() + delay, deadline)
+                while !session.stop[] && time() < wake
+                    sleep(clamp(wake - time(), 0.0, 0.25))
+                end
             end
         catch e
             e isa FatalStreamError || rethrow()
@@ -490,6 +494,9 @@ function live_source(
             @error "fatal stream error; aborting" e.msg
         finally
             session.outcome[] === :running && (session.outcome[] = :completed)
+            # The guard tasks end on the stop flag; without it they would outlive
+            # a producer that ended on its own and stop a dead session later.
+            session.stop[] = true
             close(ch)
         end
     end
