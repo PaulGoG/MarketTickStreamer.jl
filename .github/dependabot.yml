@@ -11,10 +11,10 @@ updates:
     schedule:
       interval: "weekly"
     ignore:
-      # HTTP.jl stays on 1.x on purpose: 2.x is a rewrite on a new transport,
-      # and the migration is planned, not incidental (docs: architecture, §6).
-      # A version range rather than `update-types`, because widening the
-      # bound from "1.10" to "1.10, 2.8" is not classed as a major update.
+      # HTTP.jl stays on 1.x: 2.x is a rewrite on a new transport, and moving
+      # to it is a change of its own (docs: architecture, §6). A version range
+      # rather than `update-types`, because widening a 1.x bound to admit 2.x
+      # is not classed as a major update.
       - dependency-name: "HTTP"
         versions: [">= 2"]
   - package-ecosystem: "github-actions"

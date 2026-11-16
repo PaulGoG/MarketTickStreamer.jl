@@ -58,7 +58,7 @@ are the defaults of `raw_subdir`, `processed_subdir` and `bulk_subdir`.
 | `raw/<id>.manifest.toml` | Every session | Read. |
 | `processed/<SYMBOL>/<YYYY-MM-DD>.csv` or `.arrow` | Compaction: `compact_raw`, and each day of a backfill or import | Read. |
 | `processed/<SYMBOL>/<YYYY-MM-DD>_#N.csv` or `.arrow` | The rewrite that displaced it | Ignore, or read as history; `_#1` is the oldest. |
-| `*.partial.csv`, `*.partial.arrow`, `*.partial.toml`, `bulk/**/*.partial` | A write or a download in progress | Never read. |
+| `*.partial.csv`, `*.partial.arrow`, `*.partial.toml`, `raw/<id>.meta.toml.partial`, `bulk/**/*.partial` | A write or a download in progress | Never read. |
 | `bulk/binance/<SYMBOL>/<SYMBOL>-<kind>-<YYYY-MM-DD>.zip` and `.zip.CHECKSUM` | A bulk backfill; `kind` is `aggTrades` or `trades` | Read only as the record of a day. |
 | `bulk/itch50/<file>`, `bulk/iex/<file>` | `fetch_itch50`, `fetch_iex_hist` | Read only as the record of a day. |
 | `.session.lock` | The producer holding the tree | Never touched. |
@@ -201,7 +201,10 @@ Files fetched from a venue or a vendor are kept as downloaded, under
 announces, there being no checksum; an IEX HIST day against the CRC-32C the
 file host announces and the size in IEX's index. A download in progress is
 `<file>.partial` and is resumed from there; a file that fails verification
-is deleted. A consumer never reads these files except as the record of a
+is deleted. The trade ids of a Binance dump are consecutive per symbol,
+within a day and across days, so a gap in `id` after sorting marks missing
+prints: `count(!=(1), diff(sort!([t.id for t in trades])))` is zero on a
+complete span. A consumer never reads these files except as the record of a
 day: the prints they hold reach it through the raw and processed layers, and
 an import's sidecar names the file and its SHA-256.
 
@@ -210,7 +213,9 @@ an import's sidecar names the file and its SHA-256.
 `<data_dir>/.session.lock` is a PID file held by the one producer a data
 tree admits at a time: a capture, a backfill or an import. A second producer
 on the same tree refuses to start; a lock left by a dead process is broken
-by the next one. Consumers never take it, and their reads never wait on it.
+by the next one once it has gone ten minutes without a refresh (a live
+producer refreshes it every five). Consumers never take it, and their reads
+never wait on it.
 
 ## Versioning
 

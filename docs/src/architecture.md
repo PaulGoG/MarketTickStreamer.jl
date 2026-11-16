@@ -1,10 +1,8 @@
 # Architecture
 
 The package acquires tick-by-tick (trade-level) market data, live and
-historical, as the substrate for testing exotic time series analysis methods
-on a real-time data flux. Below are the architecture and the reasons for
-each decision; configuration and entry points are on the
-[usage page](usage.md).
+historical, for testing time series analysis methods on a real-time data
+flux; configuration and entry points are on the [usage page](usage.md).
 
 ## 1. Data flow
 
@@ -63,9 +61,9 @@ dropping or buffering unboundedly.
   receipt). Their difference measures pipeline latency; replay paces on its
   clock, receipt time when every record has one and exchange time otherwise,
   either forced by `clock`; `recv_ns = 0` marks backfilled rows.
-- The venue's own resolution is recorded, not assumed: the SIP delivers
-  nanoseconds; Binance delivers milliseconds unless asked for microseconds,
-  which the adapter asks for. Every session sidecar carries
+- The venue's own resolution is recorded: the SIP delivers nanoseconds;
+  Binance delivers milliseconds unless asked for microseconds, which the
+  adapter asks for. Every session sidecar carries
   `provenance.timestamp_unit`.
 
 ## 3. Persistence: two layers
@@ -112,8 +110,8 @@ confines that change to `sinks.jl`.
 
 Plain Julia tasks, no locks. The producer (WebSocket read loop) `put!`s into
 the bounded channel; the sink task drains it with a poll/batch loop
-(0.05 s idle poll, negligible against a 30 s flush interval). **Closing the
-channel is the only shutdown signal**: producer exit (deadline, fatal error,
+(0.05 s idle poll, negligible against a 30 s flush interval). Closing the
+channel is the only shutdown signal: producer exit (deadline, fatal error,
 retry exhaustion, `stop!`) closes it, the sink drains what remains, flushes,
 and returns its count. Ctrl-C is converted to `InterruptException`
 (`Base.exit_on_sigint(false)`) and takes the same path — no data is lost on
@@ -127,32 +125,33 @@ interrupt (tested).
 - **Session deadline**: `limits.max_session_hours` is enforced by a guard
   task, so it also ends a connection that never drops; the reconnect loop
   alone would only test it between connections.
-- **Fatal vs retryable**: Alpaca error codes 401–411 (bad auth, connection
-  limit, bad subscription) abort immediately, since retrying them risks a
-  ban. Both adapters carry the fatal signal out of the WebSocket handler by
-  value and throw it after the connection returns, since an exception thrown
-  inside the handler arrives wrapped and would be retried as a disconnect.
-  Both paths are tested against the mocks.
+- **Fatal vs retryable**: Alpaca error codes 401–406 and 409–411 (bad auth,
+  connection limit, bad subscription) abort immediately, since retrying them
+  risks a ban. Both adapters carry the fatal signal out of the WebSocket
+  handler by value and throw it after the connection returns, since an
+  exception thrown inside the handler arrives wrapped and would be retried as
+  a disconnect. Both paths are tested against the mocks.
 - **Stale connections**: HTTP.jl 1.x websockets have no read-idle timeout, so
   a watchdog task force-closes the socket after `stream.stale_timeout_s`
   without a frame, triggering the normal reconnect path.
 - **Market-hours guards**: `/v2/clock` gates connection
   (`stream.require_market_open`); `stream.wait_for_open` sleeps until the
   next open instead of exiting; `stream.stop_at_market_close` schedules a
-  graceful stop at `next_close` so an unattended session does not idle on a
-  dead overnight connection. Half-days and holidays need no special case,
+  stop at `next_close` so an unattended session does not idle on a dead
+  overnight connection. Half-days and holidays need no special case,
   because the clock endpoint, not a local calendar, is authoritative
   (early-close behavior is tested end-to-end against a mock clock).
   Delayed feeds (`delayed_sip`, 15 min) shift both guards by the feed
   delay via `feed_delay_ns`: the open-wait extends past the silent
-  post-open window and the close guard runs to `next_close + delay + 60 s`
-  so the delayed tail of the tape is captured.
+  post-open window and the close guard runs to `next_close + delay + 65 s`
+  (`next_close + 5 s` on a real-time feed) so the delayed tail of the tape
+  is captured.
 - **Shutdown**: `close(ws)` is a handshake; a peer that never
   acks the CLOSE frame would hang the read loop, so `stop!` severs the raw
-  transport after a 5 s grace if the graceful close has not completed.
+  transport after a 5 s grace if the close handshake has not completed.
 - **Resource guards**: free-disk check before and during a session
-  (`limits.min_free_disk_gb`, mid-session breach stops the stream
-  gracefully); compaction reroutes raw inputs whose estimated footprint
+  (`limits.min_free_disk_gb`; a breach mid-session stops the stream through
+  `stop!`); compaction reroutes raw inputs whose estimated footprint
   exceeds `limits.compact_mem_fraction` of free RAM through bounded-memory
   spill compaction, which keeps at most `limits.max_open_spill_files` spill
   files open and so stays inside the file-descriptor limit however many
@@ -163,7 +162,7 @@ interrupt (tested).
   goes silent cannot block a backfill for good. Timeouts, refused or dropped
   connections and 429/5xx are retried with exponential backoff, honoring
   `Retry-After`; anything else fails at once.
-- **Nothing is process-global**: a session runs under its own logger
+- **No process-global session state**: a session runs under its own logger
   (`with_logger`), which it closes when it ends, and its stop flag is an
   atomic owned by the session and shared with that logger to mute transport
   teardown noise. The caller's global logger is untouched, and two sessions
@@ -176,20 +175,20 @@ interrupt (tested).
   `session_report` audits every capture for duplicates, exchange-time gaps,
   out-of-order delivery, and clock skew (negative receive latency) before
   the data is used for science.
-- **Provenance, crash-only**: every stream/backfill session writes its
-  `<session_id>.meta.toml` sidecar at START (`status = "running"`; git
-  commit + dirty flag, versions, hostname, pid, hardware fingerprint —
-  CPU model/cores, memory, thread and BLAS-thread counts, `versioninfo` —
-  and the full config snapshot) and finalizes it at exit (`completed` /
-  `interrupted` / `failed`, counts: prints received, and for a backfill the
-  prints stored after compaction removed duplicates). A copy of the resolved
-  `Manifest.toml` is written beside it as `<session>.manifest.toml` and
-  named under `provenance.manifest`: no manifest is tracked in the
-  repository, so this copy is what pins the dependency versions a session
-  ran with. Startup reconciliation relabels sidecars of dead processes
-  `aborted` and reports zero-byte raw stubs; provenance thus survives SIGKILL
-  and power loss, which handling on the graceful path alone cannot ensure
-  (Ctrl-C delivery to a threaded Julia process is best-effort).
+- **Provenance, crash-only**: every session (stream, backfill, import)
+  writes its `<session_id>.meta.toml` sidecar at start
+  (`status = "running"`; git commit + dirty flag, versions, hostname, pid,
+  hardware fingerprint — CPU model/cores, memory, thread and BLAS-thread
+  counts, `versioninfo` — and the full config snapshot) and finalizes it at
+  exit (`completed` / `interrupted` / `failed`, counts: prints received, and
+  for a backfill or an import the prints stored after compaction removed
+  duplicates). A copy of the resolved `Manifest.toml` is written beside it
+  as `<session>.manifest.toml` and named under `provenance.manifest`: no
+  manifest is tracked in the repository, so this copy is what pins the
+  dependency versions a session ran with. Startup reconciliation relabels
+  sidecars of dead processes `aborted` and reports zero-byte raw stubs, so
+  provenance survives SIGKILL, which a shutdown handler alone could not
+  guarantee (Ctrl-C delivery to a threaded Julia process is best-effort).
 - **Reproducible randomness**: the package's only random draws are the
   jitter of its backoff schedules, REST retries and stream reconnects. Both
   generators derive from one seed, `[rng] seed`, drawn from the OS at load
@@ -203,9 +202,10 @@ interrupt (tested).
   any abort resumes. Compaction spills to per-group files when the input
   exceeds the in-memory budget, bounding memory by the largest single
   (symbol, day) group. Those files go beside `out_dir`, never to `tempdir()`:
-  the spill copies the whole input once, and `/tmp` is RAM on a systemd
-  distribution, so the bounded-memory path would otherwise be the one that
-  exhausts memory. The free space is checked before the first line is read.
+  the spill copies the whole input once, and where `/tmp` is a tmpfs, the
+  default on several systemd distributions, it is RAM, so the bounded-memory
+  path would otherwise be the one that exhausts memory. The free space is
+  checked before the first line is read.
 - **Single-instance lock**: a PID-file lock per data tree prevents two
   sessions from interleaving on one raw directory; stale locks from dead
   processes break automatically.
@@ -215,7 +215,7 @@ interrupt (tested).
 | Choice | Rationale |
 |---|---|
 | `HTTP.jl` pinned to 1.x | 2.x is a rewrite on a new transport (Reseau.jl backend). The stale-connection watchdog exists because 1.x WebSockets have no read-idle timeout, and the chunked downloads because 1.x bounds a whole request by one timeout; both go with the migration, which otherwise renames keyword arguments (`readtimeout`→`read_idle_timeout` etc.). |
-| `JSON.jl` 1.x (since 0.3.0; JSON3 before) | JSON3 is deprecated in General and caps Parsers at 2, which blocks CSV 1.x. Measured against JSON.jl 1.10, on one core: a raw line parses straight into `Trade` four times faster, with no `SubString` penalty, and a 10 000-trade REST page about 80 times faster, the JSON3 cost being quadratic in page length. |
+| `JSON.jl` 1.x (since 0.3.0; JSON3 before) | JSON3 is deprecated in General and caps Parsers at 2, which blocks CSV 1.x. Measured with JSON.jl 1.10 against JSON3, on one core: a raw line parses straight into `Trade` four times faster, with no `SubString` penalty, and a 10 000-trade REST page about 80 times faster, the JSON3 cost being quadratic in page length. |
 | No `WebSockets.jl` | Abandoned (last release 2022). `HTTP.WebSockets` is the ecosystem standard. |
 | No `AlpacaMarkets.jl` | REST-only, single maintainer, pins that conflict with a modern stack. Direct HTTP+JSON is a few hundred lines and fully under test. |
 | `PrecompileTools.jl` | The consumer-facing paths are compiled with the package; the first `compact_raw` and the first processed-file replay cost seconds of compilation before. |
@@ -264,8 +264,8 @@ tail-exponent annotations):
 - **Overview figures** — one panel per symbol across many days from the
   processed tree: price on a concatenated *trading-time* axis (overnight
   gaps removed, session boundaries marked), a day × session-minute
-  activity heatmap, and pooled **intra-session** waiting-time and size
-  CCDFs — overnight gaps are excluded by construction because they would
+  activity heatmap, and pooled intra-session waiting-time and size CCDFs;
+  overnight gaps are excluded by construction because they would
   contaminate the waiting-time tail.
 
 CCDF point clouds are deterministically thinned (tail-preserving) and
@@ -282,10 +282,9 @@ torn-line carries, roll-aware) and renders an in-terminal dashboard: tick
 totals and rate, tape-head timestamp and lag, per-symbol counts. The
 dashboard is text; with UnicodePlots loaded a second package extension adds
 a rate-history plot and draws the counts as a bar chart (headless-safe).
-An attached process was chosen over an in-process panel: it cannot interfere
-with the capture, its logging or its progress output; it works identically
-for live capture and backfill; and it can attach to or detach from any
-session at any point, including one started by another process. Refresh
-cadence and panel sizing come from the `[monitor]` config table;
+An attached process was chosen over an in-process panel because it cannot
+interfere with the capture or its logging, and it attaches to a live capture
+or a backfill at any point, including one started by another process.
+Refresh cadence and panel sizing come from the `[monitor]` config table;
 `scripts/monitor.jl` is the entry point.
 

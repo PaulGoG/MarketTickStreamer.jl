@@ -72,11 +72,12 @@ Persistent=false
 WantedBy=timers.target
 ```
 
-`Persistent=false` is deliberate: a firing missed while the host was down
-should not start a capture at an arbitrary later hour; the next weekday's
-firing will. `Restart=on-failure` restarts a session that ended in an
-error (a fatal protocol error, exhausted reconnections) but not one that
-ended by the clock, which exits cleanly.
+With `Persistent=false`, a firing missed while the host was down does not
+start a capture at an arbitrary later hour; the next weekday's firing does.
+`Restart=on-failure` restarts a session that ended in an error (a fatal
+protocol error, exhausted reconnections, an unhandled exception), which exits
+with a nonzero status, but not one that ended by the clock or by a signal,
+which exits with status 0.
 
 ## Enable
 

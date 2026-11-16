@@ -6,6 +6,62 @@ Notable changes to MarketTickStreamer. The format follows
 
 ## [Unreleased]
 
+Corrections to session shutdown and exit status, to the tail and
+survival-function diagnostics, and to what the documentation states about
+market-data rules and their literature. The file contract and the
+configuration schema are unchanged.
+
+### Added
+- `run_stream` returns `status` beside `ticks` and `raw_files`: the status
+  written to the session's sidecar.
+
+### Fixed
+- `scripts/stream.jl` exits with status 1 when the session ended `failed`
+  (a fatal stream error, exhausted reconnections). It exited 0, so a
+  supervisor with `Restart=on-failure` did not restart it, contrary to the
+  unattended-operation page.
+- Closing a connection whose peer has gone silent is bounded at 5 s. The
+  stale-connection watchdog and `stop!` waited for the peer's CLOSE frame,
+  that is, until TCP gave up.
+- A producer that ended on its own left its deadline and close guards
+  running; they end with it. A reconnect backoff ends at a stop request or
+  at the session deadline.
+- `follow_source` and `monitor_raw` without `session` attach to the whole
+  session of the newest raw part. On a backfill they followed one
+  (symbol, day) part set and then waited for the sidecar.
+- The tail exponent of the diagnostic figures leaves out the sizes tied with
+  its threshold, which inflated it by their share (1.43 where the corrected
+  estimate is 1.16 on a liquid US equity day). The survival-function panels
+  are labeled `P(X ≥ x)`, carry one point per distinct value, and the
+  inter-arrival panels state the share of zero gaps they leave out.
+- The worked examples measure the gap after a late print from the latest
+  timestamp seen, not from the late one, and `print_rate` counts the prints
+  whose gap was not positive.
+- `run_import` applies its collision check to symbols as the readers select
+  them (case-insensitively) and refuses a configuration that is not on the
+  New York calendar.
+- `snapshots(...; clock = :recv)` throws an `ArgumentError` on a print without
+  a receive timestamp instead of stepping its boundary from 1970.
+- Session log files render an `exception = (e, backtrace)` value as the error
+  message; they held the backtrace as raw pointers.
+- `limits.max_session_hours` must be finite: `inf` loaded and then failed at
+  the start of the stream. A `quality.non_price_conditions` that is not a
+  table is an `ArgumentError` naming the key.
+- ITCH Market Category `M` (NYSE Texas, in the specification since June
+  2025) is tape B; it was filed without a tape. A truncated Broken Trade
+  message is reported as an `IntegrityError`. Under `broken = :keep` both
+  vendor readers count the breaks of the selected symbols only, as the other
+  modes do.
+- A `Retry-After` header that is not a non-negative number of seconds falls
+  back to the backoff schedule; a negative value raised an `ArgumentError`.
+- `run_stream` interrupted before the session started returns its documented
+  result, and the data-tree lock is released when the sidecar cannot be
+  finalized.
+- Documentation: a Binance day is verified by the vendor's checksum, and the
+  continuity of its trade ids is a check the reader can make, not one the
+  package performs; the transaction-clock literature is cited with the work
+  that contests it; the round-lot rule is cited as 17 CFR 242.600(b)(93).
+
 ## [2.0.3] - 2026-10-31
 
 Dependent projects get their installation entry, and the TLS stack
@@ -118,10 +174,10 @@ what maintenance covers.
 ## [1.1.0] - 2026-10-28
 
 Corrections to how a session records its own end, and to which vendor
-requests are retried, found in an audit of the 1.0 code. A failed live
-session now reads `failed` in its sidecar, and the sidecar says whether its
-git commit is real. This is the last release of the 1.x series; 2.0
-changes the Julia API and keeps the files and the configuration.
+requests are retried. A failed live session now reads `failed` in its
+sidecar, and the sidecar says whether its git commit is real. This is the
+last release of the 1.x series; 2.0 changes the Julia API and keeps the files
+and the configuration.
 
 ### Added
 - `save_session_figures` and `save_overview_figures` take `non_price`, the
@@ -215,8 +271,9 @@ files.
   reached as `MarketTickStreamer.<name>`.
 - `historical_trade_count` on a provider without a countable tape throws an
   `ArgumentError` with a message that names the check. `coverage_report` is
-  therefore an Alpaca check; a Binance day is verified
-  by its vendor checksum and trade-id continuity.
+  therefore an Alpaca check; a Binance day is verified by its vendor
+  checksum; its trade ids are consecutive, so completeness can be checked on
+  them.
 - Session log files are stripped of terminal control sequences.
 
 ### Fixed
@@ -324,9 +381,9 @@ one convention, and a capture host runs unattended under systemd.
   size and SHA-256, and the reader's counts. `scripts/import.jl` drives it.
 - A manual page on unattended capture under systemd: a user service and a
   weekday timer that start the session before the open and let the
-  package's railings wait for the bell and stop at the close, with SIGINT
-  as the stop signal so the sidecar is finalized; the units are verified
-  with `systemd-analyze`.
+  package's market-hours guards wait for the bell and stop at the close,
+  with SIGINT as the stop signal so the sidecar is finalized; the units are
+  verified with `systemd-analyze`.
 
 ### Fixed
 - A vendor-file download is fetched in bounded Range requests of 8 MiB,
@@ -450,8 +507,8 @@ way to JSON.jl, which in turn opens the way to CSV.jl 1.1.
   without an error, and the adapter ends its walk on a short page. The shipped
   configuration had `page_limit = 10000`. The limit is now bounded per
   provider (`ProviderSpec.max_page_limit`), in the configuration and in both
-  adapters. **Binance days backfilled with a larger limit are truncated and
-  should be downloaded again.**
+  adapters. Binance days backfilled with a larger limit are truncated and
+  should be downloaded again.
 - `limits.max_session_hours` did not stop a connection that never dropped: it
   was tested only between reconnections. A guard task now enforces it.
 - Recorded-pace replay of a backfilled capture ran at full speed, because it
@@ -467,7 +524,7 @@ way to JSON.jl, which in turn opens the way to CSV.jl 1.1.
 - `docs/make_readme_assets.jl` relied on CairoMakie being installed in the
   global environment.
 - Log axes spanning up to four orders of magnitude outside the plain-decimal
-  range labelled their 2× and 5× ticks with the rounded power of ten, so a
+  range labeled their 2× and 5× ticks with the rounded power of ten, so a
   tick at 0.2 read `10⁻¹` and one at 0.5 read `1`. Intermediate ticks now
   carry their mantissa.
 - Parsing an Alpaca REST page cost time quadratic in its length: converting
@@ -513,8 +570,8 @@ way to JSON.jl, which in turn opens the way to CSV.jl 1.1.
   percentile: 15.7 bp for `4`+`W`, 21.8 bp for `P`, 41.3 bp for `4`, against
   0.63 bp). One AAPL session loses 12 175 of 420 969 price-forming prints
   (2.9 %), and its price-forming minimum moves from 304.35 to 316.00.
-  **Statistics computed on the earlier population are not comparable with
-  those computed on this one.** The earlier lists remain available through
+  Statistics computed on the earlier population are not comparable with
+  those computed on this one. The earlier lists remain available through
   `[quality.non_price_conditions]` and the `non_price` keyword.
 - **Breaking: `Bar` has a closing instant.** A new third field `close_ns`
   follows `time_ns`. For `tick_bars`, `volume_bars` and `dollar_bars` it is
@@ -550,7 +607,7 @@ way to JSON.jl, which in turn opens the way to CSV.jl 1.1.
   `regular_session` (exchange-local hours), `price_unit` and `size_unit`.
   `overview_figure` takes `session`, all four figure functions take the two
   units, and `scripts/visualize.jl` passes them with the provider's time zone.
-  A Binance capture is now drawn on the UTC day, labelled every four hours,
+  A Binance capture is now drawn on the UTC day, labeled every four hours,
   with prices in the quote asset and sizes in the base asset, and the wait
   across midnight counts as a waiting time when the next day is present; it
   was drawn on the New York clock and the US equity session, in dollars and
@@ -560,7 +617,7 @@ way to JSON.jl, which in turn opens the way to CSV.jl 1.1.
   read-only for an installed package.
 - The price and activity panels of `session_figure` share their time range.
 - `load_config` checks every key for type and documented bounds and rejects
-  unknown tables and keys, so a misspelt key no longer falls back to its
+  unknown tables and keys, so a misspelled key no longer falls back to its
   default. A configuration that loaded before may now be rejected.
 - No `Manifest.toml` is tracked. Each session writes a copy of the manifest it
   ran with next to its sidecar (`provenance.manifest`).
@@ -577,7 +634,7 @@ way to JSON.jl, which in turn opens the way to CSV.jl 1.1.
   distributions still count every print. Both take `non_price`.
 - Figures follow one layout standard: 26 pt labels over 22 pt ticks, 3-wide
   data lines, 1600 × 1100 canvas, a single exponent per axis, survival
-  functions anchored on a labelled power of ten, a logarithmic activity color scale,
+  functions anchored on a labeled power of ten, a logarithmic activity color scale,
   and overview panels aligned on one grid.
 - JSON is read and written with JSON.jl 1.x in place of JSON3, which is
   deprecated in the General registry and held CSV below 1.0 through its
@@ -637,17 +694,17 @@ way to JSON.jl, which in turn opens the way to CSV.jl 1.1.
   capture taken with this package the lot fell from 100 shares to 40 on
   2026-05-01,
   and the median inter-arrival time of the price-forming population dropped by
-  a factor of eight across the boundary with no change in market behaviour;
+  a factor of eight across the boundary with no change in market behavior;
   ERIE went 100, 40 and back to 100 inside eight months. Nothing on the tape
   marks such a redefinition, so the round lot is now in every session report
   and every sidecar.
 
 ## [0.2.0] - 2026-09-13
 
-Makes the package provider-agnostic in fact rather than in description, and
-puts a year of real tape through it. A second adapter (Binance spot: public,
-24-hour, UTC) forced provider selection, feed vocabulary, exchange calendar
-and trading days onto dispatch, each of which had silently been Alpaca's.
+Makes the package provider-agnostic and puts a year of real tape through it.
+A second adapter (Binance spot: public, 24-hour, UTC) forced provider
+selection, feed vocabulary, exchange calendar and trading days onto
+dispatch, each of which had silently been Alpaca's.
 Three defects found by running the pipeline at scale are fixed — two of them
 data-losing. The static-QA layer, a benchmark suite, a Documenter manual and
 two executed consumer examples arrive with it.
@@ -665,7 +722,7 @@ two executed consumer examples arrive with it.
   than trading days; a window may therefore resolve onto a weekend or a
   holiday and return no prints.
 - Static analysis in the test suite beside Aqua: `ExplicitImports.jl` asserts
-  that no name enters the module namespace implicitly, and `JET.jl` analyses
+  that no name enters the module namespace implicitly, and `JET.jl` analyzes
   the package with its reports restricted to this module.
 - A `Documenter.jl` manual under `docs/`, in its own environment consuming
   the package by path: an overview, the architecture record (promoted from
@@ -711,10 +768,9 @@ two executed consumer examples arrive with it.
   transcribing plan tables that describe a feed this package does not consume.
 - A worked consumer example, `examples/waiting_times.jl`: replay a capture,
   fan out to two consumers, and estimate the inter-arrival distribution on
-  each. The test suite executes it, so it cannot drift from the interfaces it
-  documents. Both `tee` outputs are lossless — reading an arrival process off
-  a lossy output does not thin the sample evenly, it discards precisely the
-  bursts the distribution is about.
+  each. The test suite executes it, so an interface change that breaks it
+  fails the suite. Both `tee` outputs are lossless, because a lossy output
+  drops ticks mostly in the bursts, which hold the short waiting times.
 - `compact_raw` accepts `scratch_dir`, placing the spill copy explicitly.
 - A second worked consumer, `examples/live_diagnostics.jl`, and an `examples/`
   environment of its own so a consumer's dependencies stay out of the
@@ -796,12 +852,11 @@ two executed consumer examples arrive with it.
   over.
 - Spill compaction places its scratch copy beside `out_dir` instead of in
   `tempdir()`, and verifies the free space before reading a line. The spill
-  pass writes every input line back out once, and on systemd distributions
-  `/tmp` is a tmpfs sized at half of RAM — so the path that exists to bound
-  memory was in fact writing the copy into memory. Recompacting a 26 GB corpus
-  exhausted 30 GiB of RAM and took the machine's shell down with it; measured
-  on the same input, scratch use of tmpfs falls from the full input size to
-  zero.
+  pass writes every input line back out once, and where `/tmp` is a tmpfs
+  (the default on several systemd distributions, sized at half of RAM) that
+  copy went into memory. Recompacting a 26 GB corpus exhausted 30 GiB of RAM;
+  measured on the same input, scratch use of tmpfs falls from the full input
+  size to zero.
 - Inference on three paths that JET flagged: the session lock was typed
   `Union{LockMonitor,Bool}`, so releasing it dispatched dynamically over a
   type with no `close` method; the backfill per-page closure captured a sink
@@ -819,7 +874,7 @@ against the historical SIP tape.
 - Live acquisition over the Alpaca v2 WebSocket protocol with authenticated
   reconnection, exponential backoff, a stale-stream watchdog, and a
   market-close guard; the `iex`, `sip` and `delayed_sip` feeds, the last
-  empirically print-complete against the consolidated tape.
+  checked for coverage against the consolidated tape.
 - Historical acquisition over the REST trades endpoint: per-day iteration,
   page streaming, rate-limit pacing, and resumption of interrupted downloads.
 - A crash-only raw layer — append-only NDJSON, one normalized `Trade` per
@@ -828,8 +883,8 @@ against the historical SIP tape.
   commit, package versions, and a hardware fingerprint.
 - Compaction of raw sessions into per-symbol per-day CSV or Arrow, with
   spill compaction for inputs that exceed the live-heap ceiling.
-- Paced replay of recorded sessions as a `Channel{Trade}` indistinguishable
-  from the live source, and `tee` fan-out to concurrent consumers.
+- Paced replay of recorded sessions as a `Channel{Trade}` of the same type as
+  the live source, and `tee` fan-out to concurrent consumers.
 - A data-quality layer: duplicate detection, ordering and gap analysis,
   session and coverage reports.
 - CairoMakie session diagnostics and a multi-day overview family; an

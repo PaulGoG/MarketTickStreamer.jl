@@ -31,8 +31,8 @@ JET fails the suite.
 
 ## Formatting
 
-JuliaFormatter, against the committed `.JuliaFormatter.toml`. CI fails on
-unformatted files.
+JuliaFormatter 2, against the committed `.JuliaFormatter.toml`. The `Format`
+workflow fails on unformatted files.
 
 ## Documentation
 

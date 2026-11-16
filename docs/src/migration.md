@@ -3,11 +3,11 @@
 2.0 changes the Julia API in four places and leaves the rest of the public
 surface as it was: the configuration file, the file contract (raw parts,
 sidecars, processed day files, vendor files) and the scripts' arguments and
-products are those of 1.1. A data tree written by 1.x is read by 2.0
-unchanged, and a 1.x configuration file loads unchanged unless its
-`[alpaca]` or `[binance]` table holds a key other than the adapter's
-endpoint roots, which 2.0 rejects as it rejects an unknown key anywhere
-else.
+products are those of 1.1; 2.0.1 added `--config` to the two capture scripts.
+A data tree written by 1.x is read by 2.0 unchanged, and a 1.x configuration
+file loads unchanged unless its `[alpaca]` or `[binance]` table holds a key
+other than the adapter's endpoint roots, which 2.0 rejects as it rejects an
+unknown key anywhere else.
 
 ## Modes are `Symbol`s
 

@@ -1,9 +1,9 @@
 # Usage and configuration
 
-Everything tunable lives in `config/config.toml`. Nothing operational is
-hardcoded. The parser enforces what the comments state (types, enumerated
-choices, bounds) and fails with a message naming the offending key, so a
-session cannot start from a configuration it could not honor.
+Everything tunable lives in `config/config.toml`. The parser enforces what
+the comments state (types, enumerated choices, bounds) and fails with a
+message naming the offending key, so a session cannot start from a
+configuration it could not honor.
 
 ## Credentials
 
@@ -53,9 +53,9 @@ package itself depends on neither.
 | `name` | Provider adapter. One of: `"alpaca"` (US equities, credentialed), `"binance"` (crypto spot, public), or the name of an adapter registered by another package (see the providers page of the API reference). |
 | `feed` | Live feed. Binance: `"trade"` or `"aggTrade"`. Alpaca: one of `"iex"` (real-time, single venue, 30 symbols on the free tier), `"delayed_sip"` (consolidated tape, 15 minutes late, free), `"sip"` (real-time consolidated, paid). |
 
-On the free tier `delayed_sip` is the scientifically stronger choice: it is
-the complete consolidated tape, and a fixed 15-minute offset is irrelevant
-to any analysis that is not trading on it.
+On the free tier `delayed_sip` is the better choice for research: it carries
+the consolidated tape, where `iex` carries one venue, and a fixed 15-minute
+offset does not matter to an analysis that does not trade on it.
 
 ## `[credentials]`
 
@@ -78,7 +78,7 @@ where that file is a read-only template to copy
 | `channels` | Subset of `"trades"`, `"quotes"`, `"bars"`. Trades only by default: quote and bar frames are parsed into [`Quote`](@ref) and [`Bar`](@ref) and delivered to the `on_quote` / `on_bar` callbacks of [`live_source`](@ref), but neither is persisted. A quote stream carries an order of magnitude more messages than the trade stream, and persisting it is out of scope until a microstructure question requires it. |
 | `require_market_open` | Query the market clock before connecting and exit if closed. |
 | `wait_for_open` | When closed, sleep until the next open instead of exiting. The wait is shifted by the feed's intrinsic delay. |
-| `stop_at_market_close` | Schedule a graceful stop at the session's next close, likewise shifted. |
+| `stop_at_market_close` | Schedule a stop at the session's next close, likewise shifted. |
 | `reconnect_max_retries` | Reconnection attempts per disconnect before giving up. The counter resets after any connection that delivered data. |
 | `reconnect_base_delay_s` | Backoff base; the delay is `base * 2^attempt`, jittered. |
 | `reconnect_max_delay_s` | Backoff cap. |
@@ -110,14 +110,14 @@ loop indefinitely.
 | `channel_capacity` | In-flight tick buffer; the producer blocks when full. |
 | `max_symbols` | Subscription cap. |
 | `min_free_disk_gb` | Refuse to start, and stop an active session, below this free space. |
-| `max_live_heap_mb` | Live-heap ceiling for backfill and compaction; the streaming paths check it and spill rather than exhaust memory. |
+| `max_live_heap_mb` | Live-heap ceiling for backfill pages and spill compaction; past it a full GC runs, and if the heap is still above it the run stops with a `ResourceError`. |
 | `max_open_spill_files` | File handles a spilling compaction keeps open at once. |
 | `compact_mem_fraction` | Share of the free RAM an in-memory compaction may claim; beyond it the run spills. |
 | `spill_headroom` | Scratch space a spilling compaction requires, as a multiple of the input size. |
 | `compact_footprint_factor` | Estimated in-memory footprint per byte of input, which decides whether a file fits in memory. |
 | `read_mem_fraction` | Share of the free RAM a materialized corpus read (`read_processed`) may claim; beyond it the read refuses and points at `eachday`. |
 
-These are the pipeline's safety margins; no cutoff is hardcoded elsewhere.
+These are the pipeline's safety margins.
 
 ## `[replay]`
 
@@ -165,8 +165,8 @@ separate. The shipped defaults are derived from the tape plans'
 sale-condition matrices.
 
 This is used only by [`price_forming`](@ref), [`filter_price_forming`](@ref)
-and the `n_price_forming` column of [`session_report`](@ref). **Capture is
-never filtered** — see [Replay & Analysis Interfaces](replay.md) for why the
+and the `n_price_forming` column of [`session_report`](@ref). Capture is
+never filtered; [Replay & Analysis Interfaces](replay.md) explains why the
 distinction belongs to the analysis rather than to the recording.
 
 A print carrying several conditions is disqualified by any one of them, and a

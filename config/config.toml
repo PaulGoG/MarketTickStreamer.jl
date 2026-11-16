@@ -38,7 +38,7 @@ max_raw_file_mb = 1024           # roll to a new raw file beyond this size [MiB]
 channel_capacity = 100000        # in-flight tick buffer [ticks]; >= 1
 max_symbols = 30                 # subscription cap; >= 1
 min_free_disk_gb = 2.0           # minimum free space to start or continue a session [GiB]; >= 0
-max_live_heap_mb = 4096          # live-heap ceiling for backfill and compaction [MiB]; > 0
+max_live_heap_mb = 4096          # live-heap ceiling for backfill pages and spill compaction [MiB]; > 0
 max_open_spill_files = 256       # spill-compaction file handles held open; >= 1
 compact_mem_fraction = 0.5       # in-memory compaction up to this share of free RAM; 0 < x <= 1
 spill_headroom = 1.1             # scratch space required, as a multiple of the input size; >= 1
@@ -58,7 +58,7 @@ end_date = "today-1d"            # inclusive end; >= start_date; same forms
 feed = "sip"                     # historical feed; alpaca: "iex" | "sip"; binance: "aggTrade" (rest), "aggTrade" | "trade" (bulk)
 source = "rest"                  # one of: "rest" | "bulk"; "bulk" = the venue's daily files, binance only
 page_limit = 10000               # rows per REST page; 1 to the provider maximum (alpaca 10000, binance 1000)
-rate_limit_sleep_s = 0.35        # pause between REST pages [s]; >= 0
+rate_limit_sleep_s = 0.35        # pause between REST pages, or between bulk days [s]; >= 0
 resume = true                    # skip (symbol, day) pairs already present in processed/
 keep_raw = true                  # keep each day's raw NDJSON after compaction; false only with source = "bulk"
 

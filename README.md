@@ -1,10 +1,13 @@
 # MarketTickStreamer.jl
 
-[![Documentation](https://img.shields.io/badge/docs-stable-blue.svg)](https://PaulGoG.github.io/MarketTickStreamer.jl/stable/)
-[![CI](https://github.com/PaulGoG/MarketTickStreamer.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/PaulGoG/MarketTickStreamer.jl/actions/workflows/CI.yml)
+[![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://PaulGoG.github.io/MarketTickStreamer.jl/stable/)
+[![CI](https://github.com/PaulGoG/MarketTickStreamer.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/PaulGoG/MarketTickStreamer.jl/actions/workflows/CI.yml?query=branch%3Amain)
 [![Coverage](https://codecov.io/gh/PaulGoG/MarketTickStreamer.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/PaulGoG/MarketTickStreamer.jl)
-[![Aqua QA](https://raw.githubusercontent.com/JuliaTesting/Aqua.jl/master/badge.svg)](https://github.com/JuliaTesting/Aqua.jl)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Aqua QA](https://juliatesting.github.io/Aqua.jl/dev/assets/badge.svg)](https://github.com/JuliaTesting/Aqua.jl)
+[![JET](https://img.shields.io/badge/tested%20with-JET.jl-233f9a)](https://github.com/aviatesk/JET.jl)
+[![Format](https://github.com/PaulGoG/MarketTickStreamer.jl/actions/workflows/Format.yml/badge.svg?branch=main)](https://github.com/PaulGoG/MarketTickStreamer.jl/actions/workflows/Format.yml?query=branch%3Amain)
+[![Julia](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2FPaulGoG%2FMarketTickStreamer.jl%2Fmain%2FProject.toml&query=%24.compat.julia&label=julia&color=9558b2)](https://julialang.org/downloads/)
+[![Platform](https://img.shields.io/badge/platform-Linux-lightgrey)](#setup)
 
 Provider-agnostic tick-by-tick market data acquisition in pure Julia, built
 for scientific time series research. It streams trades live over WebSocket,
@@ -45,10 +48,11 @@ The full tree is at the [end of this file](#full-file-tree).
 
 ## Setup
 
-Requires Julia ≥ 1.12. No `Manifest.toml` is tracked: each environment resolves
-from its `[compat]` bounds on first activation, and every capture session
-stores a copy of the manifest it ran with next to its provenance sidecar. From
-a clone:
+Requires Julia ≥ 1.12 on Linux; other platforms are untested (crash
+reconciliation reads `/proc`). No `Manifest.toml` is tracked: each environment
+resolves from its `[compat]` bounds on first activation, and every capture
+session stores a copy of the manifest it ran with next to its provenance
+sidecar. From a clone:
 
 ```bash
 julia -i activate.jl        # activates and instantiates, then leaves a REPL
@@ -98,8 +102,8 @@ For credentials, `cp .env.example .env` and fill in `ALPACA_API_KEY_ID` and
 work with `[alpaca] trading_base` pointed at the paper endpoint, as in the
 shipped config. Feeds on the free tier: `iex` (real-time, single venue) and
 `delayed_sip` (consolidated tape, 15 min delayed; the default here, and
-complete against the historical tape in validation); `sip` (real-time
-consolidated) requires a paid subscription.
+matched against the historical tape in validation, see [Status](#status));
+`sip` (real-time consolidated) requires a paid subscription.
 
 ## Entry points
 
@@ -109,7 +113,7 @@ environment as its first statement, so a fresh clone needs no manual
 environment step.
 
 ```bash
-# live capture (Ctrl-C drains buffers and exits cleanly)
+# live capture (Ctrl-C drains and flushes the buffers, then exits)
 julia --threads=auto scripts/stream.jl
 
 # historical backfill over [backfill.start_date, backfill.end_date]
@@ -119,8 +123,8 @@ julia scripts/backfill.jl
 # import one vendor day file (Nasdaq ITCH 5.0 or IEX HIST) into processed/
 julia scripts/import.jl itch50 data/bulk/itch50/12302019.NASDAQ_ITCH50.gz --symbols=AAPL,MSFT
 
-# compact raw session files into per-symbol per-day CSV/Arrow
-julia scripts/compact.jl data/raw/<session>_part001.jsonl
+# compact every part of a session into per-symbol per-day CSV/Arrow
+julia scripts/compact.jl data/raw/<session>_part*.jsonl
 
 # inventory of the processed tree: days, span, prints and bytes per symbol
 julia scripts/inventory.jl
@@ -152,7 +156,7 @@ julia bench/benchmarks.jl
 # documentation site (own environment; output in docs/build/)
 julia docs/make.jl
 
-# regenerate the figures the README shows, from one of your own captures
+# regenerate the figures the README shows, from one of your own captures (scripts environment)
 julia docs/make_readme_assets.jl data/raw/<session>_part001.jsonl
 ```
 
@@ -163,8 +167,8 @@ From the REPL, the same entry points are `run_stream(cfg)`,
 `run_backfill(cfg)`, `compact_raw(files, out)`,
 `read_processed(cfg, "AAPL"; from, to, window = :regular)`,
 `replay_source(files)` and `follow_source(cfg.raw_dir)`. The last two return
-a `Channel{Trade}` indistinguishable from the live source, so a real-time
-consumer can be developed offline (see `docs/src/replay.md`).
+the same `Channel{Trade}` type as the live source, so a real-time consumer can
+be developed offline (see `docs/src/replay.md`).
 
 ## Status
 
@@ -191,8 +195,8 @@ The second column records verification beyond that.
 | Vendor file download (ITCH and IEX day files, Binance dumps): bounded Range requests resumed from a `.partial` prefix, announced size or CRC-32C checked, optional rate cap, several connections per file, progress logged | used on full vendor days of up to 18 GB |
 | Spill compaction (bounded memory for arbitrarily large raw inputs) |  |
 | Single-instance lock per data tree |  |
-| Capture-coverage cross-check against the historical tape (`coverage_report`) | Alpaca only; a Binance day is verified by its vendor checksum and trade-id continuity |
-| Lossy-tap option in `tee` fan-out (persistence always wins) |  |
+| Capture-coverage cross-check against the historical tape (`coverage_report`) | Alpaca only; a Binance day from the bulk files is verified by the vendor's checksum, and its completeness can be checked on `Trade.id`, which is consecutive per symbol |
+| Lossy-tap option in `tee` fan-out (lossy outputs drop; the persistence output blocks) |  |
 | Batched raw NDJSON persistence + rolling |  |
 | Historical backfill (paginated REST) |  |
 | Compaction to CSV/Arrow with duplicate removal (Arrow dictionary-encoded, optional zstd/lz4) |  |
@@ -265,9 +269,8 @@ Analysis methods belong downstream, consuming the channel or the files.
 
 <sub>One trading day of one symbol, rendered by `scripts/visualize.jl`: price
 path and trade rate over exchange-local time, and the survival functions of
-inter-arrival time and trade size. The inter-arrival distribution spans seven
-orders of magnitude, from sub-microsecond bursts to gaps of tens of
-seconds.</sub>
+inter-arrival time and trade size. The inter-arrival distribution spans nine
+orders of magnitude, from tens of nanoseconds to tens of seconds.</sub>
 
 ![Animation of a recorded session replayed tick by tick, the price path drawing itself against exchange time](docs/src/assets/replay.gif)
 
@@ -384,7 +387,7 @@ Citation metadata is in [`CITATION.cff`](CITATION.cff). BibTeX:
 │   ├── activate.jl         # silent activation of the test environment
 │   ├── runtests.jl         # unit + end-to-end tests
 │   ├── mock_alpaca.jl      # in-process mock of Alpaca REST + WebSocket APIs
-│   └── mock_binance.jl     # in-process mock of Binance REST + WebSocket APIs
+│   └── mock_binance.jl     # in-process mock of Binance REST + WebSocket APIs and bulk files
 ├── examples/
 │   ├── Project.toml        # examples environment (package consumed by path)
 │   ├── activate.jl         # silent environment activation
@@ -399,14 +402,15 @@ Citation metadata is in [`CITATION.cff`](CITATION.cff). BibTeX:
 │   ├── Project.toml        # documentation environment (package consumed by path)
 │   ├── activate.jl         # silent environment activation
 │   ├── make.jl             # Documenter build → docs/build/
-│   ├── make_readme_assets.jl  # regenerate the figures shown above, from a capture
+│   ├── make_readme_assets.jl  # regenerate the figures shown above, from a capture (scripts environment)
 │   └── src/                # manual: index, architecture, usage, replay, files, deployment, migration, API
 │       └── assets/         # the rendered figures the README and manual show
 ├── .github/
 │   ├── dependabot.yml      # weekly dependency updates: julia, github-actions
 │   └── workflows/
-│       └── CI.yml          # tests (stable + compat floor + prerelease),
-│                           #   formatting check, docs build & deploy
+│       ├── CI.yml          # tests (stable + compat floor + prerelease),
+│       │                   #   docs build & deploy
+│       └── Format.yml      # JuliaFormatter check
 ├── LICENSE                 # MIT
 ├── CHANGELOG.md            # release history (Keep a Changelog)
 ├── CITATION.cff            # citation metadata

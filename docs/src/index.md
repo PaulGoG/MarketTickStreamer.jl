@@ -10,20 +10,19 @@ another process.
 ![Per-session diagnostic: price path, trade rate, and the survival functions of inter-arrival time and trade size](assets/session_diagnostic.png)
 
 One trading day of one symbol, as `scripts/visualize.jl` renders it. The
-inter-arrival distribution spans seven orders of magnitude; the size
+inter-arrival distribution spans nine orders of magnitude; the size
 distribution carries a fitted tail exponent.
 
 ## Purpose
 
-The package exists to supply a real-time data flux for testing time series
-analysis methods (waiting-time distributions, long-memory estimation,
-physics-informed models, criticality in tick arrival) on a stream whose
-statistics nobody controls. It delivers ordered, deduplicated,
-provenance-tagged prints through a `Channel{Trade}` and a file layer, and
-implements no estimators of its own.
+The package supplies a real-time data flux for testing time series analysis
+methods (waiting-time distributions, long-memory estimation, physics-informed
+models, criticality in tick arrival) on empirical data. It delivers ordered,
+deduplicated, provenance-tagged prints through a `Channel{Trade}` and a file
+layer, and implements no estimators of its own.
 
-The boundary is deliberate: numbers computed inside the acquisition layer
-could not be audited independently of the method under test.
+Numbers computed inside the acquisition layer could not be audited
+independently of the method under test, so the layer computes none.
 
 ## Status
 
@@ -38,8 +37,9 @@ capture of 3.17 M prints across 24 symbols, 533 MB of raw NDJSON, with no
 duplicate, out-of-order or missing record. Per-symbol coverage was
 cross-checked against the historical SIP tape and matched exactly for 22 of
 24 symbols, and to better than 99.9996 % for the remaining two. On this
-evidence Alpaca's free `delayed_sip` feed carries the complete consolidated
-tape, 15 minutes late; for offline analysis the delay is immaterial.
+evidence Alpaca's free `delayed_sip` feed carries the consolidated tape to
+better than 99.9996 %, 15 minutes late; for offline analysis the delay is
+immaterial.
 
 The vendor archives were checked the same way, on full days against the
 consolidated tape: the prints read from an ITCH file equal the SIP's Nasdaq
@@ -48,9 +48,9 @@ read from an IEX HIST capture equal the SIP's IEX prints, in order.
 
 ## Installation
 
-Requires Julia ≥ 1.12. The package is not registered. Clone the repository
-for the full pipeline (entry-point scripts, configuration, benchmarks,
-diagnostics):
+Requires Julia ≥ 1.12 on Linux. The package is not registered. Clone the
+repository for the full pipeline (entry-point scripts, configuration,
+benchmarks, diagnostics):
 
 ```bash
 julia -i activate.jl        # activates and instantiates, then leaves a REPL
@@ -85,9 +85,8 @@ and passes its own path to `load_config`.
 - **Nanosecond integers.** Timestamps are `Int64` nanoseconds since the
   UNIX epoch from the wire to the file, never floating point, never a
   locale-dependent string.
-- **One tape, two clocks.** Every print carries both the exchange timestamp
-  and the local receipt timestamp, so feed latency is measurable after the
-  fact rather than assumed.
+- **Two clocks.** Every print carries both the exchange timestamp and the
+  local receipt timestamp, so feed latency can be measured after the fact.
 
 ## Where to go next
 
@@ -101,6 +100,8 @@ and passes its own path to `load_config`.
 - [Files & Provenance](files.md) — the on-disk contract: raw parts,
   sidecars, processed day files and vendor files, for a consumer in any
   language.
+- [Unattended Operation](deployment.md) — a systemd user service and timer
+  for a capture host.
 - [Migrating to 2.0](migration.md) — the four API changes of 2.0 and their
   replacements.
 - API reference — the public functions and types:
