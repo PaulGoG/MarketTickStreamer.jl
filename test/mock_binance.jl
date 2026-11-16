@@ -175,7 +175,7 @@ function start_mock_binance_rest(
             return mock_range_response(req, body)
         end,
     )
-    return HTTP.serve!(router, "127.0.0.1", port)
+    return HTTP.serve!(router, "127.0.0.1", port; verbose = false)
 end
 
 # A file served as data.binance.vision serves it: the whole body without a
@@ -214,7 +214,7 @@ function start_mock_binance_ws(
     fatal_after::Integer = 1,
 )
     conns = Ref(0)
-    return HTTP.WebSockets.listen!("127.0.0.1", port) do ws
+    return HTTP.WebSockets.listen!("127.0.0.1", port; verbose = false) do ws
         conns[] += 1
         if conns[] > fatal_after
             HTTP.WebSockets.send(

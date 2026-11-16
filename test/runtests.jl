@@ -48,18 +48,19 @@ using MarketTickStreamer:
 include("mock_alpaca.jl")
 include("mock_binance.jl")
 
-# Ports unlikely to collide; bumped per-run if busy.
+# Ports unlikely to collide; the next free one within 200 of `start`.
 function freeport(start)
-    p = start
-    while true
+    last = min(start + 200, 65535)
+    for p in start:last
         try
             s = HTTP.Sockets.listen(HTTP.Sockets.ip"127.0.0.1", p)
             close(s)
             return p
-        catch
-            p += 1
+        catch e
+            e isa Base.IOError || rethrow()
         end
     end
+    error("no free port in $start:$last")
 end
 
 sample_trade(i; sym = "AAPL") = Trade(
@@ -192,6 +193,8 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
         end
         @test err isa ResourceError && err.resource === :heap
         @test occursin("during test", err.msg)
+        # An interrupt ends an entry point without an error.
+        @test run_entrypoint(() -> throw(InterruptException())) === nothing
     end
 
     @testset "schema / timestamps" begin
@@ -314,6 +317,11 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             rejected(base * "reconnect_base_delay_s = 2.0\nreconnect_max_delay_s = 1.0\n")
             rejected(base * "[storage]\nflush_max_ticks = 0\n")
             rejected(base * "[limits]\nmax_session_hours = 0.0\n")
+            # the deadline is Int64 ns
+            rejected(base * "[limits]\nmax_session_hours = inf\n")
+            rejected(base * "[limits]\nmax_session_hours = 3.0e6\n")
+            # a table, not an array
+            rejected(base * "[quality]\nnon_price_conditions = [\"I\"]\n")
             rejected(base * "[backfill]\nrate_limit_sleep_s = -0.1\n")
             rejected(base * "[replay]\nclock = \"wall\"\n")
             rejected(base * "[replay]\nmax_gap_s = 0.0\n")
@@ -1139,7 +1147,7 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
         @test ev[1].open == 10.0 && ev[1].close == 11.0
         @test ev[1].high == 11.0 && ev[1].low == 10.0
         @test ev[1].volume == 4.0 && ev[1].trade_count == 3
-        @test ev[1].vwap ≈ (10.0 + 21.0 + 11.0) / 4.0
+        @test ev[1].vwap ≈ (10.0 + 21.0 + 11.0) / 4.0 rtol = 1e-12
         @test ev[2].trade_count == 1 && ev[2].vwap == 9.0
         @test ev[3].trade_count == 2 && ev[3].volume == 2.0
         @test all(e.recv_ns == 0 for e in ev)
@@ -1343,6 +1351,18 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             on_snapshot = identity,
             clock = :wall,
         )
+        # The receive clock needs a receive timestamp; a backfilled print has none.
+        let ch = Channel{Trade}(1)
+            put!(ch, Trade("AAPL", 1, 0, 1.0, 1.0, "V", String[], "C", 1))
+            close(ch)
+            @test_throws ArgumentError snapshots(
+                _ -> nothing,
+                ch,
+                10^9;
+                on_snapshot = (at, n, final) -> nothing,
+                clock = :recv,
+            )
+        end
     end
 
     @testset "reconcile, lock, RAM guard, spill compaction, lossy tee" begin
@@ -1605,13 +1625,24 @@ hostname = "$(gethostname())"
             w = example_call(mod, :consume, [sink.path])
             @test w.n_prints == 10
             @test length(w.gaps) == 9                  # one gap fewer than prints
-            @test all(≈(0.001), w.gaps)                # 1 ms apart in exchange time
+            # 1 ms apart in exchange time
+            @test all(x -> isapprox(x, 0.001; rtol = 1e-12), w.gaps)
             @test w.n_nonpositive == 0
 
             pf = example_call(mod, :consume, [sink.path]; price_forming_only = true)
             @test pf.n_prints == 8                     # the two odd lots are excluded
             @test length(pf.gaps) == 7
             @test sum(pf.gaps) ≈ 0.009 atol = 1e-9     # gaps still span the session
+
+            # A late print is measured against the latest timestamp seen and
+            # does not move it: one non-positive gap, no spurious 5 s wait.
+            w = example_call(mod, :WaitingTimes)
+            for s in (4.999, 10.0, 10.001, 5.0, 10.002)
+                t = Trade("AAPL", round(Int64, s * 1e9), 0, 1.0, 1.0, "V", String[], "C", 0)
+                example_call(mod, :observe!, w, t)
+            end
+            @test all(isapprox.(w.gaps, [5.001, 0.001, 0.001]; atol = 1e-9))
+            @test w.n_nonpositive == 1
         end
     end
 
@@ -1644,12 +1675,12 @@ hostname = "$(gethostname())"
             @test persisted == 10                      # persistence is lossless
             @test seen <= persisted                    # the diagnostic tap may drop
             @test OnlineStats.nobs(d.Δt_mean) == seen - 1
-            @test OnlineStats.value(d.Δt_mean) ≈ 0.001
-            @test OnlineStats.value(d.Δt_extrema).max ≈ 0.001
+            @test OnlineStats.value(d.Δt_mean) ≈ 0.001 rtol = 1e-12
+            @test OnlineStats.value(d.Δt_extrema).max ≈ 0.001 rtol = 1e-12
             @test d.n_nonpositive == 0
             # Equal sizes make the VWAP the arithmetic mean of the prices seen.
-            @test example_call(mod, :vwap, d) ≈ 101.0 + (seen - 1) / 2
-            @test OnlineStats.value(d.volume) ≈ 10.0 * seen
+            @test example_call(mod, :vwap, d) ≈ 101.0 + (seen - 1) / 2 rtol = 1e-12
+            @test OnlineStats.value(d.volume) ≈ 10.0 * seen rtol = 1e-12
 
             # Gaps swept log-uniformly over five orders of magnitude
             # (100 µs … 10 s), the shape that breaks a P² sketch and the reason
@@ -1861,6 +1892,21 @@ hostname = "$(gethostname())"
         end
     end
 
+    @testset "follow: the latest session of a backfill" begin
+        # A backfill names its parts <id>_<SYMBOL>_<DATE>: the session is the
+        # longest sidecar id that prefixes the newest part.
+        mktempdir() do d
+            sid = "backfill_alpaca_sip_20260101-000000"
+            write(joinpath(d, "$sid.meta.toml"), "[session]\nstatus = \"completed\"\n")
+            write(joinpath(d, "$(sid)_AAPL_2026-01-02_part001.jsonl"), "")
+            @test MarketTickStreamer.latest_session_prefix(d) == sid
+        end
+        mktempdir() do d                 # no sidecar: the part's own prefix
+            write(joinpath(d, "x_part001.jsonl"), "")
+            @test MarketTickStreamer.latest_session_prefix(d) == "x"
+        end
+    end
+
     @testset "diagnostics: clock ticks, decimation, tail fit, formatting" begin
         M = MarketTickStreamer
         # HH:MM domain ticks
@@ -1895,9 +1941,29 @@ hostname = "$(gethostname())"
         fit = M._tail_fit(x)
         @test fit !== nothing
         @test isapprox(fit.α, 2.5; rtol = 0.02)
-        @test fit.σ ≈ fit.α / sqrt(500)                      # k = top 10 %
+        @test fit.σ ≈ fit.α / sqrt(500) rtol = 1e-12         # k = top 10 %
         @test M._tail_fit(x[1:40]) === nothing               # too few samples
         @test M._tail_fit(fill(100.0, 500)) === nothing      # degenerate tail
+        # Survival function: P(X ≥ x) over the positive samples, one point per
+        # distinct value.
+        @test MarketTickStreamer._ccdf([0.0, 0.0, 0.0, 1.0, 1.0, 2.0]) ==
+              ([1.0, 2.0], [1.0, 1 / 3])
+        @test MarketTickStreamer._ccdf([100.0, 100.0, 100.0, 200.0]) ==
+              ([100.0, 200.0], [1.0, 0.25])
+        @test MarketTickStreamer._ccdf([0.0, -1.0]) == (Float64[], Float64[])
+        # Ties at the threshold stay out of the Hill sum: 8500 samples below
+        # it, 1000 at u = 100 and the 500 quantiles of a Pareto(α = 1.5) tail
+        # above. Counted in k, the ties would double the estimate.
+        let α = 1.5
+            pareto = [100.0 * ((j - 0.5) / 500)^(-1 / α) for j in 1:500]
+            tied = sort!(vcat(fill(50.0, 8500), fill(100.0, 1000), pareto))
+            fit = MarketTickStreamer._tail_fit(tied)
+            @test fit.α ≈ α rtol = 0.02
+            @test fit.σ ≈ fit.α / sqrt(500) rtol = 1e-12
+        end
+        # Fewer than 30 samples above the threshold: no fit.
+        @test MarketTickStreamer._tail_fit(sort!(vcat(fill(1.0, 980), fill(5.0, 20)))) ===
+              nothing
         # annotations: value and uncertainty share their decimals
         @test M._value_pm(1.4294, 0.0041) == ("1.429", "0.004")
         @test M._value_pm(1.8676, 0.0684) == ("1.87", "0.07")
@@ -2095,12 +2161,32 @@ hostname = "$(gethostname())"
         # Nothing listening: retried, then the transport error surfaces.
         dead = freeport(8971)
         t0 = time()
-        @test_throws Exception MarketTickStreamer._get_with_retry(
+        @test_throws HTTP.ConnectError MarketTickStreamer._get_with_retry(
             "http://127.0.0.1:$dead/x",
             Pair{String,String}[];
             policy = MarketTickStreamer.RestPolicy(1, 1, 1),
         )
         @test time() - t0 >= 0.5                     # one backoff was taken
+        # A negative Retry-After falls back to the backoff schedule instead of
+        # reaching `sleep` as a negative duration.
+        port = freeport(8966)
+        hits429 = Threads.Atomic{Int}(0)
+        server = HTTP.serve!("127.0.0.1", port; verbose = false) do _
+            Threads.atomic_add!(hits429, 1) == 0 &&
+                return HTTP.Response(429, ["Retry-After" => "-1"], "slow down")
+            return HTTP.Response(200, "ok")
+        end
+        try
+            policy = MarketTickStreamer.RestPolicy(1, 1, 2)
+            resp = MarketTickStreamer._get_with_retry(
+                "http://127.0.0.1:$port/x",
+                Pair{String,String}[];
+                policy,
+            )
+            @test resp.status == 200
+        finally
+            close(server)
+        end
         # Backoff jitter is a deterministic function of the seed, within
         # [0.5, 1.5) of the capped exponential.
         d = [MarketTickStreamer._backoff_delay(Xoshiro(7), 1.0, k, 60.0) for k in 0:5]
@@ -2198,6 +2284,15 @@ hostname = "$(gethostname())"
             @test occursin("socket teardown", b) && occursin("own record", b)
             @test occursin("color red", b) && occursin("note=bold", b)
             @test !occursin("\e[", b)
+        end
+        # An (exception, backtrace) pair is logged to file as its message, on one line.
+        let err = try
+                error("boom\nsecond line")
+            catch e
+                (e, catch_backtrace())
+            end
+            @test MarketTickStreamer._log_value(err) == "boom second line"
+            @test MarketTickStreamer._log_value(3) == "3"
         end
     end
 
@@ -2327,6 +2422,56 @@ hostname = "$(gethostname())"
         end
     end
 
+    @testset "quality: capture coverage against the historical tape" begin
+        rest_port = freeport(8936)
+        rest = start_mock_rest(; port = rest_port, trades_per_page = 3)
+        try
+            p = AlpacaProvider(
+                MOCK_KEY,
+                MOCK_SECRET,
+                "iex",
+                "http://127.0.0.1:$rest_port",
+                "http://127.0.0.1:$rest_port",
+                "ws://127.0.0.1:$rest_port/v2",
+            )
+            # The mock's tape for AAPL on 2026-07-29: two pages of three, ids 1…6,
+            # page-local index j = 1…3 at 15:0j:0j.123456789Z on both pages, so
+            # every request on that day returns 6 prints spanning 15:01:01 to
+            # 15:03:03. The capture misses id 2 from the middle: captured 5,
+            # reference 6.
+            tape = [
+                (id = 3 * (pg - 1) + j, j = j, price = 200.0 + 3 * (pg - 1) + j) for
+                pg in 1:2 for j in 1:3
+            ]
+            captured = [
+                Trade(
+                    "AAPL",
+                    rfc3339_to_ns("2026-07-29T15:0$(r.j):0$(r.j).123456789Z"),
+                    1_785_337_000_000_000_000 + r.id,
+                    r.price,
+                    5.0 * r.j,
+                    "V",
+                    ["@"],
+                    "C",
+                    r.id,
+                ) for r in tape if r.id != 2
+            ]
+            mktempdir() do dir
+                path = joinpath(dir, "capture.jsonl")
+                write(path, join(trade_to_json.(captured) .* "\n"))
+                cov = coverage_report(path, p; page_limit = 3, rate_sleep_s = 0.0)
+                @test size(cov, 1) == 1
+                row = only(eachrow(cov))
+                @test row.symbol == "AAPL"
+                @test row.captured == 5
+                @test row.reference == 6
+                @test row.coverage == round(5 / 6; digits = 4)
+            end
+        finally
+            close(rest)
+        end
+    end
+
     @testset "live E2E: stream → reconnect → fatal stop → raw files" begin
         mktempdir() do dir
             ws_port, rest_port = freeport(8951), freeport(8971)
@@ -2344,6 +2489,7 @@ hostname = "$(gethostname())"
                 p = AlpacaProvider(cfg, MOCK_KEY, MOCK_SECRET)
                 result = run_stream(cfg; provider = p)
                 @test result.ticks == 14                   # both batches, nothing lost
+                @test result.status == "failed"
                 @test nconn[] == 3                         # initial + 1 reconnect + fatal
                 @test length(result.raw_files) == 1
                 trades = read_raw(result.raw_files)
@@ -2401,6 +2547,7 @@ hostname = "$(gethostname())"
                 t0 = time()
                 result = run_stream(cfg; provider = p)
                 @test result.ticks == 3
+                @test result.status == "completed"
                 @test nconn[] == 1                 # close guard, not reconnect exhaustion
                 @test time() - t0 < 20.0           # well before linger end and deadline
             finally
@@ -2433,12 +2580,31 @@ hostname = "$(gethostname())"
                 t0 = time()
                 result = run_stream(cfg; provider = p)
                 @test result.ticks == 3
+                @test result.status == "completed"
                 @test nconn[] == 1                 # stopped, not reconnected
                 @test time() - t0 < 15.0
             finally
                 close(ws)
                 close(rest)
             end
+        end
+    end
+
+    @testset "live: a close is bounded when the peer stops reading" begin
+        port = freeport(9881)
+        server = HTTP.WebSockets.listen!("127.0.0.1", port; verbose = false) do ws
+            HTTP.WebSockets.send(ws, "x")
+            sleep(6)                 # never reads: the CLOSE frame goes unanswered
+        end
+        try
+            HTTP.WebSockets.open("ws://127.0.0.1:$port") do ws
+                first(ws)
+                # The handshake alone would last as long as the server sleeps.
+                elapsed = @elapsed MarketTickStreamer._close_ws(ws; grace_s = 0.5)
+                @test elapsed < 4
+            end
+        finally
+            close(server)
         end
     end
 
@@ -2490,6 +2656,7 @@ hostname = "$(gethostname())"
                 p = AlpacaProvider(cfg, MOCK_KEY, MOCK_SECRET)
                 result = run_stream(cfg; provider = p)
                 @test result.ticks == 0
+                @test result.status == "completed"
                 @test isempty(result.raw_files)
                 @test nconn[] == 0
             finally
@@ -2544,6 +2711,7 @@ hostname = "$(gethostname())"
                 t0 = time()
                 result = run_stream(cfg; provider = p)
                 @test result.ticks == 3
+                @test result.status == "failed"
                 @test time() - t0 > 2.0            # outlived the unshifted close
                 @test nconn[] == 2                 # ended by the fatal, not the guard
             finally
@@ -2564,6 +2732,7 @@ hostname = "$(gethostname())"
                 p = AlpacaProvider(cfg, "wrongkey", "wrongsecret")
                 result = run_stream(cfg; provider = p)
                 @test result.ticks == 0
+                @test result.status == "failed"
                 @test nconn[] == 1                         # 402 → FatalStreamError → no reconnect
                 meta = only(
                     filter(
@@ -2684,6 +2853,11 @@ hostname = "$(gethostname())"
             write(p, replace(toml, "feed = \"ticks\"" => "feed = \"trades\""))
             @test_throws ArgumentError load_config(p)
         end
+        # The registry is global state: take the adapter out again.
+        Base.delete_method(which(MarketTickStreamer.provider_spec, (Val{:toy},)))
+        Base.delete_method(which(MarketTickStreamer.make_provider, (Val{:toy}, Config)))
+        @test Base.invokelatest(MarketTickStreamer.registered_providers) ==
+              ["alpaca", "binance"]
     end
 
     @testset "binance: frame and REST parsing" begin
@@ -2694,7 +2868,8 @@ hostname = "$(gethostname())"
         @test t.exchange == "BINANCE" && t.tape == "SPOT"
         @test t.id == 4
         # Prices and sizes arrive as strings and must survive as Float64.
-        @test t.price ≈ 64_004.0 && t.size ≈ 0.004
+        @test isapprox(t.price, 64_004.0; rtol = 1e-12) &&
+              isapprox(t.size, 0.004; rtol = 1e-12)
         # Milliseconds on the wire by default, nanoseconds in the schema.
         @test t.time_ns == Int64(f.T) * 1_000_000
         @test t.time_ns % 1_000_000 == 0
@@ -3165,6 +3340,7 @@ hostname = "$(gethostname())"
                 s = live_source(BinanceProvider(cfg), cfg)
                 got = collect(s.channel)
                 @test length(got) == 5
+                @test s.stop[]    # the producer's end stops the guard tasks
                 # The first connection closes after its frames (retryable); the
                 # second answers with the error frame: one reconnect, then abort.
                 @test s.stats[].reconnects == 1
@@ -3376,6 +3552,61 @@ hostname = "$(gethostname())"
             @test gc.truncated && gc.messages <= 25
             @test_throws ArgumentError itch50_trades(raw, date; broken = :void)
             @test_throws ArgumentError itch50_trades(raw, date; page_rows = 0)
+            # Breaks of two symbols, one selected: the count follows the
+            # selection in every mode (one AAPL break, the IBM one excluded).
+            two = joinpath(dir, "two.bin")
+            write(
+                two,
+                vcat(
+                    R(1, "AAPL", 'Q', 100),
+                    R(2, "IBM", 'N', 100),
+                    A(1, T0, 10, 'B', 500, "AAPL", 2_900_000),
+                    E(1, T0 + 1, 10, 100, 2001),
+                    A(2, T0 + 2, 13, 'B', 300, "IBM", 1_300_000),
+                    E(2, T0 + 3, 13, 100, 2002),
+                    B(1, T0 + 4, 2001),
+                    B(2, T0 + 5, 2002),
+                ),
+            )
+            @test itch50_trades(two, date; symbols = ["AAPL"], broken = :keep).broken == 1
+            @test itch50_trades(two, date; symbols = ["AAPL"], broken = :mark).broken == 1
+            # A Broken Trade cut to type, locate and tracking (5 bytes) is
+            # malformed, not a truncation: the length prefix frames it whole.
+            short = joinpath(dir, "short.bin")
+            write(short, vcat(stream, be(5, 2), UInt8('B'), be(1, 2), be(0, 2)))
+            @test_throws IntegrityError itch50_trades(short, date)
+            # Buffer boundaries: 33 messages of eight types, the longest the
+            # 46-byte P (prefix included), so a 48-byte chunk holds every one.
+            msgs = [
+                S('O'),
+                R(1, "AAPL", 'Q', 100),
+                R(2, "IBM", 'N', 100),
+                H(1),
+                [A(1, T0 + i, 100 + i, 'B', 100, "AAPL", 2_900_000) for i in 1:6]...,
+                [E(1, T0 + 10 + i, 100 + i, 50, 3000 + i) for i in 1:6]...,
+                [P(2, T0 + 20 + i, 10, "IBM", 1_300_000, 4000 + i) for i in 1:6]...,
+                [Q(1, T0 + 30 + i, 100, "AAPL", 2_900_000, 5000 + i, 'I') for i in 1:4]...,
+                [D(1, T0 + 40 + i, 100 + i) for i in 1:6]...,
+                S('C'),
+            ]
+            @test length(msgs) == 33 && maximum(length, msgs) == 46
+            long = joinpath(dir, "long.bin")
+            write(long, reduce(vcat, msgs))
+            # (type byte, length) of every message handed over, and the count.
+            collect_scan(chunk) = open(long) do io
+                seen = Tuple{UInt8,Int}[]
+                scan = MarketTickStreamer._itch50_scan(io; chunk) do buf, i, len
+                    push!(seen, (buf[i], len))
+                end
+                (seen, scan.messages)
+            end
+            ref_scan = collect_scan(8 << 20)
+            @test ref_scan[2] == 33
+            @test ref_scan[1] == [(x[3], length(x) - 2) for x in msgs]
+            for c in (48, 50, 64, 67, 129)
+                @test collect_scan(c) == ref_scan
+            end
+            @test_throws IntegrityError collect_scan(16)           # a message exceeds it
         end
         @test itch50_date("12302019.NASDAQ_ITCH50.gz") == Date(2019, 12, 30)
         @test itch50_date("/x/S112825-v50.txt.gz") == Date(2025, 11, 28)
@@ -3552,6 +3783,29 @@ hostname = "$(gethostname())"
             @test [t.id for t in k.trades] == [1, 2, 5] &&
                   k.trades[2].conditions == ["I"] &&
                   k.broken == 1
+            # A Trade Break for MSFT as well: with AAPL selected, :keep still
+            # counts the one AAPL break only.
+            seg5 = segment(0x8003, 7, 11, [B("MSFT", t0 + 8, 3)])
+            f2 = joinpath(dir, "two_breaks.pcapng")
+            write(f2, vcat(ng, epb(frame(seg5))))
+            @test iex_hist_trades(f2; symbols = ["AAPL"], broken = :keep).broken == 1
+            # Buffer boundaries: the frames handed over do not depend on the
+            # chunk, down to the largest block of the capture (header included).
+            frames = [frame(s) for s in (seg_hb, seg1, seg2, seg3, seg3, seg4)]
+            blocks = vcat([shb(), idb()], epb.(frames))
+            @test reduce(vcat, blocks) == ng
+            largest = maximum(length, blocks)
+            packet_scan(chunk) = open(f) do io
+                lens = Int[]
+                scan = MarketTickStreamer._iex_packets(io; chunk) do buf, i, n
+                    push!(lens, n)
+                end
+                (lens, scan.packets)
+            end
+            @test packet_scan(8 << 20) == (length.(frames), 6)
+            for c in (largest, largest + 5, 2 * largest - 1)
+                @test packet_scan(c) == (length.(frames), 6)
+            end
             # gzip, as published
             gz = joinpath(dir, "day.pcap.gz")
             open(GzipCompressorStream, gz, "w") do io
@@ -3739,7 +3993,7 @@ hostname = "$(gethostname())"
                 )
             end,
         )
-        server = HTTP.serve!(router, "127.0.0.1", port)
+        server = HTTP.serve!(router, "127.0.0.1", port; verbose = false)
         policy = MarketTickStreamer.RestPolicy(10, 5, 1)
         api = "http://127.0.0.1:$port/api/1.0"
         try
@@ -4032,11 +4286,8 @@ hostname = "$(gethostname())"
             @test src["bytes"] == filesize(file) && length(src["sha256"]) == 64
             @test src["messages"] == 11 && src["prints"] == 5 && src["truncated"] == false
             @test length(meta["session"]["raw_files"]) == 1
-            # a second import of one symbol without the raw copy: processed again (safesave
-            # keeps the first), raw parts gone, the sidecar lists none. Session ids
-            # are second-resolved, so a second import in the same second would
-            # share the first one's prefix.
-            sleep(1.1)
+            # a second import of one symbol without the raw copy: processed again
+            # (safesave keeps the first), raw parts gone, the sidecar lists none.
             # the day exists: refused unless the displacement is explicit
             @test_throws ArgumentError run_import(
                 cfg,
@@ -4044,6 +4295,20 @@ hostname = "$(gethostname())"
                 format = :itch50,
                 symbols = ["AAPL"],
             )
+            # The readers select symbols case-insensitively, so the collision
+            # check does as well.
+            @test_throws ArgumentError run_import(
+                cfg,
+                file;
+                format = :itch50,
+                symbols = ["aapl"],
+            )
+            # An import files prints on the New York calendar and refuses another one.
+            utc_dir = joinpath(dir, "utc")
+            mkpath(utc_dir)
+            cfg_utc =
+                load_config(mock_binance_config_toml(utc_dir; ws_port = 1, rest_port = 1))
+            @test_throws ArgumentError run_import(cfg_utc, file; format = :itch50)
             files2 = run_import(
                 cfg,
                 file;

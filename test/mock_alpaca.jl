@@ -78,7 +78,7 @@ connections. `close(server)` to stop.
 """
 function start_mock_ws(plan::MockPlan; port::Integer)
     nconn = Ref(0)
-    server = HTTP.WebSockets.listen!("127.0.0.1", port) do ws
+    server = HTTP.WebSockets.listen!("127.0.0.1", port; verbose = false) do ws
         nconn[] += 1
         me = nconn[]
         _send(ws, (; T = "success", msg = "connected"))
@@ -100,14 +100,18 @@ function start_mock_ws(plan::MockPlan; port::Integer)
         end
         # Linger reading (not sleeping): a well-behaved server must keep
         # servicing the socket so a client CLOSE handshake completes promptly.
+        # `receive` blocks until the client sends or closes, so a timer ends
+        # the wait at `linger_s`.
         t0 = time()
+        timer = Timer(_ -> close(ws), plan.linger_s)
         while time() - t0 < plan.linger_s
             try
                 HTTP.WebSockets.receive(ws)
             catch
-                break                     # client closed the connection
+                break                     # the connection closed
             end
         end
+        close(timer)
     end
     return server, nconn
 end
@@ -203,7 +207,7 @@ function start_mock_rest(;
             return HTTP.Response(200, JSON.json(body))
         end,
     )
-    return HTTP.serve!(router, "127.0.0.1", port)
+    return HTTP.serve!(router, "127.0.0.1", port; verbose = false)
 end
 
 """
