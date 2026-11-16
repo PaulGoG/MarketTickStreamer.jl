@@ -25,9 +25,10 @@ Build the 2×2 diagnostic figure for one symbol's single-day ticks:
   drawn from the prints that [`price_forming`](@ref) admits under `non_price`,
   with the admitted share annotated,
 - activity (trades per minute, every print),
-- inter-arrival time survival function `P(Δt > x)` (log-log, ticks at powers of ten)
-  with the median annotated,
-- trade-size survival function `P(S > s)` with a Hill tail exponent.
+- inter-arrival time survival function `P(Δt ≥ x)` over the positive gaps
+  (log-log, ticks at powers of ten), with their median and the share of zero
+  gaps (prints sharing a timestamp) annotated,
+- trade-size survival function `P(S ≥ s)` with a Hill tail exponent.
 
 `trades` must be non-empty and single-symbol (as produced by the grouping in
 [`save_session_figures`](@ref)); they are sorted internally by exchange time.

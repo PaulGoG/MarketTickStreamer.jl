@@ -17,8 +17,8 @@ estimator.
 The accumulators (`Mean`, `Variance`, `Extrema`, `KHist`) do not grow with
 the stream, and the tap is lossy because acquisition must never wait for a
 consumer, and a dropped print costs a dashboard nothing. A size-weighted
-quantity, the VWAP, is accumulated as two running sums rather than as a ratio
-of means, which is not the same number. Drops are reported rather than
+quantity, the VWAP, is accumulated as two running sums rather than as a mean
+of prices, which is not the same number. Drops are reported rather than
 hidden, so a diagnostic quietly seeing a third of the tape cannot be mistaken
 for one seeing all of it.
 
@@ -150,7 +150,9 @@ function observe!(d::LiveDiagnostics, t::Trade)
             d.n_nonpositive += 1
         end
     end
-    d.previous_ns = t.time_ns
+    # The reference is the latest timestamp seen. Moving it back to a late
+    # print would make the next gap as long as the print was late.
+    d.previous_ns = max(d.previous_ns, t.time_ns)
     return d
 end
 
@@ -161,7 +163,7 @@ Approximate the `τ`-quantile of the waiting-time distribution from the
 log-binned histogram, in seconds. Returns `NaN` before anything is observed.
 
 Accurate to a few percent on a real session (see the header table); the
-returned value is a bin centre, so it cannot be more precise than the bin
+returned value is a bin center, so it cannot be more precise than the bin
 width; an exact order statistic needs the whole sample.
 """
 function waiting_quantile(d::LiveDiagnostics, τ::Real)
@@ -180,9 +182,8 @@ end
 """
     vwap(d::LiveDiagnostics) -> Float64
 
-Volume-weighted average price, `Σ(price × size) / Σ size`. Accumulated as two
-sums on purpose: the ratio of the running means is a different number, and
-the mean of the per-print ratios is a third one.
+Volume-weighted average price, `Σ(price × size) / Σ size`, accumulated as two
+sums; the unweighted mean of the prices is a different number.
 """
 vwap(d::LiveDiagnostics) = value(d.volume) == 0 ? NaN : value(d.notional) / value(d.volume)
 
@@ -194,7 +195,7 @@ before the span is positive.
 """
 function print_rate(d::LiveDiagnostics)
     span = (d.previous_ns - d.first_ns) / 1e9
-    return span > 0 ? (nobs(d.Δt_mean) + 1) / span : NaN
+    return span > 0 ? (nobs(d.Δt_mean) + d.n_nonpositive + 1) / span : NaN
 end
 
 """

@@ -105,6 +105,28 @@ function _rate_scale(peak::Real)
     return 10.0^k, L"Trade rate $[10^{%$k}\,\mathrm{min}^{-1}]$"
 end
 
+# The share of zero gaps (prints sharing a timestamp), which a logarithmic
+# axis cannot show and the survival function and the median leave out.
+# Nothing is drawn when there are none.
+function _annotate_zero_gaps!(ax, dts, color)
+    n_zero = count(==(0.0), dts)
+    n_zero == 0 && return nothing
+    pct = 100 * n_zero / length(dts)
+    share = pct >= 10 ? string(round(Int, pct)) : string(round(pct; sigdigits = 2))
+    text!(
+        ax,
+        0.04,
+        0.13;
+        text = "Zero gaps (excluded): $share %",
+        space = :relative,
+        align = (:left, :bottom),
+        color,
+        fontsize = ANNOTATION_FONTSIZE,
+    )
+    return nothing
+end
+
+# `x`: the positive samples in ascending order.
 function _annotate_tail!(ax, x, color)
     fit = _tail_fit(x)
     fit === nothing && return nothing
@@ -223,11 +245,12 @@ function MarketTickStreamer.session_figure(
     linkxaxes!(ax1, ax2)
 
     dts = diff([t.time_ns for t in ts]) ./ NS_PER_SEC
-    x3, y3 = _ccdf(dts)
+    gaps = sort!(filter(>(0.0), dts))
+    x3, y3 = _ccdf(gaps)
     ax3 = Axis(
         fig[2, 1];
         xlabel = L"Inter-arrival $\Delta t$ [s]",
-        ylabel = L"P(\Delta t > x)",
+        ylabel = L"P(\Delta t \geq x)",
         xscale = log10,
         yscale = log10,
     )
@@ -237,7 +260,7 @@ function MarketTickStreamer.session_figure(
         lines!(ax3, _thin(x3, y3)...; color)
         # Evaluated outside the string macro, where the import checker can
         # see `median` and `_si_seconds` being used.
-        median_gap = _si_seconds(median(x3))
+        median_gap = _si_seconds(median(gaps))
         text!(
             ax3,
             0.04,
@@ -248,13 +271,15 @@ function MarketTickStreamer.session_figure(
             color,
             fontsize = ANNOTATION_FONTSIZE,
         )
+        _annotate_zero_gaps!(ax3, dts, color)
     end
 
-    x4, y4 = _ccdf([t.size for t in ts])
+    sizes = sort!(filter(>(0.0), [t.size for t in ts]))
+    x4, y4 = _ccdf(sizes)
     ax4 = Axis(
         fig[2, 2];
         xlabel = "Trade size [$size_unit]",
-        ylabel = L"P(S > s)",
+        ylabel = L"P(S \geq s)",
         xscale = log10,
         yscale = log10,
     )
@@ -262,7 +287,7 @@ function MarketTickStreamer.session_figure(
         ax4.xticks = _log_ticks(extrema(x4)...)
         _survival_yaxis!(ax4, y4[end])
         lines!(ax4, _thin(x4, y4)...; color)
-        _annotate_tail!(ax4, x4, color)
+        _annotate_tail!(ax4, sizes, color)
     end
 
     return fig
@@ -395,7 +420,7 @@ function MarketTickStreamer.overview_figure(
         fig[2, 1];
         xlabel = continuous ? L"Inter-arrival $\Delta t$ [s]" :
                  L"Intra-session inter-arrival $\Delta t$ [s]",
-        ylabel = L"P(\Delta t > x)",
+        ylabel = L"P(\Delta t \geq x)",
         xscale = log10,
         yscale = log10,
     )
@@ -413,6 +438,7 @@ function MarketTickStreamer.overview_figure(
             color,
             fontsize = ANNOTATION_FONTSIZE,
         )
+        _annotate_zero_gaps!(ax3, dts, color)
     end
 
     # Panel 4: pooled size CCDF
@@ -420,11 +446,12 @@ function MarketTickStreamer.overview_figure(
     for (_, df) in days
         append!(sizes, Float64.(df.size))
     end
+    sort!(filter!(>(0.0), sizes))
     x4, y4 = _ccdf(sizes)
     ax4 = Axis(
         fig[2, 2];
         xlabel = "Trade size [$size_unit]",
-        ylabel = L"P(S > s)",
+        ylabel = L"P(S \geq s)",
         xscale = log10,
         yscale = log10,
     )
@@ -432,7 +459,7 @@ function MarketTickStreamer.overview_figure(
         ax4.xticks = _log_ticks(extrema(x4)...)
         _survival_yaxis!(ax4, y4[end])
         lines!(ax4, _thin(x4, y4)...; color)
-        _annotate_tail!(ax4, x4, color)
+        _annotate_tail!(ax4, sizes, color)
     end
 
     return fig

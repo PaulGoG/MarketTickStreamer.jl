@@ -56,7 +56,9 @@ function observe!(w::WaitingTimes, t::Trade)
         # and excluded: a waiting time of zero or less is not a waiting time.
         Δt > 0 ? push!(w.gaps, Δt) : (w.n_nonpositive += 1)
     end
-    w.previous_ns = t.time_ns
+    # The reference is the latest timestamp seen. Moving it back to a late
+    # print would make the next gap as long as the print was late.
+    w.previous_ns = max(w.previous_ns, t.time_ns)
     return w
 end
 
@@ -83,7 +85,7 @@ function consume(paths::Vector{String}; price_forming_only::Bool = false, speed:
     # Backpressure is free offline: a blocked output just slows the replay. On
     # a live capture the calculus differs, and an estimator that cannot keep
     # up belongs on a lossy output or, better, offline against the raw files.
-    persist, analyse = tee(source, 2; capacity = 10_000, lossy = [false, false])
+    persist, analyze = tee(source, 2; capacity = 10_000, lossy = [false, false])
 
     counted = Ref(0)
     counter = Threads.@spawn for _ in persist
@@ -96,7 +98,7 @@ function consume(paths::Vector{String}; price_forming_only::Bool = false, speed:
     # count against the lossless output would report every filtered print as a
     # dropped one.
     seen = 0
-    for trade in analyse
+    for trade in analyze
         seen += 1
         price_forming_only && !price_forming(trade) && continue
         observe!(w, trade)

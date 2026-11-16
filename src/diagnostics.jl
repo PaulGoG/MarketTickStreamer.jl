@@ -22,11 +22,27 @@ function _hhmm_ticks(lo::Real, hi::Real)
     return (vals, _hhmm.(vals))
 end
 
-# Survival function P(X > x) over positive samples, ready for log-log axes.
+# Empirical survival function P(X ≥ x) of the positive samples, at their
+# distinct values in ascending order, ready for log-log axes. Tied samples
+# collapse onto one point, so on discrete data (trade sizes, quantized
+# timestamps) every abscissa carries one probability. Zeros have no place on
+# a logarithmic axis: the probabilities are conditional on X > 0, and a
+# caller that drops zeros this way states their share.
 function _ccdf(xs::Vector{Float64})
     pos = sort!(filter(>(0.0), xs))
     n = length(pos)
-    return pos, collect(n:-1:1) ./ n
+    x = Float64[]
+    p = Float64[]
+    i = 1
+    while i <= n
+        v = pos[i]
+        push!(x, v)
+        push!(p, (n - i + 1) / n)
+        while i <= n && pos[i] == v
+            i += 1
+        end
+    end
+    return x, p
 end
 
 # Deterministic point thinning that preserves the tail: uniform stride over
@@ -72,24 +88,28 @@ end
 """
     _tail_fit(x; frac = 0.1) -> Union{Nothing,NamedTuple}
 
-Hill estimator of the tail exponent `α` in `P(X > x) ∝ x^(-α)` from the `k`
-largest of the ascending-sorted positive samples `x`, with `k` the top `frac`
-of the sample and at least 30:
+Hill estimator of the tail exponent `α` in `P(X > x) ∝ x^(-α)` above the
+threshold `u = x₍ₙ₋ₖ₎` of the ascending-sorted positive samples `x`, with `k`
+the top `frac` of the sample and at least 30:
 
-    α̂ = k / Σᵢ ln(x₍ₙ₋ᵢ₊₁₎ / x₍ₙ₋ₖ₎),    σ = α̂ / √k.
+    α̂ = m / Σ ln(xᵢ / u)  over the m samples xᵢ > u,    σ = α̂ / √m.
 
-This is the maximum-likelihood estimator of a Pareto tail above the threshold
-`x₍ₙ₋ₖ₎` ([Hill 1975](https://doi.org/10.1214/aos/1176343247)). A
-least-squares line through the log-log survival function is not a substitute:
-its points are cumulative and therefore strongly correlated, so the slope is
-biased and its regression standard error is too small by a large factor
+On continuous data `m = k` and this is the maximum-likelihood estimator of a
+Pareto tail above `u` ([Hill 1975](https://doi.org/10.1214/aos/1176343247)).
+Samples equal to `u` are left out: a tie adds `ln 1 = 0` to the sum while
+counting in `k`, and trade sizes, with their mass at round lots, would have
+`α̂` inflated by the share of ties. A least-squares line through the log-log
+survival function is not a substitute: its points are cumulative and
+therefore strongly correlated, so the slope is biased and its regression
+standard error is too small by a large factor
 ([Clauset, Shalizi & Newman 2009](https://doi.org/10.1137/070710111)).
 
-The threshold is a fixed fraction rather than a fitted `x_min`, and trade sizes
-are discrete with mass at round numbers, so the value is a diagnostic of tail
-weight, not a measurement of a power law. Returns `nothing` for fewer than 50
-samples, for a tail spanning less than a factor of two, or when the tail is
-degenerate.
+The threshold is a fixed fraction rather than a fitted `x_min`, the sizes
+above it are still discrete, and `σ` is the asymptotic standard error of an
+exact Pareto tail, which leaves out the choice of threshold: the value is a
+diagnostic of tail weight, not a measurement of a power law. Returns `nothing`
+for fewer than 50 samples, for fewer than 30 above the threshold, or for a
+tail spanning less than a factor of two.
 """
 function _tail_fit(x::Vector{Float64}; frac::Real = 0.1)
     n = length(x)
@@ -97,10 +117,11 @@ function _tail_fit(x::Vector{Float64}; frac::Real = 0.1)
     k = min(n - 1, max(30, round(Int, frac * n)))
     threshold = x[n-k]
     (threshold > 0 && x[n] >= 2threshold) || return nothing
-    s = sum(log(x[i] / threshold) for i in (n-k+1):n)
-    s > 0 || return nothing
-    α = k / s
-    return (α = α, σ = α / sqrt(k))
+    above = searchsortedlast(x, threshold) + 1      # first sample past the ties
+    m = n - above + 1
+    m >= 30 || return nothing
+    α = m / sum(log(x[i] / threshold) for i in above:n)
+    return (α = α, σ = α / sqrt(m))
 end
 
 # Value and uncertainty to the same number of decimals, set by the leading
