@@ -190,12 +190,12 @@ The second column records verification beyond that.
 | Resource guards (disk space, RAM ceiling with auto-GC, channel lag, REST backoff) |  |
 | Crash-only session lifecycle (running/completed/interrupted/failed sidecars + startup reconciliation to aborted) |  |
 | Page-streaming, per-day resumable backfill |  |
-| Bulk backfill from the venue's daily files (Binance `aggTrades` and `trades` dumps: checksum-verified, kept as the vendor record, same raw/compaction/resume path; `keep_raw = false` drops the NDJSON copy) |  |
+| Bulk backfill from the venue's daily files (Binance `aggTrades` and `trades` dumps: checksum-verified, trade-id continuity counted within and across days, kept as the vendor record, same raw/compaction/resume path; `keep_raw = false` drops the NDJSON copy) |  |
 | Vendor day-file import (Nasdaq ITCH 5.0 executions priced off the book, crosses, odd lots, breaks; IEX HIST pcap/pcapng, IEX-TP sessions, trade reports and breaks) through the raw/compaction/sidecar path | validated on full days of both: ITCH prints equal the SIP's Nasdaq prints apart from the official opening and closing cross reports (and a rare zero-size print), IEX prints equal the SIP's IEX prints in order |
 | Vendor file download (ITCH and IEX day files, Binance dumps): bounded Range requests resumed from a `.partial` prefix, announced size or CRC-32C checked, optional rate cap, several connections per file, progress logged | used on full vendor days of up to 18 GB |
 | Spill compaction (bounded memory for arbitrarily large raw inputs) |  |
 | Single-instance lock per data tree |  |
-| Capture-coverage cross-check against the historical tape (`coverage_report`) | Alpaca only; a Binance day from the bulk files is verified by the vendor's checksum, and its completeness can be checked on `Trade.id`, which is consecutive per symbol |
+| Capture-coverage cross-check against the historical tape (`coverage_report`) | Alpaca only; a Binance bulk backfill checks the vendor's checksum and counts trade-id breaks in its sidecar (`session.id_breaks`) |
 | Lossy-tap option in `tee` fan-out (lossy outputs drop; the persistence output blocks) |  |
 | Batched raw NDJSON persistence + rolling |  |
 | Historical backfill (paginated REST) |  |
@@ -299,7 +299,8 @@ The full contract, for consumers in any language, is on the
 - `data/processed/SYMBOL/YYYY-MM-DD.csv|.arrow` — compacted, time-sorted
   per-day files for the analysis pipeline. Existing files are never
   destroyed (the new file takes the canonical name; the displaced one is
-  kept as a `_#N` backup).
+  kept as a `_#N` backup; a rewrite with the same bytes leaves the file as
+  it was).
 - Timestamps are Int64 nanoseconds since the UNIX epoch (UTC) everywhere;
   `time_ns` is the exchange timestamp, `recv_ns` local receive time
   (`0` marks backfilled records).

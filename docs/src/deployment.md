@@ -22,7 +22,9 @@ max_session_hours = 8.0      # from the moment streaming starts, not from launch
 The wait precedes the session deadline: a process launched at 09:00 ET
 waits for the 09:30 bell and then has `max_session_hours` to the hard stop,
 so eight hours covers a regular session, its delayed-feed tail and a late
-close. On a holiday the clock reports the next trading day's open and the
+close. The wait holds no lock on the data tree, so a backfill may use the
+tree meanwhile; one still running at the bell makes the capture refuse to
+start. On a holiday the clock reports the next trading day's open and the
 process sleeps to it; the timer's next firing finds the unit still active
 and does nothing, as intended. Keep `[logging] log_to_file = true`: the
 journal holds the console stream and `logs/` the session file, both named by

@@ -79,12 +79,14 @@ dropping or buffering unboundedly.
    `compact_raw`. CSV is the default; Arrow is one config switch away when
    volume demands it. A rewrite never destroys a result: the new file takes the
    canonical name and the file it displaces is kept as a numbered backup,
-   `_#1`, `_#2`, …, so the canonical path is always the newest data. These
+   `_#1`, `_#2`, …, so the canonical path is always the newest data; a
+   rewrite with the same bytes leaves the file as it was. These
    are the semantics of DrWatson's `safesave`, implemented in a dozen lines
    instead of taken as a dependency, because DrWatson would bring JLD2 and
    FileIO's loader stack into a library whose processed formats are CSV and
-   Arrow. The write goes to a `.partial` file first and is renamed into
-   place, so a reader never sees a half-written day.
+   Arrow. The write goes to a temporary file of its own first and is renamed
+   into place, so neither a reader nor a second writer of the same day sees a
+   half-written file.
 
 The processed layer is read back through three functions. `corpus_inventory`
 lists what the tree holds per symbol from file metadata alone; `eachday`
@@ -121,13 +123,17 @@ interrupt (tested).
 
 - **Reconnection**: jittered exponential backoff
   (`base·2^attempt`, capped), attempt counter reset after any connection
-  that delivered data; bounded by `reconnect_max_retries`.
+  that delivered prints or stayed up for `stream.stale_timeout_s`, so a
+  quiet symbol cut by the watchdog does not use up the attempts; bounded by
+  `reconnect_max_retries`.
 - **Session deadline**: `limits.max_session_hours` is enforced by a guard
   task, so it also ends a connection that never drops; the reconnect loop
   alone would only test it between connections.
 - **Fatal vs retryable**: Alpaca error codes 401–406 and 409–411 (bad auth,
   connection limit, bad subscription) abort immediately, since retrying them
-  risks a ban. Both adapters carry the fatal signal out of the WebSocket
+  risks a ban. The exception is a connection limit (406) met after a
+  reconnect: the server most likely still counts the session's previous
+  connection, which the watchdog cut, so it is retried. Both adapters carry the fatal signal out of the WebSocket
   handler by value and throw it after the connection returns, since an
   exception thrown inside the handler arrives wrapped and would be retried as
   a disconnect. Both paths are tested against the mocks.
@@ -136,7 +142,8 @@ interrupt (tested).
   without a frame, triggering the normal reconnect path.
 - **Market-hours guards**: `/v2/clock` gates connection
   (`stream.require_market_open`); `stream.wait_for_open` sleeps until the
-  next open instead of exiting; `stream.stop_at_market_close` schedules a
+  next open instead of exiting, before the session takes the data tree's
+  lock; `stream.stop_at_market_close` schedules a
   stop at `next_close` so an unattended session does not idle on a dead
   overnight connection. Half-days and holidays need no special case,
   because the clock endpoint, not a local calendar, is authoritative
@@ -161,7 +168,7 @@ interrupt (tested).
   connection timeout (`[rest]`), so a server that accepts a connection and
   goes silent cannot block a backfill for good. Timeouts, refused or dropped
   connections and 429/5xx are retried with exponential backoff, honoring
-  `Retry-After`; anything else fails at once.
+  `Retry-After` up to ten minutes; anything else fails at once.
 - **No process-global session state**: a session runs under its own logger
   (`with_logger`), which it closes when it ends, and its stop flag is an
   atomic owned by the session and shared with that logger to mute transport
@@ -207,8 +214,8 @@ interrupt (tested).
   path would otherwise be the one that exhausts memory. The free space is
   checked before the first line is read.
 - **Single-instance lock**: a PID-file lock per data tree prevents two
-  sessions from interleaving on one raw directory; stale locks from dead
-  processes break automatically.
+  sessions from interleaving on one raw directory; the holder refreshes it
+  every minute, and a lock whose process is gone is broken after two.
 
 ## 6. Dependency decisions
 

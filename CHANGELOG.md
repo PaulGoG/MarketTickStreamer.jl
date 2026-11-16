@@ -6,14 +6,53 @@ Notable changes to MarketTickStreamer. The format follows
 
 ## [Unreleased]
 
-Corrections to session shutdown and exit status, to the tail and
+A Binance bulk backfill counts breaks in the trade-id sequence; corrections
+to session shutdown, reconnection and exit status, to the tail and
 survival-function diagnostics, and to what the documentation states about
-market-data rules and their literature. The file contract and the
-configuration schema are unchanged.
+market-data rules and their literature. The file contract gains a sidecar
+key and a rule for identical rewrites; the configuration schema is
+unchanged.
 
 ### Added
+- A bulk backfill counts the prints whose trade id does not follow the
+  previous one, within a day and from one day of the run to the next, logs
+  a warning per day that has any, and records the total as the sidecar's
+  `session.id_breaks`. The checksum proves a dump is the one the venue
+  published; the ids show whether it holds the whole day (#12).
+  `bulk_trades` returns `id_breaks` and `last_id` and takes `previous_id`;
+  `finalize_session_meta` takes `id_breaks`.
 - `run_stream` returns `status` beside `ticks` and `raw_files`: the status
   written to the session's sidecar.
+- `load_config` warns about an empty `stream.channels`, a `wait_for_open`
+  without `require_market_open`, and storage subdirectories that are not
+  distinct; all three still load.
+
+### Changed
+- A connection that stayed up for `stream.stale_timeout_s` resets the
+  reconnect counter, as one that delivered prints does. A quiet symbol cut by
+  the watchdog every two minutes used up ten attempts in about 25 minutes
+  and ended a healthy session as `failed`.
+- An Alpaca connection limit (406) met after a reconnect is retried: the
+  server most likely still counts the session's previous connection. On the
+  first connection it stays fatal.
+- `wait_for_open` waits before the session takes the data tree's lock, so a
+  capture started before a weekend leaves the tree to backfills meanwhile.
+- The data-tree lock is refreshed every minute and broken two minutes after
+  its process died (was five and ten), so a restarted capture is not refused
+  for ten minutes.
+- A rewrite of a processed file with the same bytes leaves the file as it
+  was, without a `_#N` backup; every write goes through a temporary name of
+  its own (`<day>.<tag>.partial.<ext>`), so two writers of one day cannot
+  interleave in one file.
+- `limits.max_live_heap_mb` bounds the in-memory compaction budget as well:
+  an input whose estimated footprint exceeds it is compacted through spill
+  files.
+- A `Retry-After` of up to ten minutes is honored as given (it was cut to
+  one minute, early enough for a venue to answer with a ban); a longer one
+  fails the request. A chunk's timeout adds the policy's timeout and a
+  quarter of margin to the paced transfer time.
+- A bulk dump is read from the archive as a stream instead of being
+  decompressed whole.
 
 ### Fixed
 - `scripts/stream.jl` exits with status 1 when the session ended `failed`
@@ -22,13 +61,29 @@ configuration schema are unchanged.
   unattended-operation page.
 - Closing a connection whose peer has gone silent is bounded at 5 s. The
   stale-connection watchdog and `stop!` waited for the peer's CLOSE frame,
-  that is, until TCP gave up.
+  that is, until TCP gave up. A `stop!` during the connection's opening
+  takes effect once it is open.
 - A producer that ended on its own left its deadline and close guards
   running; they end with it. A reconnect backoff ends at a stop request or
   at the session deadline.
 - `follow_source` and `monitor_raw` without `session` attach to the whole
   session of the newest raw part. On a backfill they followed one
-  (symbol, day) part set and then waited for the sidecar.
+  (symbol, day) part set and then waited for the sidecar. Attached with
+  `from_start = false` in the middle of a line, they read that line once it
+  is complete instead of counting a corrupt fragment; a far-behind reader
+  reads in blocks of 64 MiB instead of a part's whole tail. The monitor's
+  rate is measured over the time between reads.
+- An ITCH file that ends before the End of Messages event, which closes
+  every trading day, is reported `truncated` even when it was cut between
+  two messages. A Stock Directory message repeated for one symbol counts
+  it once.
+- An IEX capture of a protocol the reader does not know (DEEP+) is reported
+  instead of read as empty, and a segment whose payload ends before its
+  message count counts as a gap.
+- A raw part the sink opened and never wrote to is removed when it closes;
+  it was left as a zero-byte file and reported at every later start.
+- Volume and value bars complete at a threshold the running sum reaches
+  only up to rounding (a hundred prints of 10.01 against 1001).
 - The tail exponent of the diagnostic figures leaves out the sizes tied with
   its threshold, which were counted while adding nothing to the Hill sum: on
   a liquid US equity day 19 % of the top decile sat on the 100-share
@@ -59,13 +114,13 @@ configuration schema are unchanged.
   modes do.
 - A `Retry-After` header that is not a non-negative number of seconds falls
   back to the backoff schedule; a negative value raised an `ArgumentError`.
+- An IEX HIST download resumed from a complete partial file is checked
+  against the CRC-32C the host announces; it was checked by size only.
 - `run_stream` interrupted before the session started returns its documented
   result, and the data-tree lock is released when the sidecar cannot be
   finalized.
-- Documentation: a Binance day is verified by the vendor's checksum, and the
-  continuity of its trade ids is a check the reader can make, not one the
-  package performs; the transaction-clock literature is cited with the work
-  that contests it; the round-lot rule is cited as 17 CFR 242.600(b)(93).
+- Documentation: the transaction-clock literature is cited with the work that
+  contests it; the round-lot rule is cited as 17 CFR 242.600(b)(93).
 
 ## [2.0.3] - 2026-10-31
 

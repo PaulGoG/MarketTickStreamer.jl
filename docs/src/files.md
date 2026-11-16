@@ -16,8 +16,8 @@ and versioned with the package.
    past it or the session has ended, and while the session runs its last
    line may be torn.
 3. A processed file appears atomically and is never modified. A rewrite
-   displaces the old file to a `_#N` backup, so the canonical name always
-   holds the newest data.
+   with other content displaces the old file to a `_#N` backup, so the
+   canonical name always holds the newest data.
 4. The sidecar is the session's lifecycle, and its configuration snapshot is
    the source of every derived quantity: the calendar a print is filed under,
    the time zone of a window, the sale-condition lists.
@@ -109,7 +109,8 @@ arrival order. It is not chronological: a consolidated tape interleaves
 venues and late prints are normal. A part rolls to the next one once it
 reaches `limits.max_raw_file_mb` MiB, checked after each batch, so a part may
 exceed the limit by one batch; parts are numbered from `001` and read in name
-order. Batches are flushed on `flush_interval_s` or `flush_max_ticks`, and a
+order. A part the sink opened and never wrote to (after a roll that ended the
+session, or in a session without prints) is removed when the sink closes. Batches are flushed on `flush_interval_s` or `flush_max_ticks`, and a
 write can reach the file in pieces, so the last line of a running session's
 newest part may be torn. A reader carries it until its newline arrives.
 Every reader in the package skips a line that does not parse and counts it;
@@ -124,7 +125,10 @@ finalized, `finished_utc` (ISO 8601, UTC); `ticks`, the prints received and
 written to `raw/`; `ticks_processed`, the prints written to `processed/`, for
 a backfill or an import, which differ from `ticks` by the duplicates
 compaction dropped; `raw_files`, the base names of the session's parts;
-`reconciled_utc` when the status was set by reconciliation. An import adds
+`reconciled_utc` when the status was set by reconciliation; `id_breaks`, for
+a bulk backfill, the prints whose trade id does not follow the previous one,
+within a day or from one day of the run to the next (zero on a complete
+span; see [Vendor and bulk files](#Vendor-and-bulk-files)). An import adds
 `[session.source]`: the vendor file's `file` name, `bytes`, `sha256` and
 `format`, and the reader's statistics (`messages`, `prints`, `broken`,
 `truncated`, and per format `unresolved` and `symbols` for ITCH, `feed`,
@@ -186,10 +190,11 @@ their record batches are uncompressed or compressed with zstd or lz4
 string columns should be read as strings: a column of numeric codes would
 otherwise be typed as integers.
 
-A file is written to `<YYYY-MM-DD>.partial.<ext>` and renamed into place, so
-the canonical name is either the previous complete file or the new one. A
-rewrite keeps the displaced file as `<YYYY-MM-DD>_#N.<ext>`, `N` counting up
-from 1. The tree has no source dimension: an ITCH or IEX day is filed where a
+A file is written to `<YYYY-MM-DD>.<tag>.partial.<ext>`, `tag` unique to the
+write, and renamed into place, so the canonical name is either the previous
+complete file or the new one. A rewrite with other content keeps the
+displaced file as `<YYYY-MM-DD>_#N.<ext>`, `N` counting up from 1; a rewrite
+with the same bytes leaves the file as it was. The tree has no source dimension: an ITCH or IEX day is filed where a
 capture of that day would be, so each source (capture, ITCH, IEX) has a data
 tree of its own.
 
@@ -201,10 +206,13 @@ Files fetched from a venue or a vendor are kept as downloaded, under
 announces, there being no checksum; an IEX HIST day against the CRC-32C the
 file host announces and the size in IEX's index. A download in progress is
 `<file>.partial` and is resumed from there; a file that fails verification
-is deleted. The trade ids of a Binance dump are consecutive per symbol,
-within a day and across days, so a gap in `id` after sorting marks missing
-prints: `count(!=(1), diff(sort!([t.id for t in trades])))` is zero on a
-complete span. A consumer never reads these files except as the record of a
+is deleted. The checksum proves the file is the one the venue published;
+whether that file holds the whole day shows in its trade ids, which are
+consecutive per symbol within a day and across days. A bulk backfill counts
+the rows that break the sequence as the sidecar's `session.id_breaks`, the
+first row of a day measured against the last of the day before when both
+are in the run; a missing run of prints counts once, and so does a run the
+vendor repeated, which compaction then drops. A consumer never reads these files except as the record of a
 day: the prints they hold reach it through the raw and processed layers, and
 an import's sidecar names the file and its SHA-256.
 
@@ -213,8 +221,8 @@ an import's sidecar names the file and its SHA-256.
 `<data_dir>/.session.lock` is a PID file held by the one producer a data
 tree admits at a time: a capture, a backfill or an import. A second producer
 on the same tree refuses to start; a lock left by a dead process is broken
-by the next one once it has gone ten minutes without a refresh (a live
-producer refreshes it every five). Consumers never take it, and their reads
+by the next one once it has gone two minutes without a refresh (a live
+producer refreshes it every minute). Consumers never take it, and their reads
 never wait on it.
 
 ## Versioning

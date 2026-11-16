@@ -77,9 +77,9 @@ where that file is a read-only template to copy
 | `symbols` | Subscription list; at most `limits.max_symbols` entries. |
 | `channels` | Subset of `"trades"`, `"quotes"`, `"bars"`. Trades only by default: quote and bar frames are parsed into [`Quote`](@ref) and [`Bar`](@ref) and delivered to the `on_quote` / `on_bar` callbacks of [`live_source`](@ref), but neither is persisted. A quote stream carries an order of magnitude more messages than the trade stream, and persisting it is out of scope until a microstructure question requires it. |
 | `require_market_open` | Query the market clock before connecting and exit if closed. |
-| `wait_for_open` | When closed, sleep until the next open instead of exiting. The wait is shifted by the feed's intrinsic delay. |
+| `wait_for_open` | When closed, sleep until the next open instead of exiting. The wait is shifted by the feed's intrinsic delay, and the session takes the data tree's lock only when it ends. |
 | `stop_at_market_close` | Schedule a stop at the session's next close, likewise shifted. |
-| `reconnect_max_retries` | Reconnection attempts per disconnect before giving up. The counter resets after any connection that delivered data. |
+| `reconnect_max_retries` | Reconnection attempts per disconnect before giving up. The counter resets after any connection that delivered prints or stayed up for `stale_timeout_s`. |
 | `reconnect_base_delay_s` | Backoff base; the delay is `base * 2^attempt`, jittered. |
 | `reconnect_max_delay_s` | Backoff cap. |
 | `stale_timeout_s` | Watchdog interval: a connection that delivers no frame for this long is severed and retried. |
@@ -110,7 +110,7 @@ loop indefinitely.
 | `channel_capacity` | In-flight tick buffer; the producer blocks when full. |
 | `max_symbols` | Subscription cap. |
 | `min_free_disk_gb` | Refuse to start, and stop an active session, below this free space. |
-| `max_live_heap_mb` | Live-heap ceiling for backfill pages and spill compaction; past it a full GC runs, and if the heap is still above it the run stops with a `ResourceError`. |
+| `max_live_heap_mb` | Live-heap ceiling for backfill pages and compaction: an input whose estimated footprint exceeds it is compacted through spill files, and past it a full GC runs; if the heap is still above it the run stops with a `ResourceError`. |
 | `max_open_spill_files` | File handles a spilling compaction keeps open at once. |
 | `compact_mem_fraction` | Share of the free RAM an in-memory compaction may claim; beyond it the run spills. |
 | `spill_headroom` | Scratch space a spilling compaction requires, as a multiple of the input size. |
@@ -258,8 +258,9 @@ Both readers take a symbol filter, stream their prints in pages, and treat
 a broken trade by its id: dropped by default, marked with `"broken"`, or
 kept, the first two reading the file twice. The sidecar's `session.source`
 table records the file's name, size and SHA-256, the format, and the
-reader's statistics (messages, prints, broken, sequence gaps, whether the
-file ended inside a message). `keep_raw = false` drops the day's NDJSON
+reader's statistics (messages, prints, broken, sequence gaps, and whether
+the file ends early: inside a record, or for ITCH before the End of Messages
+event that closes every day). `keep_raw = false` drops the day's NDJSON
 copy after compaction, the vendor file being the record.
 
 The processed tree is keyed by symbol and day with no source dimension, so
