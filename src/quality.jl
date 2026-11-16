@@ -2,7 +2,7 @@
 #
 # Reconnections can double-deliver ticks and backfills can overlap live
 # captures; both are removed before the analysis layer. Gaps, out-of-order
-# delivery and clock skew are reported per session before it is analysed.
+# delivery and clock skew are reported per session before it is analyzed.
 
 # Identity of a tick for deduplication: provider id alone is not unique
 # across symbols/tapes, and id may be 0, so use the full print identity.
@@ -22,14 +22,15 @@ The lists for `A`, `B` and `C` are derived from the plans' own sale-condition
 matrices (CTS Pillar output specification 2.11b, UTP data feed services
 specification 4.1): a code is listed when its *consolidated update-last* entry
 is "no", or "no unless it is the only qualifying trade of the day". That
-covers prints that carry no current price by construction — averages (`B`,
-`W`), prices fixed earlier or elsewhere (`P`, `4`), late reports (`Z`, `G`,
-`U`), non-regular settlement (`C`, `R`, `N`), contingent trades (`V`, `7`),
-price variation (`H`), market-center official open and close (`Q`, `M`) — and
-odd lots (`I`). On 40 symbol-days captured with this package the stale-price
-classes among them (`W`, `4`, `P`, `Z`) sit one to two orders of magnitude
-further from the last regular print than regular prints do; odd lots do not,
-and are listed because the plans bar them. The provider delivers the plans'
+covers odd lots (`I`) and prints that carry no current price by construction:
+averages (`B`, `W`), prices fixed earlier or elsewhere (`P`, `4`), late
+reports (`Z`, `G`, `U`), non-regular settlement (`C`, `R`, and `N`, the
+next-day trade, which both plans hold in reserve since settlement moved to
+T+1 in 2024), contingent trades (`V`, `7`), price variation (`H`),
+market-center official open and close (`Q`, `M`). On 40 symbol-days captured
+with this package the stale-price classes among them (`W`, `4`, `P`, `Z`) sit
+one to two orders of magnitude further from the last regular print than
+regular prints do; odd lots do not, and are listed because the plans bar them. The provider delivers the plans'
 codes unchanged, and its [`condition_map`](@ref) returns their glossary.
 
 Two deliberate departures from the matrices. `T` (extended hours) is not
@@ -118,18 +119,21 @@ end
     observed_round_lot(trades; code = "I") -> Float64
 
 The venue's round lot for these prints, read off the tape: one share more
-than the largest trade still flagged as an odd lot. `NaN` when no print
-carries the flag.
+than the largest trade still flagged as an odd lot. That is a lower bound,
+attained when a print one share short of the lot occurred, as on any day of a
+liquid name; `NaN` when no print carries the flag (a one-share lot has no odd
+lots). Over one trading date it is that date's lot; over a span that crosses
+a reassignment it is the larger of the two.
 
-Worth reporting per capture because the round lot is neither 100 shares nor
-constant. Under the SEC Market Data Infrastructure rules it is tiered by
-share price (100 shares at or below 250 USD, 40 up to 1000 USD, 10 up to
-10 000 USD, 1 above) and reassigned semiannually per symbol from that symbol's
-average close over an evaluation month, effective the first business day of
-May and of November.
+Reported per capture because the round lot is neither 100 shares nor
+constant. Under Regulation NMS (17 CFR 242.600(b)(93), in force since
+November 2025) it is tiered by share price (100 shares at or below 250 USD,
+40 up to 1000 USD, 10 up to 10 000 USD, 1 above) and reassigned semiannually
+per symbol from that symbol's average close in March and in September,
+effective the first business day of May and of November.
 
-The consequence is that the odd-lot flag, and therefore the price-forming
-population, silently changes membership at those dates. On a 251-day AAPL
+The odd-lot flag, and therefore the price-forming population, changes
+membership at those dates with no marker in the data. On a 251-day AAPL
 capture taken with this package, the lot fell from 100 to 40 shares on
 2026-05-01 and the median inter-arrival time of the price-forming population
 dropped by a factor of eight across the boundary, with no change in market
@@ -169,9 +173,7 @@ Audit raw session files and return one row per symbol:
   the file is pure backfill)
 - `round_lot` (the venue's round lot, read off the tape by
   [`observed_round_lot`](@ref); it is price-tiered and reassigned
-  semiannually, so it is not 100 and does not hold still)
-
-Inspect this before trusting any captured session.
+  semiannually, so it is neither 100 nor constant)
 """
 function session_report(
     paths::AbstractVector{<:AbstractString};

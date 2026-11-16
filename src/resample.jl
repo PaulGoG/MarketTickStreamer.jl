@@ -2,12 +2,15 @@
 # calendar.
 #
 # Market activity is not uniform in time, so calendar-time sampling draws unevenly from the
-# process that generates prices — densely at the open, sparsely at lunch. Sampling instead
+# process that generates prices: densely at the open, sparsely at lunch. Sampling instead
 # once per fixed count of prints, of shares, or of traded value subordinates the price
-# process to a clock that runs with the market. Under such a clock, returns are closer to
-# independent and to normality than under wall-clock sampling, which is the empirical result
-# that motivates the whole family (Mandelbrot & Taylor 1967, doi:10.1287/opre.15.6.1057;
-# Clark 1973, doi:10.2307/1913889; Ané & Geman 2000, doi:10.1111/0022-1082.00286).
+# process to a clock that runs with the market (Mandelbrot & Taylor 1967,
+# doi:10.1287/opre.15.6.1057; Clark 1973, doi:10.2307/1913889). Ané & Geman 2000
+# (doi:10.1111/0022-1082.00286) reported returns close to normal on the transaction
+# clock; Gillemot, Farmer & Lillo 2006 (doi:10.1080/14697680600835688) and Murphy &
+# Izzeldin 2010 (doi:10.1080/09603101003636212) find heavy tails and volatility
+# clustering persisting on it, so the clock removes the intraday activity profile from
+# the sampling and no more than that.
 #
 # Bars are derived objects: they carry `recv_ns = 0`, the same marker the raw
 # layer uses for records that never crossed the wire. Each bar records both
@@ -100,8 +103,12 @@ choice changes the bar count by a factor of three.
 Sampling by transaction count is the oldest of these clocks: Mandelbrot and Taylor (1967)
 [doi:10.1287/opre.15.6.1057](https://doi.org/10.1287/opre.15.6.1057) proposed price changes
 as a subordinated process running on transaction time, and Ané and Geman (2000)
-[doi:10.1111/0022-1082.00286](https://doi.org/10.1111/0022-1082.00286) showed returns
-sampled this way are close to normal where calendar-time returns are heavy-tailed.
+[doi:10.1111/0022-1082.00286](https://doi.org/10.1111/0022-1082.00286) reported returns
+sampled this way to be close to normal. Later studies find heavy tails and volatility
+clustering persisting on the transaction clock (Gillemot, Farmer and Lillo 2006,
+[doi:10.1080/14697680600835688](https://doi.org/10.1080/14697680600835688); Murphy and
+Izzeldin 2010,
+[doi:10.1080/09603101003636212](https://doi.org/10.1080/09603101003636212)).
 
 Prints are ordered by exchange timestamp, not arrival. The print that
 completes a bar belongs to it. Its timestamp is the bar's `close_ns`, so
@@ -124,9 +131,9 @@ Resample `trades` onto a volume clock: one [`Bar`](@ref) per `volume` shares.
 
 Clark (1973) [doi:10.2307/1913889](https://doi.org/10.2307/1913889) introduced volume as the
 directing process for speculative prices, giving a finite-variance alternative to the
-stable-Paretian account of heavy tails: the unconditional return distribution is
-heavy-tailed because it mixes over a random volume clock, not because the underlying
-increments are.
+stable-Paretian account of fat tails: the unconditional return distribution is
+leptokurtic because it mixes over a random volume clock, while the increments on that
+clock are Gaussian.
 
 The caveat is mechanical: a share is not a fixed unit of economic activity
 across time or across instruments. Share prices drift, splits reset the
@@ -147,11 +154,13 @@ end
 Resample `trades` onto a traded-value clock: one [`Bar`](@ref) per `value` of
 price times size.
 
-This is the clock that survives changes of scale. It is invariant to splits,
-and roughly invariant to price-level drift, so a threshold chosen on one
-sample stays meaningful on another, which neither [`tick_bars`](@ref)
-nor [`volume_bars`](@ref) does; hence dollar bars are the usual
-default for cross-sample work.
+The traded-value clock is invariant to splits: a split rescales price and
+size inversely and leaves their product unchanged, so a threshold chosen
+before a split holds after it, which a share threshold of
+[`volume_bars`](@ref) does not. A threshold in currency is also comparable
+across instruments at different price levels. These are the "dollar bars" of
+López de Prado, *Advances in Financial Machine Learning* (Wiley, 2018,
+ISBN 978-1-119-48208-6), who recommends them for that reason.
 
 `value` is in the price's own units; no currency conversion is performed.
 """
