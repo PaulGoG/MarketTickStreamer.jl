@@ -44,6 +44,7 @@ function _activity_bars(
     threshold > 0 || throw(ArgumentError("bar threshold must be positive, got $threshold"))
     isempty(trades) && return Bar[]
     sym, ordered = _one_symbol_ordered(trades)
+    threshold_reached = threshold * (1 - 1e-12)
 
     bars = Bar[]
     i, n = 1, length(ordered)
@@ -65,10 +66,13 @@ function _activity_bars(
             accumulated += increment(t)
             j += 1
             # The print that crosses the threshold belongs to the bar it
-            # closes, so a bar is never short of its threshold.
-            accumulated >= threshold && break
+            # closes, so a bar is never short of its threshold beyond the
+            # rounding of the running sum: decimal prices and sizes are not
+            # exact in binary, and a hundred prints of 10.01 sum to
+            # 1000.9999999999993.
+            accumulated >= threshold_reached && break
         end
-        if accumulated >= threshold || keep_partial
+        if accumulated >= threshold_reached || keep_partial
             push!(
                 bars,
                 Bar(

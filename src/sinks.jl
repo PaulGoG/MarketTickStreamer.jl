@@ -117,12 +117,20 @@ function write_batch!(s::RawSink, trades::AbstractVector{Trade})
 end
 
 """
-    close_sink!(s::RawSink)
+    close_sink!(s::RawSink) -> Nothing
 
 Flush and close the sink's file handle. The file is never reopened, and the
-sink takes no further writes.
+sink takes no further writes. A part the sink opened and never wrote to (the
+part after a roll that ended the session, or the only part of a session
+without prints) is removed: an empty part carries nothing, and one left
+behind reads as the stub of an aborted session.
 """
-close_sink!(s::RawSink) = (flush(s.io); close(s.io); nothing)
+function close_sink!(s::RawSink)
+    flush(s.io)
+    close(s.io)
+    s.bytes == 0 && filesize(s.path) == 0 && rm(s.path; force = true)
+    return nothing
+end
 
 """
     run_sink!(ch::Channel{Trade}, sink::RawSink;
@@ -394,11 +402,11 @@ it displaces is kept as a numbered backup `YYYY-MM-DD_#N.csv|.arrow`
 overlapping backfill/live captures, rows a vendor file repeats) via
 [`deduplicate_trades`](@ref), logging the count for each symbol and day that
 had any. Small inputs are compacted in memory; when the estimated footprint
-exceeds `mem_fraction` of currently free RAM the input is instead streamed
-line-by-line into per-(symbol, day) spill files and each group is compacted
-independently — memory stays bounded by the largest single group.
-`max_live_heap_mb` additionally enforces the configured heap ceiling per
-group ([`check_live_heap`](@ref)).
+exceeds `mem_fraction` of currently free RAM, or `max_live_heap_mb` when it
+is given, the input is instead streamed line by line into per-(symbol, day)
+spill files and each group is compacted independently, so memory stays
+bounded by the largest single group. `max_live_heap_mb` also enforces the
+heap ceiling per group ([`check_live_heap`](@ref)).
 
 The spill pass writes a verbatim copy of the input, so it needs scratch space
 of the input's own size. `scratch_dir` places it; the default is the directory
@@ -462,7 +470,9 @@ function _compact_raw(
     )
     bytes = sum(filesize, raw_paths; init = 0)
     est = footprint_factor * bytes          # parsed structs + DataFrame + sort scratch
-    est > mem_fraction * Sys.free_memory() && return _compact_spill(
+    budget = mem_fraction * Sys.free_memory()
+    max_live_heap_mb === nothing || (budget = min(budget, max_live_heap_mb * 2^20))
+    est > budget && return _compact_spill(
         raw_paths,
         out_dir;
         format,
@@ -679,15 +689,17 @@ end
 Write a file through `write_fn(tmp_path)` so that `path` always holds the
 newest complete result and nothing already there is lost.
 
-The content goes to `<base>.partial<ext>` in the same directory first (the
-extension is kept last because writers such as `FileIO.save` infer the format
-from it). If `path` already exists it is then preserved as the first free
-`<base>_#N<ext>`, `N` from 1 (a hard link where the filesystem allows one, a
-copy otherwise), and finally the partial file is renamed onto `path`. The
-rename replaces atomically on one filesystem, so once `path` exists it holds a
-complete file at every instant, the previous one or the new one, never a
-half-written one. Backups are numbered in order of displacement: `_#1` is
-the oldest.
+The content goes to `<base>.<tag>.partial<ext>` in the same directory first,
+`tag` unique to the write, so two writers of one path never share a temporary
+file (the extension is kept last because writers such as `FileIO.save` infer
+the format from it). If `path` already holds the same bytes, the partial file
+is dropped and nothing else changes. Otherwise an existing `path` is
+preserved as the first free `<base>_#N<ext>`, `N` from 1 (a hard link where
+the filesystem allows one, a copy otherwise), and the partial file is renamed
+onto `path`. The rename replaces atomically on one filesystem, so once `path`
+exists it holds a complete file at every instant, the previous one or the new
+one, never a half-written one. Backups are numbered in order of displacement:
+`_#1` is the oldest.
 
 If `write_fn` throws, the partial file is removed, `path` is left untouched
 and the exception propagates.
@@ -697,16 +709,34 @@ prior results kept as numbered backups) without the dependency.
 """
 function _safesave(write_fn, path::AbstractString)
     base, ext = splitext(path)
-    partial = base * ".partial" * ext
+    tag = string(getpid(); base = 36) * string(rand(RandomDevice(), UInt32); base = 36)
+    partial = "$(base).$(tag).partial$(ext)"
     try
         write_fn(partial)
     catch
         rm(partial; force = true)
         rethrow()
     end
+    if isfile(path) && _same_bytes(partial, path)
+        rm(partial; force = true)
+        return String(path)
+    end
     ispath(path) && _link_or_copy(path, _backup_path(path))
     Base.Filesystem.rename(partial, path)
     return String(path)
+end
+
+# Whether two files hold the same bytes, compared in blocks.
+function _same_bytes(a::AbstractString, b::AbstractString)
+    filesize(a) == filesize(b) || return false
+    open(a) do ia
+        open(b) do ib
+            while !eof(ia)
+                read(ia, 1 << 20) == read(ib, 1 << 20) || return false
+            end
+            return true
+        end
+    end
 end
 
 # Hard links are refused by some filesystems (FAT, several network mounts);

@@ -213,10 +213,9 @@ function start_mock_binance_ws(
     linger_s::Real = 0.0,
     fatal_after::Integer = 1,
 )
-    conns = Ref(0)
+    conns = Threads.Atomic{Int}(0)          # handlers may run on several threads
     return HTTP.WebSockets.listen!("127.0.0.1", port; verbose = false) do ws
-        conns[] += 1
-        if conns[] > fatal_after
+        if Threads.atomic_add!(conns, 1) + 1 > fatal_after
             HTTP.WebSockets.send(
                 ws,
                 JSON.json((; error = (; code = 2, msg = "Invalid request"))),

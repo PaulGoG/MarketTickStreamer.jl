@@ -140,16 +140,12 @@ function _run_import(
                 iex_hist_trades(path; symbols, broken, tape, each_page = sink_page)
             end
         finally
-            close_sink!(sink)
-            sink.n_written == 0 && filesize(sink.path) == 0 && rm(sink.path; force = true)
+            close_sink!(sink)               # removes the part when nothing was read
         end
         _import_stats!(summary.source, stats)
         summary.ticks = stats.prints
         files = _raw_files_with_prefix(cfg.raw_dir, sid)
         if summary.ticks == 0
-            for f in files
-                filesize(f) == 0 && rm(f; force = true)
-            end
             @warn "no prints read from the file" file = basename(path)
         else
             c = _compact_raw(cfg, files)
@@ -158,8 +154,7 @@ function _run_import(
             keep_raw || foreach(f -> rm(f; force = true), files)
         end
         stats.truncated &&
-            @warn "the file ended inside a message; the day is incomplete" file =
-                basename(path)
+            @warn "the file ends early; the day is incomplete" file = basename(path)
         @info "imported" format file = basename(path) messages = stats.messages prints =
             summary.ticks stored = summary.ticks_processed broken = stats.broken
         @info "import finished" status = summary.status files = length(processed) prints =

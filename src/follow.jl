@@ -55,13 +55,31 @@ function _sidecar_id(dir::AbstractString, prefix::AbstractString)
 end
 
 # Start at the current end of every existing part: only what is appended
-# afterwards is read.
+# afterwards is read. The start is the end of the last complete line, so a
+# line being written at attach is read whole once its newline arrives rather
+# than counted as a corrupt fragment.
 function _skip_to_end!(t::RawTail)
     for p in _session_parts(t)
-        t.offsets[p] = filesize(p)
+        t.offsets[p] = _last_line_end(p)
     end
     return t
 end
+
+# The offset just past the last newline of `path`, looked for in its final
+# `window` bytes: 0 when the file holds no complete line, the file's size
+# when no newline falls in the window.
+function _last_line_end(path::AbstractString; window::Integer = 1 << 20)
+    sz = filesize(path)
+    sz == 0 && return Int64(0)
+    lo = max(Int64(0), sz - window)
+    tail = open(io -> (seek(io, lo); read(io, sz - lo)), path)
+    i = findlast(==(UInt8('\n')), tail)
+    return i === nothing ? (lo == 0 ? Int64(0) : sz) : lo + i
+end
+
+# Bytes read from a part per step of `_drain!`, which bounds its memory
+# however far behind the reader is.
+const DRAIN_BLOCK = 64 << 20
 
 # Read the bytes appended to every part since the last call, parse the
 # complete NDJSON lines in file order and hand each print to `f`. The
@@ -76,25 +94,29 @@ function _drain!(f, t::RawTail)
         isfile(path) || continue
         off = get(t.offsets, path, Int64(0))
         sz = filesize(path)
-        sz <= off && continue
-        chunk = open(path) do io
-            seek(io, off)
-            String(read(io))
-        end
-        t.offsets[path] = off + sizeof(chunk)
-        lines = split(get(t.carries, path, "") * chunk, '\n')
-        t.carries[path] = String(lines[end])
-        for ln in @view lines[1:(end-1)]
-            all(isspace, ln) && continue
-            trade = try
-                json_to_trade(ln)
-            catch e
-                e isa InterruptException && rethrow()
-                corrupt += 1
-                continue
+        while off < sz
+            chunk = open(path) do io
+                seek(io, off)
+                String(read(io, min(sz - off, DRAIN_BLOCK)))
             end
-            f(trade)
-            prints += 1
+            isempty(chunk) && break
+            off += sizeof(chunk)
+            t.offsets[path] = off
+            carry = get(t.carries, path, "")
+            lines = split(isempty(carry) ? chunk : carry * chunk, '\n')
+            t.carries[path] = String(lines[end])
+            for ln in @view lines[1:(end-1)]
+                all(isspace, ln) && continue
+                trade = try
+                    json_to_trade(ln)
+                catch e
+                    e isa InterruptException && rethrow()
+                    corrupt += 1
+                    continue
+                end
+                f(trade)
+                prints += 1
+            end
         end
     end
     return (prints, corrupt)

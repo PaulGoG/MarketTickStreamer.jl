@@ -358,21 +358,30 @@ end
 # venue add one, is skipped. A wrong column count or a row outside `date` is
 # an error: a print filed under the wrong day would corrupt that day without
 # a trace.
+#
+# The ids of both dumps are consecutive per symbol, within a day and from one
+# day to the next, so `id_breaks` counts the rows whose id is not the previous
+# row's plus one, the first row measured against `previous_id` when it is
+# given: zero on a complete span, and a missing or a repeated run of rows
+# counts once. `last_id` is the id of the last row (`0` for none).
 function _parse_bulk_csv(
-    csv::AbstractVector{UInt8},
+    csv::IO,
     sym::String,
     date::Date,
     feed::AbstractString;
     each_page = nothing,
     page_rows::Integer = 100_000,
     name::AbstractString = "",
+    previous_id::Union{Nothing,Integer} = nothing,
 )
     cols = feed == "aggTrade" ? 8 : 7
     day_lo = round(Int64, datetime2unix(DateTime(date))) * NS_PER_SEC
     day_hi = day_lo + 86_400 * NS_PER_SEC
     pages = TradePages(each_page, page_rows)
+    last_id = previous_id === nothing ? Int64(-1) : Int64(previous_id)
+    id_breaks = 0
     first_line = true
-    for line in eachline(IOBuffer(csv))
+    for line in eachline(csv)
         isempty(line) && continue
         fields = split(line, ',')
         if first_line
@@ -392,14 +401,26 @@ function _parse_bulk_csv(
                 "$name: a row dated $(trading_date(t.time_ns; tz = tz"UTC")) in the file of $date",
             ),
         )
+        last_id >= 0 && t.id != last_id + 1 && (id_breaks += 1)
+        last_id = t.id
         push!(pages, t)
     end
-    return _hand_over!(pages)
+    _hand_over!(pages)
+    return (;
+        kept = pages.kept,
+        prints = pages.prints,
+        id_breaks,
+        last_id = max(last_id, 0),
+    )
 end
+
+_parse_bulk_csv(csv::AbstractVector{UInt8}, args...; kwargs...) =
+    _parse_bulk_csv(IOBuffer(csv), args...; kwargs...)
 
 """
     bulk_trades(p::BinanceProvider, symbol, date; feed = "aggTrade", dest_dir,
-                each_page = nothing, page_rows = 100_000) -> (; trades, prints, file)
+                each_page = nothing, page_rows = 100_000, previous_id = nothing)
+        -> (; trades, prints, file, id_breaks, last_id)
 
 The trades of `symbol` on UTC `date` from the venue's daily dump
 ([`bulk_url`](@ref)), the route to a large corpus: one file per day, both
@@ -423,6 +444,14 @@ Rows are parsed in pages of `page_rows`; `each_page` receives them and
 `prints` counts them either way, and `file` is the path of the verified zip. The vendor's
 timestamps are milliseconds before 2025-01-01 and microseconds from then
 on; both are read.
+
+The trade ids of a dump are consecutive per symbol, and so are those of
+consecutive days. `id_breaks` counts the rows whose id does not follow the
+previous one, the first row measured against `previous_id` (the `last_id` of
+the day before) when it is given, so it is zero on a complete span. A
+missing run of prints counts once, and so does a run the vendor repeated
+(compaction drops the copies). The checksum proves the file is the one the
+venue published; the ids show whether that file holds the whole day.
 """
 function bulk_trades(
     p::BinanceProvider,
@@ -432,6 +461,7 @@ function bulk_trades(
     dest_dir::AbstractString,
     each_page = nothing,
     page_rows::Integer = 100_000,
+    previous_id::Union{Nothing,Integer} = nothing,
 )
     page_rows >= 1 || throw(ArgumentError("page_rows must be at least 1, got $page_rows"))
     sym = uppercase(String(symbol))
@@ -439,7 +469,13 @@ function bulk_trades(
     path = _fetch_bulk(p, url, joinpath(dest_dir, "binance", sym))
     if path === nothing
         @info "no bulk file published for this day" symbol = sym date feed
-        return (; trades = Trade[], prints = 0, file = "")
+        return (;
+            trades = Trade[],
+            prints = 0,
+            file = "",
+            id_breaks = 0,
+            last_id = Int64(0),
+        )
     end
     archive = ZipReader(Mmap.mmap(path))
     entries = zip_names(archive)
@@ -450,10 +486,30 @@ function bulk_trades(
             join(entries, ", "),
         ),
     )
-    csv = zip_readentry(archive, only(entries))
-    pages =
-        _parse_bulk_csv(csv, sym, date, feed; each_page, page_rows, name = basename(path))
-    return (; trades = pages.kept, prints = pages.prints, file = path)
+    # Streamed: a busy day's CSV is a gigabyte or more uncompressed.
+    r = let io = zip_openentry(archive, only(entries))
+        try
+            _parse_bulk_csv(
+                io,
+                sym,
+                date,
+                feed;
+                each_page,
+                page_rows,
+                name = basename(path),
+                previous_id,
+            )
+        finally
+            close(io)
+        end
+    end
+    return (;
+        trades = r.kept,
+        prints = r.prints,
+        file = path,
+        id_breaks = r.id_breaks,
+        last_id = r.last_id,
+    )
 end
 
 # Binance spot streaming. There is no auth and no subscribe handshake (the
@@ -467,11 +523,13 @@ function stream_protocol!(
     on_quote = nothing,
     on_bar = nothing,
 )
-    (on_quote === nothing && on_bar === nothing) ||
-        @debug "Binance adapter streams trades only; quote and bar callbacks are idle"
+    all(==(:trades), cfg.channels) ||
+        @warn "the Binance adapter streams trades only; other stream.channels are ignored" channels =
+            cfg.channels maxlog = 1
     fatal = Ref{Union{Nothing,FatalStreamError}}(nothing)
     HTTP.WebSockets.open(ws_url(p, cfg.symbols)) do ws
         s.ws[] = ws
+        s.stop[] && return nothing          # stopped while the connection opened
         last_frame = Threads.Atomic{Float64}(time())
         alive = Threads.Atomic{Bool}(true)
         watchdog = spawn_watchdog(ws, s, last_frame, alive, cfg.stale_timeout_s)

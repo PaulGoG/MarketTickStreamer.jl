@@ -281,13 +281,14 @@ end
 One session per data tree: takes a PID-file lock at
 `<data_dir>/.session.lock` and throws if another
 live process already holds it ([`SessionError`](@ref)): two backfills interleaving on one raw
-directory would corrupt both. Stale locks from dead processes are
-broken automatically; release with `close(lock)`.
+directory would corrupt both. The holder refreshes the file every minute; a
+lock whose process is gone is broken once it is two minutes old, and one
+whose process still runs only after ten. Release with `close(lock)`.
 """
 function acquire_session_lock(data_dir::AbstractString)
     mkpath(data_dir)
     path = joinpath(data_dir, ".session.lock")
-    pidlock = Pidfile.trymkpidlock(path; stale_age = 600.0)
+    pidlock = Pidfile.trymkpidlock(path; stale_age = 120.0)
     pidlock === false && throw(
         SessionError(
             path,
@@ -448,7 +449,8 @@ function _rewrite_atomic(write::Function, path::AbstractString)
 end
 
 """
-    finalize_session_meta(path, status; ticks, raw_files, ticks_processed = nothing, source = nothing) -> String
+    finalize_session_meta(path, status; ticks, raw_files, ticks_processed = nothing,
+                          source = nothing, id_breaks = nothing) -> String
 
 Rewrite the running sidecar with the final status (`"completed"`,
 `"interrupted"` or `"failed"`), tick count, file list, and finish timestamp. The sidecar
@@ -460,9 +462,11 @@ also compacts passes `ticks_processed`, the prints it wrote to `processed/`;
 the two differ by the duplicates compaction dropped, and only a session that
 compacts has the second number to give.
 
-`source` describes the vendor file an import session read — name, size,
-checksum, format and the reader's statistics — and is written as the
-sidecar's `session.source` table.
+`source` describes the vendor file an import session read (name, size,
+checksum, format and the reader's statistics) and is written as the
+sidecar's `session.source` table. `id_breaks`, from a bulk backfill, counts
+the prints whose trade id did not follow the previous one
+([`bulk_trades`](@ref)).
 """
 function finalize_session_meta(
     path::AbstractString,
@@ -471,12 +475,14 @@ function finalize_session_meta(
     raw_files::Vector{String},
     ticks_processed::Union{Nothing,Integer} = nothing,
     source::Union{Nothing,AbstractDict} = nothing,
+    id_breaks::Union{Nothing,Integer} = nothing,
 )
     meta = TOML.parsefile(path)
     s = meta["session"]
     s["status"] = String(status)
     s["ticks"] = Int(ticks)
     ticks_processed === nothing || (s["ticks_processed"] = Int(ticks_processed))
+    id_breaks === nothing || (s["id_breaks"] = Int(id_breaks))
     source === nothing ||
         (s["source"] = Dict{String,Any}(String(k) => v for (k, v) in source))
     s["raw_files"] = [basename(f) for f in raw_files]
@@ -538,10 +544,12 @@ mutable struct SessionSummary
     ticks::Int
     ticks_processed::Union{Nothing,Int}
     source::Union{Nothing,AbstractDict}
+    id_breaks::Union{Nothing,Int}
     meta_path::Union{Nothing,String}
     result::Any
 end
-SessionSummary() = SessionSummary("completed", 0, nothing, nothing, nothing, nothing)
+SessionSummary() =
+    SessionSummary("completed", 0, nothing, nothing, nothing, nothing, nothing)
 
 # The envelope shared by run_stream, run_backfill and run_import: the lock on
 # the data tree, reconciliation of stale sidecars, the free-disk gate, and the
@@ -587,6 +595,7 @@ function _with_session(
                 ticks_processed = summary.ticks_processed,
                 raw_files = _session_raw_files(cfg, sid),
                 source = summary.source,
+                id_breaks = summary.id_breaks,
             )
         finally
             close(slock)
@@ -636,36 +645,45 @@ function _run_stream(
     delay = feed_delay_ns(provider)
     delay > 0 &&
         @info "delayed feed; market-hours guards shifted" delay_s = delay ÷ NS_PER_SEC
-    return _with_session(cfg, sid) do summary, start_meta
-        # What an interrupt returns before the sink exists (during the wait
-        # for the open, say).
-        summary.result = (; ticks = 0, raw_files = String[], status = "interrupted")
-        clock = nothing
-        # A venue that never closes has no open to wait for and no close to
-        # stop at; the session deadline is the only bound that applies.
-        always_open(provider) &&
-            (cfg.require_market_open || cfg.stop_at_market_close) &&
-            @info "venue trades continuously; market-hours guards do not apply"
-        if !always_open(provider) && (cfg.require_market_open || cfg.stop_at_market_close)
-            clock = market_clock(provider)
-            if !clock.is_open && cfg.require_market_open
-                if cfg.wait_for_open
-                    # settle past the bell, plus the feed's intrinsic delay: on a
-                    # delayed feed the first post-open data cannot arrive earlier.
-                    wait_s = (rfc3339_to_ns(clock.next_open) + delay - now_ns()) / 1e9 + 10
-                    @info "market closed; waiting for open" next_open = clock.next_open hours =
-                        round(wait_s / 3600; digits = 2)
+    # The market-clock gate and the wait for the open come before the session
+    # takes the data tree, so a capture started on a Friday evening holds no
+    # lock over the weekend; the disk check and reconciliation then run at
+    # the open, not at launch.
+    clock = nothing
+    # A venue that never closes has no open to wait for and no close to stop
+    # at; the session deadline is the only bound that applies.
+    always_open(provider) &&
+        (cfg.require_market_open || cfg.stop_at_market_close) &&
+        @info "venue trades continuously; market-hours guards do not apply"
+    if !always_open(provider) && (cfg.require_market_open || cfg.stop_at_market_close)
+        clock = market_clock(provider)
+        if !clock.is_open && cfg.require_market_open
+            if cfg.wait_for_open
+                # settle past the bell, plus the feed's intrinsic delay: on a
+                # delayed feed the first post-open data cannot arrive earlier.
+                wait_s = (rfc3339_to_ns(clock.next_open) + delay - now_ns()) / 1e9 + 10
+                @info "market closed; waiting for open" next_open = clock.next_open hours =
+                    round(wait_s / 3600; digits = 2)
+                try
                     sleep(max(wait_s, 0.0))
-                    clock = market_clock(provider)          # refresh next_close for the new session
-                else
-                    @info "market closed; not streaming (set stream.wait_for_open to wait)" next_open =
-                        clock.next_open
-                    return (; ticks = 0, raw_files = String[], status = "completed")
+                catch e
+                    e isa InterruptException || rethrow()
+                    @info "interrupted while waiting for the open" sid
+                    return (; ticks = 0, raw_files = String[], status = "interrupted")
                 end
+                clock = market_clock(provider)          # refresh next_close for the new session
+            else
+                @info "market closed; not streaming (set stream.wait_for_open to wait)" next_open =
+                    clock.next_open
+                return (; ticks = 0, raw_files = String[], status = "completed")
             end
-            clock.is_open && @info "market open" next_close = clock.next_close
         end
+        clock.is_open && @info "market open" next_close = clock.next_close
+    end
 
+    return _with_session(cfg, sid) do summary, start_meta
+        # What an interrupt returns before the sink exists.
+        summary.result = (; ticks = 0, raw_files = String[], status = "interrupted")
         session = live_source(provider, cfg; stop)
         # Delayed feeds keep transmitting the tape tail past the bell; allow an
         # extra minute for late-reported closing prints on top of the delay.
@@ -807,6 +825,12 @@ function _run_backfill(
         stored = 0
         start_meta()
         days = session_days(provider, cfg.backfill_start, cfg.backfill_end)
+        bulk = cfg.backfill_source === :bulk
+        # The last trade id of each symbol's latest bulk day in this run, so
+        # that the next day's first id can be checked against it.
+        last_ids = Dict{String,Tuple{Date,Int64}}()
+        id_breaks = 0
+        bulk && (summary.id_breaks = 0)
         for sym in cfg.symbols, day in days
             if cfg.backfill_resume && _processed_exists(cfg, sym, day)
                 @info "resume; already processed, skipping" symbol = sym day
@@ -827,15 +851,25 @@ function _run_backfill(
                 # A bulk day is one file, a REST day a walk of pages; both
                 # stream through the same sink, so everything downstream of
                 # this point is one path.
-                n = if cfg.backfill_source === :bulk
-                    bulk_trades(
+                n = if bulk
+                    prev = get(last_ids, sym, nothing)
+                    r = bulk_trades(
                         provider,
                         sym,
                         day;
                         feed = cfg.backfill_feed,
                         dest_dir = cfg.bulk_dir,
                         each_page = sink_page,
-                    ).prints
+                        previous_id = prev !== nothing && prev[1] == day - Day(1) ?
+                                      prev[2] : nothing,
+                    )
+                    r.last_id > 0 && (last_ids[sym] = (day, r.last_id))
+                    r.id_breaks > 0 &&
+                        @warn "trade ids not consecutive: prints missing or repeated" symbol =
+                            sym day breaks = r.id_breaks
+                    id_breaks += r.id_breaks
+                    summary.id_breaks = id_breaks
+                    r.prints
                 else
                     historical_trades(
                         provider,
@@ -849,22 +883,13 @@ function _run_backfill(
                     ).prints
                 end
             finally
+                # Removes the part of a day without prints (a holiday, a halt,
+                # a symbol not yet listed, a failure before the first page).
                 close_sink!(day_sink)
-                # A day that failed before writing anything leaves a zero-byte
-                # stub that holds nothing to preserve.
-                day_sink.n_written == 0 &&
-                    filesize(day_sink.path) == 0 &&
-                    rm(day_sink.path; force = true)
             end
             day_files = _raw_files_with_prefix(cfg.raw_dir, day_prefix)
             n_stored = 0
-            if n == 0
-                # A holiday, a halt, or a symbol not yet listed: drop the empty
-                # stub rather than let stubs accumulate.
-                for f in day_files
-                    filesize(f) == 0 && rm(f; force = true)
-                end
-            else
+            if n > 0
                 c = _compact_raw(cfg, day_files)
                 append!(processed, c.files)
                 n_stored = c.rows
@@ -876,7 +901,7 @@ function _run_backfill(
             stored += n_stored
             summary.ticks = total
             summary.ticks_processed = stored
-            cfg.backfill_source === :bulk && sleep(cfg.backfill_rate_sleep_s)
+            bulk && sleep(cfg.backfill_rate_sleep_s)
             @info "backfilled" symbol = sym day trades = n stored = n_stored
         end
         @info "backfill finished" status = summary.status days = length(processed) ticks =

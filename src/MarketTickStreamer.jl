@@ -49,7 +49,7 @@ using LoggingExtras:
 using PrecompileTools: @compile_workload, @setup_workload
 using TimeZones:
     TimeZones, @tz_str, Date, DateTime, TimeZone, UTC, ZonedDateTime, astimezone, now
-using ZipArchives: ZipReader, zip_names, zip_readentry
+using ZipArchives: ZipReader, zip_names, zip_openentry
 
 export Config, load_config, load_credentials!
 export Trade, Quote, Bar

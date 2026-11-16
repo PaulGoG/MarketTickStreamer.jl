@@ -233,7 +233,7 @@ historical_trade_count(
     kwargs...,
 ) = throw(
     ArgumentError(
-        "$(nameof(typeof(p))) has no countable historical tape; coverage_report supports Alpaca only (Binance days are verified by vendor checksum and trade-id continuity)",
+        "$(nameof(typeof(p))) has no countable historical tape; coverage_report supports Alpaca only (a Binance bulk backfill checks the vendor checksum and counts trade-id breaks in its sidecar)",
     ),
 )
 
@@ -430,7 +430,8 @@ Reconnects with jittered exponential backoff
 (`stream.reconnect_base_delay_s * 2^attempt`, capped at
 `stream.reconnect_max_delay_s` before a jitter factor in [0.5, 1.5) drawn from a
 generator seeded by `rng.seed`); the attempt counter resets after any connection
-that delivered data.
+that delivered prints or stayed up for `stream.stale_timeout_s`, so a quiet
+market does not exhaust the attempts of a healthy feed.
 """
 function live_source(
     p::AbstractProvider,
@@ -461,6 +462,7 @@ function live_source(
         try
             while !session.stop[] && time() < deadline
                 ticks_before = session.stats[].ticks
+                connected_at = time()
                 try
                     stream_protocol!(ch, p, cfg, session; on_quote, on_bar)
                     session.stop[] || @warn "stream closed by server"
@@ -470,7 +472,13 @@ function live_source(
                     @warn "stream disconnected" exception = (e, catch_backtrace())
                 end
                 session.stop[] && break
-                session.stats[].ticks > ticks_before && (attempt = 0)
+                # A connection that delivered prints, or that stayed up as long
+                # as the watchdog allows a silent one, was healthy: a quiet
+                # symbol cut by the watchdog is not a failure to connect.
+                (
+                    session.stats[].ticks > ticks_before ||
+                    time() - connected_at >= cfg.stale_timeout_s
+                ) && (attempt = 0)
                 attempt += 1
                 if attempt > cfg.reconnect_max_retries
                     @error "reconnection attempts exhausted" attempt

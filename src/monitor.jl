@@ -18,7 +18,7 @@ mutable struct MonitorState
     tail::RawTail
     total::Int64
     per_symbol::Dict{String,Int64}
-    window::Vector{Tuple{Float64,Int64}}   # (wall clock, new ticks per refresh)
+    window::Vector{Tuple{Float64,Int64}}   # (wall clock, new ticks per ingest)
     last_time_ns::Int64
     last_growth::Float64
     corrupt::Int64
@@ -57,7 +57,11 @@ function _render(
 )
     cutoff = time() - rate_window_s
     filter!(w -> w[1] >= cutoff, st.window)
-    rates = [w[2] / refresh_s for w in st.window]
+    # Each rate over the time measured since the previous ingest, not the
+    # nominal refresh. The first ingest has no predecessor and, attached
+    # with `from_start`, holds the whole backlog, so it carries no rate.
+    w = st.window
+    rates = [w[i][2] / max(w[i][1] - w[i-1][1], 1e-3) for i in 2:length(w)]
     buf = IOBuffer()
     println(buf, "Session: ", st.tail.prefix)
     bytes = sum(get(st.tail.offsets, p, 0) for p in _session_parts(st.tail); init = 0)
@@ -67,7 +71,7 @@ function _render(
         st.total,
         "   rate: ",
         isempty(rates) ? "—" : "$(round(rates[end]; digits = 1))/s",
-        "   read: ",
+        "   raw: ",
         round(bytes / 2^20; digits = 1),
         " MiB",
     )

@@ -317,6 +317,17 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             rejected(base * "reconnect_base_delay_s = 2.0\nreconnect_max_delay_s = 1.0\n")
             rejected(base * "[storage]\nflush_max_ticks = 0\n")
             rejected(base * "[limits]\nmax_session_hours = 0.0\n")
+            # Accepted with a warning: settings that load but cannot be meant.
+            warned(body, msg) = (write(p, body); @test_logs (:warn, msg) load_config(p))
+            warned(base * "channels = []\n", r"subscribes to nothing")
+            warned(
+                base * "require_market_open = false\nwait_for_open = true\n",
+                r"no effect",
+            )
+            warned(
+                base * "[storage]\nraw_subdir = \"x\"\nprocessed_subdir = \"x\"\n",
+                r"not distinct",
+            )
             # the deadline is Int64 ns
             rejected(base * "[limits]\nmax_session_hours = inf\n")
             rejected(base * "[limits]\nmax_session_hours = 3.0e6\n")
@@ -389,6 +400,7 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             sink2 = open_raw_sink(dir, "sess"; max_mb = 1)
             @test sink2.path != sink.path
             close_sink!(sink2)
+            @test !isfile(sink2.path)          # never written: removed at close
             trades = read_raw(sink.path)
             @test length(trades) == 100
             @test trades[7] == sample_trade(7)
@@ -432,10 +444,19 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             files = compact_raw([sink.path], out; format = :csv)
             @test length(files) == 2                       # one per symbol, same day
             @test all(isfile, files)
-            # safesave: a recompaction takes the canonical names and the files
-            # it displaces survive as numbered backups.
+            # safesave: a recompaction of the same input leaves the files as
+            # they are; one with other content takes the canonical names, and
+            # the files it displaces survive as numbered backups.
             before = Dict(f => read(f) for f in files)
-            files2 = compact_raw([sink.path], out; format = :csv)
+            @test compact_raw([sink.path], out; format = :csv) == files
+            @test !any(occursin("_#", f) for (_, _, fs) in walkdir(out) for f in fs)
+            extra = open_raw_sink(dir, "c2")
+            write_batch!(
+                extra,
+                [sample_trade(21; sym = "AAPL"), sample_trade(22; sym = "MSFT")],
+            )
+            close_sink!(extra)
+            files2 = compact_raw([sink.path, extra.path], out; format = :csv)
             @test files2 == files
             for f in files
                 base, ext = splitext(f)
@@ -443,12 +464,16 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
                 @test read(base * "_#1" * ext) == before[f]
             end
             @test !any(occursin(".partial", f) for (_, _, fs) in walkdir(out) for f in fs)
-            arrow_files = compact_raw([sink.path], joinpath(dir, "arrow"); format = :arrow)
+            arrow_files = compact_raw(
+                [sink.path, extra.path],
+                joinpath(dir, "arrow");
+                format = :arrow,
+            )
             @test length(arrow_files) == 2
             # Arrow stores the low-cardinality columns dictionary-encoded and
             # reads back the same table the CSV holds, compressed or not.
             zstd_files = compact_raw(
-                [sink.path],
+                [sink.path, extra.path],
                 joinpath(dir, "zstd");
                 format = :arrow,
                 compression = :zstd,
@@ -533,6 +558,14 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             safesave(tmp -> (seen[] = tmp; write(tmp, "four")), p)
             @test endswith(seen[], ".partial.csv")
             @test dirname(seen[]) == dir
+            # Each write has a temporary name of its own.
+            other = Ref("")
+            safesave(tmp -> (other[] = tmp; write(tmp, "five")), p)
+            @test other[] != seen[]
+            # The same bytes again leave the file and its backups as they are.
+            n_files = length(readdir(dir))
+            safesave(tmp -> write(tmp, "five"), p)
+            @test length(readdir(dir)) == n_files && read(p, String) == "five"
         end
     end
 
@@ -841,8 +874,10 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             end
             # Backups are neither counted nor read.
             out = joinpath(dir, "arrow")
-            compact_raw([sink.path], out; format = :arrow, tz = tz"UTC")
-            @test isfile(joinpath(out, "AAPL", "2025-07-30_#1.arrow"))
+            cp(
+                joinpath(out, "AAPL", "2025-07-30.arrow"),
+                joinpath(out, "AAPL", "2025-07-30_#1.arrow"),
+            )
             @test corpus_inventory(out).n_days == [3, 2]
             @test corpus_inventory(out).bytes[1] ==
                   sum(filesize, processed_files(out, "AAPL"))
@@ -1120,6 +1155,13 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
         @test tick_bars(Trade[], 2) == Bar[]
         @test_throws ArgumentError tick_bars(ts, 0)
         @test_throws ArgumentError volume_bars(ts, -1.0)
+        # Decimal values: a hundred prints of 10.01 sum to 1000.9999999999993 in
+        # binary, and still complete a bar of 1001 in value.
+        dec = [Trade("AAPL", Int64(i), 0, 10.01, 1.0, "V", String[], "C", i) for i in 1:100]
+        @test length(dollar_bars(dec, 1001.0)) == 1
+        @test length(
+            volume_bars(fill(Trade("AAPL", 1, 0, 1.0, 0.3, "V", String[], "C", 1), 3), 0.9),
+        ) == 1
         @test_throws ArgumentError dollar_bars(ts, 0.0)
         @test_throws ArgumentError tick_bars(
             [mk(1, 1.0, 1.0), mk(2, 1.0, 1.0; sym = "MSFT")],
@@ -1440,6 +1482,16 @@ hostname = "$(gethostname())"
             for (m, s) in zip(mem, spill)
                 @test CSV.read(m, DataFrame) == CSV.read(s, DataFrame)
             end
+            # The heap ceiling bounds the in-memory budget too: below the
+            # input's estimated footprint the spill path is taken, which checks
+            # the ceiling per group and stops (the in-memory path never would).
+            @test_throws ResourceError compact_raw(
+                [sink.path],
+                joinpath(dir, "capped");
+                format = :csv,
+                mem_fraction = 1.0,
+                max_live_heap_mb = 1e-6,
+            )
         end
         # The spill copy is the size of the input, so it goes beside out_dir,
         # never to tempdir() (a RAM-backed tmpfs on systemd distributions), and
@@ -1909,6 +1961,23 @@ hostname = "$(gethostname())"
         end
     end
 
+    @testset "follow: attached in the middle of a line" begin
+        # Attached while a line is being written: it is read whole once its
+        # newline arrives, not counted as a corrupt fragment.
+        mktempdir() do raw
+            part = joinpath(raw, "attach_part001.jsonl")
+            l1, l2 =
+                trade_to_json(sample_trade(1)) * "\n", trade_to_json(sample_trade(2)) * "\n"
+            write(part, l1 * l2[1:10])
+            tail = MarketTickStreamer.RawTail(raw, "attach")
+            MarketTickStreamer._skip_to_end!(tail)
+            open(io -> write(io, l2[11:end]), part, "a")
+            got = Trade[]
+            @test MarketTickStreamer._drain!(t -> push!(got, t), tail) == (1, 0)
+            @test got == [sample_trade(2)]
+        end
+    end
+
     @testset "follow: the latest session of a backfill" begin
         # A backfill names its parts <id>_<SYMBOL>_<DATE>: the session is the
         # longest sidecar id that prefixes the newest part.
@@ -2233,6 +2302,29 @@ hostname = "$(gethostname())"
         finally
             close(server)
         end
+        # A Retry-After beyond ten minutes is not waited out inside a request.
+        port = freeport(8961)
+        server = HTTP.serve!("127.0.0.1", port; verbose = false) do _
+            HTTP.Response(429, ["Retry-After" => "601"], "banned")
+        end
+        try
+            t0 = time()
+            @test_throws HTTP.StatusError MarketTickStreamer._get_with_retry(
+                "http://127.0.0.1:$port/x",
+                Pair{String,String}[];
+                policy = MarketTickStreamer.RestPolicy(1, 1, 2),
+            )
+            @test time() - t0 < 5
+        finally
+            close(server)
+        end
+        # A chunk's timeout: the policy's timeout plus 1.25 times the transfer
+        # at the slower of 50 kB/s and the cap, 30 + ceil(1.25 × 5) s here.
+        @test MarketTickStreamer._chunk_timeout(
+            MarketTickStreamer.RestPolicy(30, 10, 0),
+            100_000;
+            rate = 20_000.0,
+        ) == 37
         # Backoff jitter is a deterministic function of the seed, within
         # [0.5, 1.5) of the capped exponential.
         d = [MarketTickStreamer._backoff_delay(Xoshiro(7), 1.0, k, 60.0) for k in 0:5]
@@ -2527,7 +2619,7 @@ hostname = "$(gethostname())"
                     [mock_trade("MSFT", i) for i in 9:14],
                 ];
                 fatal_after = 2,
-            )               # 3rd connection → fatal 406
+            )               # 3rd connection → fatal 409
             ws, nconn = start_mock_ws(plan; port = ws_port)
             rest = start_mock_rest(; port = rest_port)
             try
@@ -2732,6 +2824,29 @@ hostname = "$(gethostname())"
                 close(rest)
             end
         end
+        mktempdir() do dir
+            rest_port = freeport(9531)
+            # An hour before the open: the session waits without the data
+            # tree's lock, and an interrupt ends the wait without a sidecar.
+            rest = start_mock_rest(; port = rest_port, is_open = false, open_in_s = 3600.0)
+            try
+                cfg = load_config(
+                    mock_config_toml(dir; ws_port = 1, rest_port, wait_for_open = true),
+                )
+                p = AlpacaProvider(cfg, MOCK_KEY, MOCK_SECRET)
+                task = @async run_stream(cfg; provider = p)
+                sleep(2.0)
+                @test !istaskdone(task)
+                close(acquire_session_lock(cfg.data_dir))   # free while waiting
+                schedule(task, InterruptException(); error = true)
+                result = fetch(task)
+                @test result.status == "interrupted" && result.ticks == 0
+                @test !isdir(cfg.raw_dir) ||
+                      !any(endswith(".meta.toml"), readdir(cfg.raw_dir))
+            finally
+                close(rest)
+            end
+        end
     end
 
     @testset "live E2E: delayed feed shifts the close guard" begin
@@ -2760,6 +2875,77 @@ hostname = "$(gethostname())"
                 @test result.status == "failed"
                 @test time() - t0 > 2.0            # outlived the unshifted close
                 @test nconn[] == 2                 # ended by the fatal, not the guard
+            finally
+                close(ws)
+                close(rest)
+            end
+        end
+    end
+
+    @testset "live E2E: a quiet connection does not use up the reconnects" begin
+        mktempdir() do dir
+            ws_port, rest_port = freeport(9031), freeport(9041)
+            # Handshake, then silence: the watchdog cuts every connection after
+            # 1 s. Each stayed up that long, so none counts as a failed attempt,
+            # and with one retry allowed the session still runs to its deadline.
+            plan = MockPlan([Any[]]; fatal_after = 1_000, linger_s = 30.0)
+            ws, nconn = start_mock_ws(plan; port = ws_port)
+            rest = start_mock_rest(; port = rest_port)
+            try
+                cfg = load_config(
+                    mock_config_toml(
+                        dir;
+                        ws_port,
+                        rest_port,
+                        max_retries = 1,
+                        stale_timeout_s = 1.0,
+                        max_session_hours = 0.0015,         # 5.4 s
+                    ),
+                )
+                p = AlpacaProvider(cfg, MOCK_KEY, MOCK_SECRET)
+                result = run_stream(cfg; provider = p)
+                @test result.status == "completed"
+                @test nconn[] >= 3              # two attempts would have been all
+            finally
+                close(ws)
+                close(rest)
+            end
+        end
+    end
+
+    @testset "live E2E: a connection limit after a reconnect is retried" begin
+        mktempdir() do dir
+            ws_port, rest_port = freeport(9011), freeport(9021)
+            # The first connection streams and closes; the next ones meet 406,
+            # as the server would while it still counts the first. Retried
+            # until the two allowed attempts are spent.
+            plan = MockPlan([[mock_trade("AAPL", 1)]]; fatal_after = 1, fatal_code = 406)
+            ws, nconn = start_mock_ws(plan; port = ws_port)
+            rest = start_mock_rest(; port = rest_port)
+            try
+                cfg =
+                    load_config(mock_config_toml(dir; ws_port, rest_port, max_retries = 2))
+                p = AlpacaProvider(cfg, MOCK_KEY, MOCK_SECRET)
+                result = run_stream(cfg; provider = p)
+                @test result.status == "failed" && result.ticks == 1
+                @test nconn[] == 3
+            finally
+                close(ws)
+                close(rest)
+            end
+        end
+        mktempdir() do dir
+            ws_port, rest_port = freeport(9001), freeport(9006)
+            # On the first connection the limit is another client's: fatal.
+            plan = MockPlan([[mock_trade("AAPL", 1)]]; fatal_after = 0, fatal_code = 406)
+            ws, nconn = start_mock_ws(plan; port = ws_port)
+            rest = start_mock_rest(; port = rest_port)
+            try
+                cfg =
+                    load_config(mock_config_toml(dir; ws_port, rest_port, max_retries = 2))
+                p = AlpacaProvider(cfg, MOCK_KEY, MOCK_SECRET)
+                result = run_stream(cfg; provider = p)
+                @test result.status == "failed" && nconn[] == 1
             finally
                 close(ws)
                 close(rest)
@@ -3102,6 +3288,15 @@ hostname = "$(gethostname())"
         r = parse_pages(agg^3; each_page = pg -> push!(pages, length(pg)), page_rows = 4)
         @test r.prints == 6 && isempty(r.kept) && pages == [4, 2]
         # A wrong column count and a row outside the day are errors, not silence.
+        # Trade ids: each row should follow the previous one by one.
+        row(id) = "$id,64000.5,0.25,$id,$id,$us,True,True\n"
+        @test parse_pages(row(7) * row(8) * row(9)).id_breaks == 0
+        @test parse_pages(row(7) * row(9)).id_breaks == 1               # id 8 missing
+        @test parse_pages(row(7) * row(8) * row(7) * row(8)).id_breaks == 1   # repeated run
+        @test parse_pages(row(7) * row(8); previous_id = 6).id_breaks == 0
+        @test parse_pages(row(7) * row(8); previous_id = 5).id_breaks == 1    # day boundary
+        @test parse_pages(row(7) * row(8)).last_id == 8
+        @test parse_pages("").last_id == 0
         @test_throws IntegrityError parse_csv("7,64000.5,0.25,$us,True\n")
         @test_throws IntegrityError parse_csv(
             "7,64000.5,0.25,10,12,$(us + 86_400_000_000),True,True\n",
@@ -3177,8 +3372,13 @@ hostname = "$(gethostname())"
                 )
                 @test r.prints == per_day && isempty(r.trades) && pages == [3, 3, 1]
                 gone = MOCK_BINANCE_EPOCH + Day(2)
-                @test bulk_trades(p, "BTCUSDT", gone; dest_dir = dest) ==
-                      (; trades = Trade[], prints = 0, file = "")
+                @test bulk_trades(p, "BTCUSDT", gone; dest_dir = dest) == (;
+                    trades = Trade[],
+                    prints = 0,
+                    file = "",
+                    id_breaks = 0,
+                    last_id = 0,
+                )
                 @test bulk_trades(
                     p,
                     "BTCUSDT",
@@ -3280,6 +3480,9 @@ hostname = "$(gethostname())"
                 )
                 @test meta["session"]["ticks"] == 3 * per_day + 3        # received
                 @test meta["session"]["ticks_processed"] == 3 * per_day  # stored
+                # The mock's ids run on across days; the repeated head of day two
+                # is the one break.
+                @test meta["session"]["id_breaks"] == 1
                 # Resume: every day is under processed/, nothing is redone.
                 @test isempty(run_backfill(cfg))
             finally
@@ -3328,16 +3531,12 @@ hostname = "$(gethostname())"
                 ) for d in days
             )
             # With the server gone, a rerun that does not resume rebuilds every
-            # day from the kept files; the displaced outputs become backups.
+            # day from the kept files, byte for byte, so no backup is made.
+            before = Dict(f => read(f) for f in files)
             rebuilt = run_backfill(load_config(toml(; resume = false)))
             @test sort(rebuilt) == sort(files)
             backup(f) = string(first(splitext(f)), "_#1", last(splitext(f)))
-            @test all(
-                f ->
-                    isfile(backup(f)) &&
-                    CSV.read(f, DataFrame) == CSV.read(backup(f), DataFrame),
-                rebuilt,
-            )
+            @test all(f -> !isfile(backup(f)) && read(f) == before[f], rebuilt)
         end
     end
 
@@ -3616,6 +3815,11 @@ hostname = "$(gethostname())"
             )
             @test itch50_trades(two, date; symbols = ["AAPL"], broken = :keep).broken == 1
             @test itch50_trades(two, date; symbols = ["AAPL"], broken = :mark).broken == 1
+            # A Stock Directory message repeated for one locate counts the symbol once.
+            rep = joinpath(dir, "rep.bin")
+            write(rep, vcat(R(1, "AAPL", 'Q', 100), R(1, "AAPL", 'Q', 100), S('C')))
+            @test itch50_trades(rep, date; symbols = ["AAPL"]).symbols == 1
+            @test itch50_trades(rep, date).symbols == 1
             # A Broken Trade cut to type, locate and tracking (5 bytes) is
             # malformed, not a truncation: the length prefix frames it whole.
             short = joinpath(dir, "short.bin")
@@ -3835,6 +4039,29 @@ hostname = "$(gethostname())"
             f2 = joinpath(dir, "two_breaks.pcapng")
             write(f2, vcat(ng, epb(frame(seg5))))
             @test iex_hist_trades(f2; symbols = ["AAPL"], broken = :keep).broken == 1
+            # A protocol the reader does not know (DEEP+ is 0x8005) is skipped and
+            # reported, not read as an empty capture without a word.
+            f3 = joinpath(dir, "unknown.pcapng")
+            write(
+                f3,
+                vcat(
+                    shb(),
+                    idb(),
+                    epb(
+                        frame(segment(0x8005, 7, 1, [T("AAPL", 0, t0, 100, 1_000_000, 1)])),
+                    ),
+                ),
+            )
+            got3 = @test_logs (:warn, r"another protocol") iex_hist_trades(f3)
+            @test got3.prints == 0 && got3.feed == ""
+            # A segment whose payload ends before its message count: the missing
+            # message is counted as a gap, though the sequence numbers agree.
+            short = segment(0x8003, 7, 1, [T("AAPL", 0, t0, 100, 1_000_000, 1)])
+            short[15:16] .= le(2, 2)                     # claims two messages
+            f4 = joinpath(dir, "short.pcapng")
+            write(f4, vcat(shb(), idb(), epb(frame(short))))
+            got4 = iex_hist_trades(f4)
+            @test got4.prints == 1 && got4.messages == 1 && got4.gaps == 1
             # Buffer boundaries: the frames handed over do not depend on the
             # chunk, down to the largest block of the capture (header included).
             frames = [frame(s) for s in (seg_hb, seg1, seg2, seg3, seg3, seg4)]
@@ -4126,8 +4353,9 @@ hostname = "$(gethostname())"
                 @test MarketTickStreamer._content_range_total("bytes 0-9/3145851") ==
                       3145851
                 @test MarketTickStreamer._content_range_total("") == -1
-                @test MarketTickStreamer._chunk_timeout(policy, 8 << 20) ==
-                      cld(8 << 20, 50_000)
+                # the policy's 10 s, plus 8 MiB at 50 kB/s (167.8 s) with a quarter
+                # added: 10 + ceil(209.7)
+                @test MarketTickStreamer._chunk_timeout(policy, 8 << 20) == 10 + 210
                 # a download cap paces the body: 3.1 MB at 4 MB/s takes at least
                 # 0.79 s (a local transfer otherwise takes milliseconds), and a
                 # cap below 50 kB/s stretches the chunk timeout to match
@@ -4248,8 +4476,8 @@ hostname = "$(gethostname())"
                     close(drop_server)
                 end
                 slow = MarketTickStreamer.RestPolicy(10, 5, 1; max_download_rate = 10_000)
-                @test MarketTickStreamer._chunk_timeout(slow, 8 << 20) ==
-                      cld(8 << 20, 10_000)
+                # 8 MiB at the 10 kB/s cap is 838.9 s: 10 + ceil(1.25 × 838.9)
+                @test MarketTickStreamer._chunk_timeout(slow, 8 << 20) == 10 + 1049
                 @test MarketTickStreamer._crc32c_from_headers([
                     "X-Goog-Hash" => "crc32c=$crc_b64,md5=AAAA",
                 ]) == crc
@@ -4513,7 +4741,9 @@ using UnicodePlots: UnicodePlots
             write_batch!(sink, [sample_trade(i) for i in 1:30])
             close_sink!(sink)
             buf = IOBuffer()
-            monitor_raw(dir; refresh_s = 0.01, iterations = 2, from_start = true, io = buf)
+            # Three refreshes: the first read holds the backlog and carries no
+            # rate, and the history needs two rates.
+            monitor_raw(dir; refresh_s = 0.01, iterations = 3, from_start = true, io = buf)
             out = String(take!(buf))
             @test occursin("Ticks by symbol", out) && occursin("┌", out)   # bar chart frame
             @test occursin("Ticks/s", out)                                  # rate history

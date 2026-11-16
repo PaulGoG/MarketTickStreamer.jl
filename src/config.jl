@@ -596,13 +596,34 @@ function load_config(path::AbstractString = _default_config_path())
 
     endpoints = Dict{String,String}(k => String(v) for (k, v) in tbl(provider))
 
+    # Accepted, as they were before 2.1, but almost certainly not meant;
+    # rejecting them would break a configuration that loads today.
+    require_open = _cfg_value(st, "stream", "require_market_open", Bool, true)
+    wait_open = _cfg_value(st, "stream", "wait_for_open", Bool, false)
+    isempty(channels) &&
+        @warn "stream.channels is empty: a live session subscribes to nothing" config = path
+    wait_open &&
+        !require_open &&
+        @warn "stream.wait_for_open has no effect without stream.require_market_open" config =
+            path
+    subdirs = [
+        _cfg_value(sto, "storage", k, String, d) for (k, d) in (
+            ("raw_subdir", "raw"),
+            ("processed_subdir", "processed"),
+            ("bulk_subdir", "bulk"),
+        )
+    ]
+    allunique(normpath.(subdirs)) ||
+        @warn "storage.raw_subdir, processed_subdir and bulk_subdir are not distinct" subdirs config =
+            path
+
     return Config(;
         provider = provider,
         feed = feed,
         symbols = symbols,
         channels = Symbol.(channels),
-        require_market_open = _cfg_value(st, "stream", "require_market_open", Bool, true),
-        wait_for_open = _cfg_value(st, "stream", "wait_for_open", Bool, false),
+        require_market_open = require_open,
+        wait_for_open = wait_open,
         stop_at_market_close = _cfg_value(st, "stream", "stop_at_market_close", Bool, true),
         reconnect_max_retries = max_retries,
         reconnect_base_delay_s = base_delay,

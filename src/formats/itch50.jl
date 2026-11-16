@@ -243,8 +243,9 @@ returned `trades` is then empty; without it the prints are accumulated in
 message (under `:keep`, the Broken Trade messages seen for the selected
 symbols), `unresolved` the `E` messages whose order was unknown (a file cut
 before its Add Order), `symbols` the selected symbols found in the directory,
-and `truncated` whether the file ended inside a message, as a partial
-download does.
+and `truncated` whether the file ends before the System Event "End of
+Messages", which closes every trading day, as a partial download does
+whether it is cut inside a message or between two.
 """
 function itch50_trades(
     path::AbstractString,
@@ -272,6 +273,7 @@ function itch50_trades(
     n_broken = Ref(0)
     unresolved = Ref(0)
     n_symbols = Ref(0)
+    end_of_messages = Ref(false)
 
     function print!(
         locate,
@@ -327,8 +329,8 @@ function itch50_trades(
                 tapes[k] = _itch50_tape(buf[m+19])
                 lots[k] = _be32(buf, m + 21)
                 sel = wanted === nothing || name in wanted
+                sel && !selected[k] && (n_symbols[] += 1)     # a repeated R counts once
                 selected[k] = sel
-                sel && (n_symbols[] += 1)
             elseif t == UInt8('A') || t == UInt8('F')
                 expected = t == UInt8('A') ? 36 : 40
                 len >= expected || _itch50_short(file_name, t, len, expected)
@@ -416,6 +418,9 @@ function itch50_trades(
                 ts = _be48(buf, m + 5)
                 price = _be32(buf, m + 27)
                 print!(locate, ts, price, shares, _be64(buf, m + 31), kind, 0x00)
+            elseif t == UInt8('S')
+                len >= 12 || _itch50_short(file_name, t, len, 12)
+                buf[m+11] == UInt8('C') && (end_of_messages[] = true)
             elseif t == UInt8('B')
                 len >= 19 || _itch50_short(file_name, t, len, 19)
                 # In the other modes the voided set accounts for the break,
@@ -436,7 +441,7 @@ function itch50_trades(
         broken = n_broken[],
         unresolved = unresolved[],
         symbols = n_symbols[],
-        truncated = scan.truncated,
+        truncated = scan.truncated || !end_of_messages[],
     )
 end
 

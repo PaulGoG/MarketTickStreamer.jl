@@ -352,6 +352,7 @@ function stream_protocol!(
     fatal = Ref{Union{Nothing,FatalStreamError}}(nothing)
     HTTP.WebSockets.open(ws_url(p)) do ws
         s.ws[] = ws
+        s.stop[] && return nothing          # stopped while the connection opened
         last_frame = Threads.Atomic{Float64}(time())
         alive = Threads.Atomic{Bool}(true)
         watchdog = spawn_watchdog(ws, s, last_frame, alive, cfg.stale_timeout_s)
@@ -381,7 +382,12 @@ function stream_protocol!(
                     elseif frame_type == "error"
                         code = Int(get(msg, :code, 0))
                         m = String(get(msg, :msg, "unknown"))
+                        # A connection limit (406) met after a reconnect is
+                        # most likely this session's previous connection, which
+                        # the server has not yet seen close; it is retried. On
+                        # the first connection it is another client's.
                         code in FATAL_WS_CODES &&
+                            !(code == 406 && s.stats[].reconnects > 0) &&
                             (fatal[] = FatalStreamError("Alpaca error $code: $m"))
                         fatal[] === nothing && error("Alpaca stream error $code: $m")   # retryable
                     elseif frame_type == "q"

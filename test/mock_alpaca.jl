@@ -10,12 +10,13 @@
 using Dates
 using HTTP
 using JSON
+using TimeZones: @tz_str, ZonedDateTime, astimezone
 
 const MOCK_KEY = "testkey"
 const MOCK_SECRET = "testsecret"
 
 """
-    MockPlan(batches; fatal_after = length(batches), fatal_code = 406, linger_s = 0.0)
+    MockPlan(batches; fatal_after = length(batches), fatal_code = 409, linger_s = 0.0)
 
 Scripted WS behavior: connection `k` streams `batches[k]`, then idles for
 `linger_s` before closing (to exercise client-side stops on a live
@@ -28,7 +29,7 @@ struct MockPlan
     fatal_code::Int
     linger_s::Float64
 end
-MockPlan(batches; fatal_after = length(batches), fatal_code = 406, linger_s = 0.0) =
+MockPlan(batches; fatal_after = length(batches), fatal_code = 409, linger_s = 0.0) =
     MockPlan(batches, fatal_after, fatal_code, linger_s)
 
 mock_trade(
@@ -77,10 +78,9 @@ Start the scripted WebSocket server on `port`. `nconn[]` counts accepted
 connections. `close(server)` to stop.
 """
 function start_mock_ws(plan::MockPlan; port::Integer)
-    nconn = Ref(0)
+    nconn = Threads.Atomic{Int}(0)          # handlers may run on several threads
     server = HTTP.WebSockets.listen!("127.0.0.1", port; verbose = false) do ws
-        nconn[] += 1
-        me = nconn[]
+        me = Threads.atomic_add!(nconn, 1) + 1
         _send(ws, (; T = "success", msg = "connected"))
         auth = JSON.parse(HTTP.WebSockets.receive(ws))
         if get(auth, :key, "") != MOCK_KEY
@@ -147,7 +147,12 @@ function start_mock_rest(;
         "GET",
         "/v2/clock",
         _ -> begin
-            fmt = t -> Dates.format(t, dateformat"yyyy-mm-dd\THH:MM:SS") * "Z"
+            # New York time with its offset, as the trading API sends it.
+            fmt =
+                t -> Dates.format(
+                    astimezone(ZonedDateTime(t, tz"UTC"), tz"America/New_York"),
+                    dateformat"yyyy-mm-dd\THH:MM:SSzzz",
+                )
             now = Dates.now(Dates.UTC)
             HTTP.Response(
                 200,

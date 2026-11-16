@@ -127,11 +127,16 @@ function _with_retry(f, policy::RestPolicy)
                 status ? tryparse(Float64, HTTP.header(e.response, "Retry-After", "")) :
                 nothing
             # A Retry-After that is not a non-negative number of seconds (an HTTP
-            # date, a negative value) falls back to the backoff schedule.
-            delay =
-                ra !== nothing && isfinite(ra) && ra >= 0 ? ra :
-                _backoff_delay(policy.rng, 1.0, attempt, Inf)
-            delay = min(delay, 60.0)
+            # date, a negative value) falls back to the backoff schedule, which
+            # is capped at a minute. A server's own Retry-After is honored up
+            # to ten minutes: retrying earlier is what a venue answers with a
+            # ban (Binance: 418). A longer one fails the request.
+            delay = if ra !== nothing && isfinite(ra) && ra >= 0
+                ra > 600 && rethrow()
+                ra
+            else
+                min(_backoff_delay(policy.rng, 1.0, attempt, Inf), 60.0)
+            end
             if status
                 @warn "REST status $(e.status); retrying" attempt delay =
                     round(delay; digits = 1)
@@ -218,7 +223,12 @@ function _download_resumable(
             ) do http
                 HTTP.startread(http)
                 st = http.message.status
-                resp_headers = [String(k) => String(v) for (k, v) in http.message.headers]
+                # Only a response that carries the file describes it (a 416 on
+                # a complete partial carries no checksum header).
+                st in (200, 206) && (
+                    resp_headers =
+                        [String(k) => String(v) for (k, v) in http.message.headers]
+                )
                 if st == 404
                     found = false
                     done = true
@@ -418,15 +428,17 @@ function _log_progress!(mark, path, bytes::Integer, total::Integer, every::Real)
     return nothing
 end
 
-# The request timeout of one chunk: the policy's, or longer when the chunk
-# would not arrive within it at 50 kB/s, the slowest host worth waiting for,
-# or at the download cap (`rate`, the policy's by default) when that is lower
-# still.
+# The request timeout of one chunk: the policy's timeout for connecting and
+# the first byte, plus the time the chunk takes at 50 kB/s, the slowest host
+# worth waiting for, or at the download cap (`rate`, the policy's by default)
+# when that is lower still, with a quarter of it again as margin. A paced
+# transfer takes the second term exactly, so without the first and the margin
+# it would time out on any delay before the body.
 _chunk_timeout(
     policy::RestPolicy,
     chunk_bytes::Integer;
     rate::Float64 = policy.max_download_rate,
-) = max(policy.request_timeout_s, ceil(Int, chunk_bytes / min(50_000.0, rate)))
+) = policy.request_timeout_s + ceil(Int, 1.25 * chunk_bytes / min(50_000.0, rate))
 
 # Copy a response body to `io` at no more than `rate` bytes per second,
 # measured from the start of the request: whenever the bytes received run

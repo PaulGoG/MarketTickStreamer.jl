@@ -276,7 +276,10 @@ read the file twice. `each_page` and `page_rows` stream the prints as in
 [`itch50_trades`](@ref). The statistics count captured packets, IEX-TP
 segments with messages, message blocks, emitted prints, voided prints
 (Trade Breaks seen for the selected symbols, under `:keep`), sequence gaps
-and duplicate segments, and whether the capture ended inside a record.
+(and segments whose payload ended before their message count) and duplicate
+segments, and whether the capture ended inside a record. Segments of an
+IEX-TP protocol other than TOPS 1.5, TOPS 1.6 and DEEP 1.0, or of a second
+protocol in one capture, are skipped and counted in a warning.
 """
 function iex_hist_trades(
     path::AbstractString;
@@ -363,7 +366,10 @@ function iex_hist_trades(
             seglen >= 40 || return nothing
             buf[s] == 0x01 || return nothing
             protocol = _le16(buf, s + 2)
-            haskey(IEX_PROTOCOLS, protocol) || return nothing
+            if !haskey(IEX_PROTOCOLS, protocol)
+                other_protocol[] += 1               # DEEP+, or a feed added later
+                return nothing
+            end
             session = _le32(buf, s + 8)
             n_messages = Int(_le16(buf, s + 14))
             (session == 0 || n_messages == 0) && return nothing
@@ -387,7 +393,11 @@ function iex_hist_trades(
             end
             next_seq[session] = got + n_messages
             segments[] += 1
-            messages[] += _iex_blocks(on_message, buf, s, seglen, n_messages)
+            k = _iex_blocks(on_message, buf, s, seglen, n_messages)
+            messages[] += k
+            # A payload that ends before its message count is a loss inside the
+            # segment, which the sequence numbers cannot show.
+            k < n_messages && (gaps[] += 1)
             return nothing
         end
     finally
@@ -510,7 +520,10 @@ function fetch_iex_hist(
     end
     r = _download_resumable(link, path, policy)
     r.found || throw(VendorError(link, "file listed but missing: $link"))
+    # A transfer resumed from a complete partial file sees no response that
+    # carries the file; the host is asked for the checksum then.
     want_crc = _crc32c_from_headers(r.headers)
+    want_crc === nothing && (want_crc = _announced_crc32c(link, policy))
     if want_crc !== nothing
         got_crc = _crc32c_hex(path)
         if got_crc != want_crc
