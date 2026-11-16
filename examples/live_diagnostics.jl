@@ -130,7 +130,7 @@ call, which is what lets this run beside a live capture.
 function observe!(d::LiveDiagnostics, t::Trade)
     fit!(d.notional, t.price * t.size)
     fit!(d.volume, t.size)
-    d.first_ns == 0 && (d.first_ns = t.time_ns)
+    d.first_ns = d.first_ns == 0 ? t.time_ns : min(d.first_ns, t.time_ns)
     if d.previous_ns != 0
         Δt = (t.time_ns - d.previous_ns) / 1e9
         # A consolidated tape interleaves venues and reports late prints, so
@@ -149,7 +149,9 @@ function observe!(d::LiveDiagnostics, t::Trade)
         end
     end
     # The reference is the latest timestamp seen. Moving it back to a late
-    # print would make the next gap as long as the print was late.
+    # print would make the next gap as long as the print was late. The price
+    # is that a print stamped ahead of the tape holds the reference until the
+    # tape catches up.
     d.previous_ns = max(d.previous_ns, t.time_ns)
     return d
 end

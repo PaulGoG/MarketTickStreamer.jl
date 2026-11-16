@@ -7,10 +7,11 @@
 # process to a clock that runs with the market (Mandelbrot & Taylor 1967,
 # doi:10.1287/opre.15.6.1057; Clark 1973, doi:10.2307/1913889). Ané & Geman 2000
 # (doi:10.1111/0022-1082.00286) reported returns close to normal on the transaction
-# clock; Gillemot, Farmer & Lillo 2006 (doi:10.1080/14697680600835688) and Murphy &
-# Izzeldin 2010 (doi:10.1080/09603101003636212) find heavy tails and volatility
-# clustering persisting on it, so the clock removes the intraday activity profile from
-# the sampling and no more than that.
+# clock. Murphy & Izzeldin 2010 (doi:10.1080/09603101003636212) do not recover normality
+# on re-examination, and Gillemot, Farmer & Lillo 2006 (doi:10.1080/14697680600835688)
+# find heavy tails and volatility clustering persisting in transaction time: the clock
+# removes the intraday activity profile from the sampling, which does not make returns
+# independent or Gaussian.
 #
 # Bars are derived objects: they carry `recv_ns = 0`, the same marker the raw
 # layer uses for records that never crossed the wire. Each bar records both
@@ -104,11 +105,12 @@ Sampling by transaction count is the oldest of these clocks: Mandelbrot and Tayl
 [doi:10.1287/opre.15.6.1057](https://doi.org/10.1287/opre.15.6.1057) proposed price changes
 as a subordinated process running on transaction time, and Ané and Geman (2000)
 [doi:10.1111/0022-1082.00286](https://doi.org/10.1111/0022-1082.00286) reported returns
-sampled this way to be close to normal. Later studies find heavy tails and volatility
-clustering persisting on the transaction clock (Gillemot, Farmer and Lillo 2006,
-[doi:10.1080/14697680600835688](https://doi.org/10.1080/14697680600835688); Murphy and
-Izzeldin 2010,
-[doi:10.1080/09603101003636212](https://doi.org/10.1080/09603101003636212)).
+sampled this way to be close to normal. Later studies do not recover normality (Murphy
+and Izzeldin 2010,
+[doi:10.1080/09603101003636212](https://doi.org/10.1080/09603101003636212)) and find
+heavy tails and volatility clustering persisting on the transaction clock (Gillemot,
+Farmer and Lillo 2006,
+[doi:10.1080/14697680600835688](https://doi.org/10.1080/14697680600835688)).
 
 Prints are ordered by exchange timestamp, not arrival. The print that
 completes a bar belongs to it. Its timestamp is the bar's `close_ns`, so

@@ -92,7 +92,7 @@ Hill estimator of the tail exponent `α` in `P(X > x) ∝ x^(-α)` above the
 threshold `u = x₍ₙ₋ₖ₎` of the ascending-sorted positive samples `x`, with `k`
 the top `frac` of the sample and at least 30:
 
-    α̂ = m / Σ ln(xᵢ / u)  over the m samples xᵢ > u,    σ = α̂ / √m.
+    α̂ = m / Σ ln(xᵢ / u)  over the m samples xᵢ > u,    σ_stat = α̂ / √m.
 
 On continuous data `m = k` and this is the maximum-likelihood estimator of a
 Pareto tail above `u` ([Hill 1975](https://doi.org/10.1214/aos/1176343247)).
@@ -104,14 +104,42 @@ therefore strongly correlated, so the slope is biased and its regression
 standard error is too small by a large factor
 ([Clauset, Shalizi & Newman 2009](https://doi.org/10.1137/070710111)).
 
-The threshold is a fixed fraction rather than a fitted `x_min`, the sizes
-above it are still discrete, and `σ` is the asymptotic standard error of an
-exact Pareto tail, which leaves out the choice of threshold: the value is a
-diagnostic of tail weight, not a measurement of a power law. Returns `nothing`
-for fewer than 50 samples, for fewer than 30 above the threshold, or for a
-tail spanning less than a factor of two.
+`σ_stat` is the asymptotic standard error of an exact Pareto tail. An
+empirical tail is not one, and the estimate moves with the threshold by far
+more than `σ_stat` (on a liquid US equity day, from 1.16 to 1.29 between the
+top 10 % and the top 5 % of sizes, with `σ_stat` = 0.004). The returned `σ`
+therefore adds, in quadrature, `σ_threshold`: half the range of `α̂` over
+thresholds at `frac / 2`, `frac` and `2 frac`. The sizes above the threshold
+are still discrete: a grid whose spacing is not small against `u` biases `α̂`
+low, by under 1 % for share counts above a round lot. The value is a
+diagnostic of tail weight, not a measurement of a power law.
+
+Returns `(; α, σ, σ_stat, σ_threshold)`, or `nothing` for fewer than 50
+samples, for fewer than 30 above the threshold, or for a tail spanning less
+than a factor of two.
 """
 function _tail_fit(x::Vector{Float64}; frac::Real = 0.1)
+    fit = _hill(x, frac)
+    fit === nothing && return nothing
+    lo = hi = fit.α
+    for f in (frac / 2, 2frac)
+        other = _hill(x, f)
+        other === nothing && continue
+        lo = min(lo, other.α)
+        hi = max(hi, other.α)
+    end
+    σ_threshold = (hi - lo) / 2
+    return (;
+        α = fit.α,
+        σ = hypot(fit.σ, σ_threshold),
+        σ_stat = fit.σ,
+        σ_threshold = σ_threshold,
+    )
+end
+
+# The Hill estimate over the samples above the threshold at the top `frac`,
+# and its asymptotic standard error.
+function _hill(x::Vector{Float64}, frac::Real)
     n = length(x)
     n < 50 && return nothing
     k = min(n - 1, max(30, round(Int, frac * n)))
@@ -122,6 +150,19 @@ function _tail_fit(x::Vector{Float64}; frac::Real = 0.1)
     m >= 30 || return nothing
     α = m / sum(log(x[i] / threshold) for i in above:n)
     return (α = α, σ = α / sqrt(m))
+end
+
+# The share of zero gaps as an annotation, or `nothing` when there are none.
+# A logarithmic axis cannot show them, and the survival function and the
+# median leave them out.
+function _zero_gap_note(dts::Vector{Float64})
+    n_zero = count(==(0.0), dts)
+    n_zero == 0 && return nothing
+    pct = 100 * n_zero / length(dts)
+    share =
+        pct >= 10 ? string(round(Int, pct)) :
+        pct >= 0.1 ? string(round(pct; digits = 1)) : "< 0.1"
+    return "Zero gaps (excluded): $share %"
 end
 
 # Value and uncertainty to the same number of decimals, set by the leading

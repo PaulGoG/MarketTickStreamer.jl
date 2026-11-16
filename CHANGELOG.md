@@ -30,13 +30,17 @@ configuration schema are unchanged.
   session of the newest raw part. On a backfill they followed one
   (symbol, day) part set and then waited for the sidecar.
 - The tail exponent of the diagnostic figures leaves out the sizes tied with
-  its threshold, which inflated it by their share (1.43 where the corrected
-  estimate is 1.16 on a liquid US equity day). The survival-function panels
-  are labeled `P(X ≥ x)`, carry one point per distinct value, and the
+  its threshold, which were counted while adding nothing to the Hill sum: on
+  a liquid US equity day 19 % of the top decile sat on the 100-share
+  threshold and the estimate read 1.43 where the exceedances give 1.16. Its
+  uncertainty adds the dependence on the threshold (half the range of the
+  estimate over half and twice the tail fraction) to the statistical error,
+  which alone understated it by an order of magnitude. The survival-function
+  panels are labeled `P(X ≥ x)`, carry one point per distinct value, and the
   inter-arrival panels state the share of zero gaps they leave out.
 - The worked examples measure the gap after a late print from the latest
-  timestamp seen, not from the late one, and `print_rate` counts the prints
-  whose gap was not positive.
+  timestamp seen, not from the late one; `print_rate` counts the prints whose
+  gap was not positive, over a span that starts at the earliest timestamp.
 - `run_import` applies its collision check to symbols as the readers select
   them (case-insensitively) and refuses a configuration that is not on the
   New York calendar.

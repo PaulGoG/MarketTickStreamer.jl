@@ -55,7 +55,9 @@ function observe!(w::WaitingTimes, t::Trade)
         Δt > 0 ? push!(w.gaps, Δt) : (w.n_nonpositive += 1)
     end
     # The reference is the latest timestamp seen. Moving it back to a late
-    # print would make the next gap as long as the print was late.
+    # print would make the next gap as long as the print was late. The price
+    # is that a print stamped ahead of the tape holds the reference until the
+    # tape catches up.
     w.previous_ns = max(w.previous_ns, t.time_ns)
     return w
 end

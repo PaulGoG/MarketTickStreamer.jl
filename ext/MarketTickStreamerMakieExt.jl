@@ -52,6 +52,7 @@ using MarketTickStreamer:
     _safesave,
     _si_seconds,
     _tail_fit,
+    _zero_gap_note,
     _thin,
     _value_pm
 using Printf: @sprintf
@@ -105,19 +106,16 @@ function _rate_scale(peak::Real)
     return 10.0^k, L"Trade rate $[10^{%$k}\,\mathrm{min}^{-1}]$"
 end
 
-# The share of zero gaps (prints sharing a timestamp), which a logarithmic
-# axis cannot show and the survival function and the median leave out.
-# Nothing is drawn when there are none.
+# The share of zero gaps (prints sharing a timestamp), above the annotation
+# at the foot of the panel. Nothing is drawn when there are none.
 function _annotate_zero_gaps!(ax, dts, color)
-    n_zero = count(==(0.0), dts)
-    n_zero == 0 && return nothing
-    pct = 100 * n_zero / length(dts)
-    share = pct >= 10 ? string(round(Int, pct)) : string(round(pct; sigdigits = 2))
+    note = _zero_gap_note(dts)
+    note === nothing && return nothing
     text!(
         ax,
         0.04,
         0.13;
-        text = "Zero gaps (excluded): $share %",
+        text = note,
         space = :relative,
         align = (:left, :bottom),
         color,

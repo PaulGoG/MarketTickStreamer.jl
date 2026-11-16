@@ -1682,6 +1682,23 @@ hostname = "$(gethostname())"
             @test example_call(mod, :vwap, d) ≈ 101.0 + (seen - 1) / 2 rtol = 1e-12
             @test OnlineStats.value(d.volume) ≈ 10.0 * seen rtol = 1e-12
 
+            # A late print counts as one non-positive gap and moves neither the
+            # reference nor the start of the span: 5 prints over 5.003 s.
+            late = example_call(mod, :LiveDiagnostics)
+            for s in (4.999, 10.0, 10.001, 5.0, 10.002)
+                t = Trade("AAPL", round(Int64, s * 1e9), 0, 1.0, 1.0, "V", String[], "C", 0)
+                example_call(mod, :observe!, late, t)
+            end
+            @test late.n_nonpositive == 1 && OnlineStats.nobs(late.Δt_mean) == 3
+            @test example_call(mod, :print_rate, late) ≈ 5 / 5.003 rtol = 1e-9
+            # A late first print: the span starts at the earliest timestamp seen.
+            early = example_call(mod, :LiveDiagnostics)
+            for s in (10.0, 5.0, 10.001)
+                t = Trade("AAPL", round(Int64, s * 1e9), 0, 1.0, 1.0, "V", String[], "C", 0)
+                example_call(mod, :observe!, early, t)
+            end
+            @test example_call(mod, :print_rate, early) ≈ 3 / 5.001 rtol = 1e-9
+
             # Gaps swept log-uniformly over five orders of magnitude
             # (100 µs … 10 s), the shape that breaks a P² sketch and the reason
             # the example bins in log10. Deterministic, so the expected quantiles are exact.
@@ -1941,7 +1958,9 @@ hostname = "$(gethostname())"
         fit = M._tail_fit(x)
         @test fit !== nothing
         @test isapprox(fit.α, 2.5; rtol = 0.02)
-        @test fit.σ ≈ fit.α / sqrt(500) rtol = 1e-12         # k = top 10 %
+        @test fit.σ_stat ≈ fit.α / sqrt(500) rtol = 1e-12    # k = top 10 %
+        # Exact Pareto quantiles: the estimate barely moves with the threshold.
+        @test fit.σ_threshold < 0.005 && fit.σ ≈ hypot(fit.σ_stat, fit.σ_threshold)
         @test M._tail_fit(x[1:40]) === nothing               # too few samples
         @test M._tail_fit(fill(100.0, 500)) === nothing      # degenerate tail
         # Survival function: P(X ≥ x) over the positive samples, one point per
@@ -1959,11 +1978,34 @@ hostname = "$(gethostname())"
             tied = sort!(vcat(fill(50.0, 8500), fill(100.0, 1000), pareto))
             fit = MarketTickStreamer._tail_fit(tied)
             @test fit.α ≈ α rtol = 0.02
-            @test fit.σ ≈ fit.α / sqrt(500) rtol = 1e-12
+            @test fit.σ_stat ≈ fit.α / sqrt(500) rtol = 1e-12
+            # Threshold term: the top 5 % gives the same 500 exceedances, the
+            # top 20 % has u = 50 and all 1500 samples above it, where
+            # Σ ln(x/50) = 1500 ln 2 + (500 - ln(2)/2)/α = 1372.823, so
+            # α̂ = 1.092639 there against 1.501040 here; half the range:
+            @test fit.σ_threshold ≈ 0.204200 atol = 1e-5
+            @test fit.σ ≈ hypot(fit.σ_stat, fit.σ_threshold) rtol = 1e-12
         end
-        # Fewer than 30 samples above the threshold: no fit.
-        @test MarketTickStreamer._tail_fit(sort!(vcat(fill(1.0, 980), fill(5.0, 20)))) ===
+        # At least 30 samples above the threshold: 30 at 5 over 970 at 1 give
+        # α̂ = 1/ln 5 at every threshold tried; 29 give no fit.
+        let fit = MarketTickStreamer._tail_fit(sort!(vcat(fill(1.0, 970), fill(5.0, 30))))
+            @test fit.α ≈ 1 / log(5) rtol = 1e-12
+            @test fit.σ_stat ≈ fit.α / sqrt(30) rtol = 1e-12
+            @test fit.σ_threshold == 0
+        end
+        @test MarketTickStreamer._tail_fit(sort!(vcat(fill(1.0, 971), fill(5.0, 29)))) ===
               nothing
+        # Survival function at a single value and with a tied maximum.
+        @test MarketTickStreamer._ccdf([5.0, 5.0, 5.0]) == ([5.0], [1.0])
+        @test MarketTickStreamer._ccdf([1.0, 2.0, 2.0]) == ([1.0, 2.0], [1.0, 2 / 3])
+        # Zero gaps are reported as a share of all gaps, or not at all.
+        @test MarketTickStreamer._zero_gap_note([1.0, 2.0]) === nothing
+        @test MarketTickStreamer._zero_gap_note([0.0, 0.0, 0.0, 1.0]) ==
+              "Zero gaps (excluded): 75 %"
+        @test MarketTickStreamer._zero_gap_note(vcat(0.0, fill(1.0, 39))) ==
+              "Zero gaps (excluded): 2.5 %"
+        @test MarketTickStreamer._zero_gap_note(vcat(0.0, fill(1.0, 1999))) ==
+              "Zero gaps (excluded): < 0.1 %"
         # annotations: value and uncertainty share their decimals
         @test M._value_pm(1.4294, 0.0041) == ("1.429", "0.004")
         @test M._value_pm(1.8676, 0.0684) == ("1.87", "0.07")

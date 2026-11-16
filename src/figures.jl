@@ -52,11 +52,12 @@ Multi-day diagnostic figure for one symbol from per-day processed tables
   session boundaries dashed, days labeled at their centers), drawn from the
   prints that [`price_forming`](@ref) admits under `non_price`,
 - day × session-minute activity heatmap,
-- pooled intra-session inter-arrival CCDF (overnight gaps excluded by
-  construction, since they would contaminate the waiting-time tail; with a 24-hour
-  `session` midnight is not a boundary, and the wait across it is kept
-  whenever the next calendar day is present),
-- pooled trade-size CCDF with fitted tail exponent.
+- pooled intra-session inter-arrival survival function `P(Δt ≥ x)` over the
+  positive gaps, with the share of zero gaps annotated (overnight gaps
+  excluded by construction, since they would contaminate the waiting-time
+  tail; with a 24-hour `session` midnight is not a boundary, and the wait
+  across it is kept whenever the next calendar day is present),
+- pooled trade-size survival function `P(S ≥ s)` with a Hill tail exponent.
 
 `session` is the venue's regular session as exchange-local hours
 `(open, close)`, `0 <= open < close <= 24`; it sets the width of a day on the

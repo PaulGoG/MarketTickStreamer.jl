@@ -122,8 +122,8 @@ The venue's round lot for these prints, read off the tape: one share more
 than the largest trade still flagged as an odd lot. That is a lower bound,
 attained when a print one share short of the lot occurred, as on any day of a
 liquid name; `NaN` when no print carries the flag (a one-share lot has no odd
-lots). Over one trading date it is that date's lot; over a span that crosses
-a reassignment it is the larger of the two.
+lots). Over one trading date it bounds that date's lot; over a span that
+crosses a reassignment, the larger of the two.
 
 Reported per capture because the round lot is neither 100 shares nor
 constant. Under Regulation NMS (17 CFR 242.600(b)(93), in force since
