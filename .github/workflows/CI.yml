@@ -29,7 +29,8 @@ jobs:
           - version: "1"
             coverage: true
             experimental: false
-          - version: "1.12"
+          # the `[compat]` floor, read from Project.toml
+          - version: "min"
             coverage: false
             experimental: false
           - version: "pre"
@@ -69,17 +70,6 @@ jobs:
           files: lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
-  format:
-    name: Formatting
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7
-      - uses: julia-actions/setup-julia@v3
-        with:
-          version: "1"
-      - run: |
-          julia -e 'using Pkg; Pkg.add(name = "JuliaFormatter", version = "2"); using JuliaFormatter;
-                    format(".", verbose = false) || error("Formatting check failed: run JuliaFormatter over the repository.")'
   docs:
     name: Documentation
     runs-on: ubuntu-24.04

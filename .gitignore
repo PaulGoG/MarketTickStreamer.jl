@@ -1,7 +1,9 @@
 .env
-data/
-logs/
-plots/
+/data/
+/logs/
+/plots/
 docs/build/
 Manifest*.toml
 *.cov
+*.mem
+lcov.info

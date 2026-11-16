@@ -14,9 +14,12 @@ what a reader sees is what the tool produces rather than a mock-up:
 The GIF is assembled with the system `ffmpeg`; without it the script skips
 that asset and says so rather than failing. Committed PNG/GIF are kept small:
 they are documentation, not data.
+
+Runs in the scripts environment, which has CairoMakie; the documentation
+build itself needs no plotting stack.
 """
 
-include(joinpath(@__DIR__, "activate.jl"))
+include(joinpath(@__DIR__, "..", "scripts", "activate.jl"))
 
 using MarketTickStreamer
 using CairoMakie
