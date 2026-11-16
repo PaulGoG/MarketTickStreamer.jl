@@ -123,9 +123,10 @@ interrupt (tested).
 
 - **Reconnection**: jittered exponential backoff
   (`base·2^attempt`, capped), attempt counter reset after any connection
-  that delivered prints, or that opened, delivered a frame and stayed open
-  for `stream.stale_timeout_s`, so a quiet symbol cut by the watchdog does
-  not use up the attempts while an endpoint that never answers still does;
+  that delivered prints, or that opened and stayed open for
+  `stream.stale_timeout_s`, so a quiet symbol cut by the watchdog does not
+  use up the attempts while an endpoint that never opens a connection still
+  does;
   bounded by `reconnect_max_retries`.
 - **Session deadline**: `limits.max_session_hours` is enforced by a guard
   task, so it also ends a connection that never drops; the reconnect loop

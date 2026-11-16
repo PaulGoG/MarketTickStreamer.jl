@@ -79,7 +79,7 @@ where that file is a read-only template to copy
 | `require_market_open` | Query the market clock before connecting and exit if closed. |
 | `wait_for_open` | When closed, sleep until the next open instead of exiting. The wait is shifted by the feed's intrinsic delay, and the session takes the data tree's lock only when it ends. |
 | `stop_at_market_close` | Schedule a stop at the session's next close, likewise shifted. |
-| `reconnect_max_retries` | Reconnection attempts per disconnect before giving up. The counter resets after any connection that delivered prints, or that opened, delivered a frame and stayed open for `stale_timeout_s`. |
+| `reconnect_max_retries` | Reconnection attempts per disconnect before giving up. The counter resets after any connection that delivered prints, or that opened and stayed open for `stale_timeout_s`. |
 | `reconnect_base_delay_s` | Backoff base; the delay is `base * 2^attempt`, jittered. |
 | `reconnect_max_delay_s` | Backoff cap. |
 | `stale_timeout_s` | Watchdog interval: a connection that delivers no frame for this long is severed and retried. |

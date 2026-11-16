@@ -828,7 +828,7 @@ function _run_backfill(
         bulk = cfg.backfill_source === :bulk
         # The last trade id of each symbol's latest bulk day in this run, so
         # that the next day's first id can be checked against it.
-        last_ids = Dict{String,Tuple{Date,Int64}}()
+        last_ids = Dict{String,Tuple{Date,Int64}}()   # symbol => (day, last trade id)
         id_breaks = 0
         bulk && (summary.id_breaks = 0)
         for sym in cfg.symbols, day in days
@@ -863,7 +863,7 @@ function _run_backfill(
                         previous_id = prev !== nothing && prev[1] == day - Day(1) ?
                                       prev[2] : nothing,
                     )
-                    r.last_id > 0 && (last_ids[sym] = (day, r.last_id))
+                    r.last_id === nothing || (last_ids[sym] = (day, r.last_id))
                     r.id_breaks > 0 &&
                         @warn "trade ids not consecutive: prints missing or repeated" symbol =
                             sym day breaks = r.id_breaks

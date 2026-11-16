@@ -198,7 +198,8 @@ session_days(::AbstractProvider, start_date::Date, end_date::Date) =
 
 """
     bulk_trades(p::AbstractProvider, symbol, date; feed, dest_dir,
-                each_page = nothing, page_rows = 100_000) -> (; trades, prints, file)
+                each_page = nothing, page_rows = 100_000, previous_id = nothing)
+        -> (; trades, prints, file, id_breaks, last_id)
 
 The trades of `symbol` on exchange date `date` from the venue's daily bulk
 file, for a provider whose [`ProviderSpec`](@ref) lists `feed` in
@@ -209,7 +210,9 @@ pages of `page_rows`: with `each_page` every page is passed to it and
 `trades` is empty, otherwise the trades are accumulated in `trades`; `prints`
 counts them either way and `file` is the vendor file read. A day the venue
 has not published yields no trades and `file = ""`. Backfilled prints carry
-`recv_ns = 0`.
+`recv_ns = 0`. `id_breaks` and `last_id` report the continuity of the
+venue's trade ids, `previous_id` being the `last_id` of the day before; a
+venue without ids returns `0` and `nothing`.
 
 The default method throws: a venue without bulk files cannot be asked for
 one.
@@ -266,6 +269,7 @@ fatal stream error, exhausted reconnection attempts or an unexpected error.
 `opens` counts the connections that opened (a protocol loop's
 [`spawn_watchdog`](@ref) call records each) and `opened_at` holds the
 `time()` of the latest; the reconnect loop judges a connection by them.
+`grace` records that [`stop!`](@ref) has armed its bound on the producer.
 """
 struct LiveSession
     channel::Channel{Trade}
@@ -275,6 +279,7 @@ struct LiveSession
     outcome::Ref{Symbol}
     opens::Threads.Atomic{Int}
     opened_at::Threads.Atomic{Float64}
+    grace::Threads.Atomic{Bool}
 end
 
 LiveSession(channel, stop, ws, stats, outcome = Ref(:running)) = LiveSession(
@@ -285,6 +290,7 @@ LiveSession(channel, stop, ws, stats, outcome = Ref(:running)) = LiveSession(
     outcome,
     Threads.Atomic{Int}(0),
     Threads.Atomic{Float64}(0.0),
+    Threads.Atomic{Bool}(false),
 )
 
 """
@@ -301,24 +307,41 @@ which can leave one of the two readers waiting forever.
 
 A producer blocked before its connection is registered (an upgrade request
 the server never answers) cannot be reached through a socket; if the channel
-is still open `STOP_GRACE_S` seconds after the request, it is closed here, so
-the consumers end whatever state the producer is in.
+is still open `STOP_GRACE_S` seconds after the first request, it is closed
+here and the session is marked failed, so the consumers end whatever state
+the producer is in.
 """
 function stop!(s::LiveSession)
-    stopped_before = Threads.atomic_xchg!(s.stop, true)
+    s.stop[] = true
+    # Pairs with the provider's registration (`_register_ws!`): of the two
+    # sides, at least one sees the other's write, so a connection opened
+    # during the stop is severed by one of them.
+    Threads.atomic_fence()
     ws = s.ws[]
     ws === nothing || _close_ws(ws)
-    # One grace task per session: a repeated stop!, or a producer that already
-    # ended and set the flag itself, needs none.
-    stopped_before || Threads.@spawn begin
+    Threads.atomic_xchg!(s.grace, true) || Threads.@spawn begin
         sleep(STOP_GRACE_S)
         if isopen(s.channel)
-            @warn "producer did not end after the stop request; closing its channel" grace_s =
-                STOP_GRACE_S
-            close(s.channel)
+            try
+                @warn "producer did not end after the stop request; closing its channel" grace_s =
+                    STOP_GRACE_S
+            finally
+                s.outcome[] === :running && (s.outcome[] = :failed)
+                close(s.channel)
+            end
         end
     end
     return nothing
+end
+
+# Provider side of the stop handshake: publish `ws`, then test the stop flag.
+# Returns `true` when the session is stopping, the connection then severed.
+function _register_ws!(s::LiveSession, ws)
+    s.ws[] = ws
+    Threads.atomic_fence()
+    s.stop[] || return false
+    _close_ws(ws)
+    return true
 end
 
 # Seconds `stop!` waits for the producer to close the channel itself.
@@ -458,9 +481,9 @@ Reconnects with jittered exponential backoff
 (`stream.reconnect_base_delay_s * 2^attempt`, capped at
 `stream.reconnect_max_delay_s` before a jitter factor in [0.5, 1.5) drawn from a
 generator seeded by `rng.seed`); the attempt counter resets after any connection
-that delivered prints, or that opened, delivered a frame and stayed open for
+that delivered prints, or that opened and stayed open for
 `stream.stale_timeout_s`, so a quiet market does not exhaust the attempts of
-a healthy feed while an endpoint that never answers still does.
+a healthy feed while an endpoint that never opens a connection still does.
 """
 function live_source(
     p::AbstractProvider,
@@ -494,7 +517,6 @@ function live_source(
             try
                 while !session.stop[] && time() < deadline
                     ticks_before = session.stats[].ticks
-                    frames_before = session.stats[].frames
                     opens_before = session.opens[]
                     try
                         stream_protocol!(ch, p, cfg, session; on_quote, on_bar)
@@ -506,15 +528,14 @@ function live_source(
                     end
                     session.stop[] && break
                     # A connection that delivered prints was healthy, and so was one
-                    # that opened, answered with a frame and stayed open as long as
-                    # the watchdog allows a silent one: a quiet symbol cut by the
-                    # watchdog is not a failure to connect. The time is counted from
-                    # the opening, so an attempt that takes long to fail does not
-                    # pass for a connection.
+                    # that opened and stayed open as long as the watchdog allows a
+                    # silent one: a quiet symbol cut by the watchdog is not a failure
+                    # to connect. No frame is asked for, since a Binance stream sends
+                    # none until a trade. The time is counted from the opening, so an
+                    # attempt that takes long to fail does not pass for a connection.
                     healthy =
                         session.stats[].ticks > ticks_before || (
                             session.opens[] > opens_before &&
-                            session.stats[].frames > frames_before &&
                             time() - session.opened_at[] >= cfg.stale_timeout_s
                         )
                     healthy && (attempt = 0)
@@ -539,11 +560,16 @@ function live_source(
                     end
                 end
             catch e
-                # An unexpected error is a failure too, not an orderly end; an
-                # interrupt leaves the outcome to whoever handles it.
-                e isa InterruptException || (session.outcome[] = :failed)
-                e isa FatalStreamError || rethrow()
-                @error "fatal stream error; aborting" e.msg
+                # An unexpected error is a failure too, not an orderly end, and is
+                # logged where the session logs; an interrupt leaves the outcome
+                # to whoever handles it.
+                e isa InterruptException && rethrow()
+                session.outcome[] = :failed
+                if e isa FatalStreamError
+                    @error "fatal stream error; aborting" e.msg
+                else
+                    @error "live producer failed" exception = (e, catch_backtrace())
+                end
             finally
                 session.outcome[] === :running && (session.outcome[] = :completed)
                 # The guard tasks end on the stop flag; without it they would outlive

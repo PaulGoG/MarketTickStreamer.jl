@@ -171,7 +171,11 @@ function run_sink!(
             write_buffer()
         end
         if !isready(ch)
-            isopen(ch) || break
+            if !isopen(ch)
+                # A put! can land between the two tests; after the close none can.
+                isready(ch) || break
+                continue
+            end
             sleep(0.05)          # idle poll; granularity ≪ flush interval
         end
     end
@@ -706,8 +710,10 @@ If `write_fn` throws, or a later step does, the partial file is removed,
 path are not serialized: every file `path` holds is complete, each displaced
 file gets a backup slot of its own (a hard link claims the name or fails),
 but of two writes that overlap the earlier result can end up under no name.
-A write killed before its rename leaves its partial file, which no reader
-reads and which may be deleted.
+On a filesystem without hard links the backup is a copy into a name created
+exclusively, which keeps the slots apart; a crash during that copy leaves the
+backup incomplete, never `path`. A write killed before its rename leaves its
+partial file, which no reader reads and which may be deleted.
 
 These are the semantics of DrWatson's `safesave` (newest data canonical,
 prior results kept as numbered backups) without the dependency.
@@ -739,24 +745,48 @@ function _same_bytes(a::AbstractString, b::AbstractString)
             while !eof(ia)
                 read(ia, 1 << 20) == read(ib, 1 << 20) || return false
             end
-            return true
+            return eof(ib)        # `b` may have been replaced since its size was read
         end
     end
+end
+
+# Copy `src` into `dst`, created here: `false`, and nothing written, when
+# `dst` exists.
+function _copy_exclusive(src::AbstractString, dst::AbstractString)
+    flags =
+        Base.Filesystem.JL_O_WRONLY | Base.Filesystem.JL_O_CREAT | Base.Filesystem.JL_O_EXCL
+    out = try
+        Base.Filesystem.open(dst, flags, 0o644)
+    catch e
+        e isa Base.IOError && e.code == Base.UV_EEXIST && return false
+        rethrow()
+    end
+    try
+        open(src) do io
+            while !eof(io)
+                write(out, read(io, 1 << 20))
+            end
+        end
+    finally
+        close(out)
+    end
+    return true
 end
 
 # Preserve `path` under the first free `_#N` and return that name. The hard
 # link claims its slot atomically, failing when the name exists, so a writer
 # that loses a slot to another takes the next one. A filesystem that refuses
-# links (FAT, several network mounts) gets a plain copy.
-function _backup!(path::AbstractString)
+# links (FAT, several network mounts) gets a copy into a name it creates
+# exclusively, which claims the slot the same way. `link` is a test seam.
+function _backup!(path::AbstractString; link = hardlink)
     for _ in 1:10_000
         dst = _backup_path(path)
         try
-            hardlink(path, dst)
+            link(path, dst)
         catch e
             e isa Base.IOError || rethrow()
             ispath(dst) && continue                 # taken meanwhile
-            cp(path, dst)
+            _copy_exclusive(path, dst) || continue
         end
         return dst
     end

@@ -363,7 +363,8 @@ end
 # day to the next, so `id_breaks` counts the rows whose id is not the previous
 # row's plus one, the first row measured against `previous_id` when it is
 # given: zero on a complete span, and a missing or a repeated run of rows
-# counts once. `last_id` is the id of the last row (`0` for none).
+# counts once. `last_id` is the id of the last row, or `previous_id` when
+# there is no row, so the reference passes over an empty day.
 function _parse_bulk_csv(
     csv::IO,
     sym::String,
@@ -379,7 +380,7 @@ function _parse_bulk_csv(
     day_hi = day_lo + 86_400 * NS_PER_SEC
     pages = TradePages(each_page, page_rows)
     reference = previous_id === nothing ? Int64(-1) : Int64(previous_id)
-    last_id = Int64(0)
+    last_id::Union{Nothing,Int64} = previous_id === nothing ? nothing : Int64(previous_id)
     id_breaks = 0
     first_line = true
     for line in eachline(csv)
@@ -450,7 +451,10 @@ proves the file is the one the venue published; the ids show a gap inside
 it, and at its start when the day before is given. A gap at the end of a day
 shows only against the next day, so a count of zero is necessary for a
 complete span and not sufficient: the last day of a span is not checked at
-its end. `last_id` is `0` for a day without rows.
+its end. `last_id` is the id of the day's last row; a day without rows or
+without a file returns `previous_id` in its place (`nothing` when none was
+given), so `previous_id = r.last_id` chains the days of a span across an
+empty or unpublished one, whose missing prints then show at the next day.
 """
 function bulk_trades(
     p::BinanceProvider,
@@ -473,7 +477,7 @@ function bulk_trades(
             prints = 0,
             file = "",
             id_breaks = 0,
-            last_id = Int64(0),
+            last_id = previous_id === nothing ? nothing : Int64(previous_id),
         )
     end
     archive = ZipReader(Mmap.mmap(path))
@@ -539,8 +543,7 @@ function stream_protocol!(
             cfg.channels maxlog = 1
     fatal = Ref{Union{Nothing,FatalStreamError}}(nothing)
     HTTP.WebSockets.open(ws_url(p, cfg.symbols)) do ws
-        s.ws[] = ws
-        s.stop[] && return nothing          # stopped while the connection opened
+        _register_ws!(s, ws) && return nothing      # stopped while it opened
         last_frame = Threads.Atomic{Float64}(time())
         alive = Threads.Atomic{Bool}(true)
         watchdog = spawn_watchdog(ws, s, last_frame, alive, cfg.stale_timeout_s)

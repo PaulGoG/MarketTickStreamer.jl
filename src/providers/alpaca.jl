@@ -351,8 +351,7 @@ function stream_protocol!(
 )
     fatal = Ref{Union{Nothing,FatalStreamError}}(nothing)
     HTTP.WebSockets.open(ws_url(p)) do ws
-        s.ws[] = ws
-        s.stop[] && return nothing          # stopped while the connection opened
+        _register_ws!(s, ws) && return nothing      # stopped while it opened
         last_frame = Threads.Atomic{Float64}(time())
         alive = Threads.Atomic{Bool}(true)
         watchdog = spawn_watchdog(ws, s, last_frame, alive, cfg.stale_timeout_s)

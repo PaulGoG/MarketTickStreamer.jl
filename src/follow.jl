@@ -65,16 +65,21 @@ function _skip_to_end!(t::RawTail)
     return t
 end
 
-# The offset just past the last newline of `path`, looked for in its final
-# `window` bytes: 0 when the file holds no complete line, the file's size
-# when no newline falls in the window.
+# The offset just past the last newline of `path`, 0 when the file holds no
+# complete line. Read backwards in steps of `window` bytes, so the cost is that
+# of the last line.
 function _last_line_end(path::AbstractString; window::Integer = 1 << 20)
-    sz = filesize(path)
-    sz == 0 && return Int64(0)
-    lo = max(Int64(0), sz - window)
-    tail = open(io -> (seek(io, lo); read(io, sz - lo)), path)
-    i = findlast(==(UInt8('\n')), tail)
-    return i === nothing ? (lo == 0 ? Int64(0) : sz) : lo + i
+    return open(path) do io
+        hi = Int64(filesize(io))
+        while hi > 0
+            lo = max(Int64(0), hi - window)
+            seek(io, lo)
+            i = findlast(==(UInt8('\n')), read(io, hi - lo))
+            i === nothing || return lo + i
+            hi = lo
+        end
+        return Int64(0)
+    end
 end
 
 # Bytes read from a part per step of `_drain!`, which bounds its memory
@@ -112,7 +117,7 @@ function _drain!(f, t::RawTail; block::Integer = DRAIN_BLOCK)
         io === nothing && continue
         seek(io, off)
         try
-            prints, corrupt = _drain_part!(f, t, path, io, off, sz, block, prints, corrupt)
+            prints, corrupt = _drain_part!(f, t, path, io, off, block, prints, corrupt)
         finally
             close(io)
         end
@@ -120,11 +125,12 @@ function _drain!(f, t::RawTail; block::Integer = DRAIN_BLOCK)
     return (prints, corrupt)
 end
 
-# Read `path` from `off` to `sz` through `io` in steps of `block` bytes,
-# carrying a torn line between steps and calls.
-function _drain_part!(f, t::RawTail, path, io, off, sz, block, prints, corrupt)
-    while off < sz
-        chunk = String(read(io, min(sz - off, block)))
+# Read `path` from `off` to the end of `io` in steps of `block` bytes,
+# carrying a torn line between steps and calls. Bytes appended while it reads
+# are read too, through the handle even once the part is deleted.
+function _drain_part!(f, t::RawTail, path, io, off, block, prints, corrupt)
+    while true
+        chunk = String(read(io, block))
         isempty(chunk) && break
         off += sizeof(chunk)
         t.offsets[path] = off

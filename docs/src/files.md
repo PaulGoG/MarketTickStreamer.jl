@@ -212,11 +212,13 @@ is deleted. The checksum proves the file is the one the venue published;
 whether that file holds the whole day shows in its trade ids, which are
 consecutive per symbol within a day and across days. A bulk backfill counts
 the rows that break the sequence as the sidecar's `session.id_breaks`, the
-first row of a day measured against the last of the day before when both
-are in the run; a missing run of prints counts once, and so does a run the
-vendor repeated, which compaction then drops. A count of zero is necessary
-for a complete span, not sufficient: the start of the run's first day and
-the end of its last day are compared with nothing. A consumer never reads these files except as the record of a
+first row of a day measured against the last id known the day before
+(across a day without rows or without a file) when that day is in the run;
+a missing run of prints counts once, and so does a run the vendor repeated,
+which compaction then drops. A count of zero is necessary for a complete
+span, not sufficient: the start of the run's first day, the end of its last
+day and the edges of a day that a resumed run skips are compared with
+nothing. A consumer never reads these files except as the record of a
 day: the prints they hold reach it through the raw and processed layers, and
 an import's sidecar names the file and its SHA-256.
 

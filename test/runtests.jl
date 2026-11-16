@@ -586,6 +586,23 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             @test all(f -> read(joinpath(dir, f), String) in writes, files)
             @test read(p, String) in (body(1, 100), body(2, 100))
         end
+        # Without hard links the backup is a copy into a name created
+        # exclusively: two writers never share a slot.
+        mktempdir() do dir
+            p = joinpath(dir, "n.csv")
+            write(p, "kept\n")
+            nolink(src, dst) = throw(Base.IOError("hardlink: operation not supported", -95))
+            tasks = [
+                Threads.@spawn([
+                    MarketTickStreamer._backup!(p; link = nolink) for _ in 1:50
+                ]) for _ in 1:2
+            ]
+            slots = reduce(vcat, fetch.(tasks))
+            @test allunique(slots) && length(slots) == 100
+            @test all(f -> read(f, String) == "kept\n", slots)
+            @test !MarketTickStreamer._copy_exclusive(p, first(slots))   # taken
+            @test read(first(slots), String) == "kept\n"
+        end
     end
 
     @testset "replay" begin
@@ -1988,6 +2005,7 @@ hostname = "$(gethostname())"
         end
         # A part deleted while it is drained (keep_raw = false compacts a day
         # and removes it) is read to the end through the handle already open.
+        # Lines the writer appends before the deletion are read too.
         mktempdir() do raw
             part = joinpath(raw, "gone_part001.jsonl")
             write(part, join(trade_to_json(sample_trade(i)) * "\n" for i in 1:20))
@@ -1995,9 +2013,23 @@ hostname = "$(gethostname())"
             got = Trade[]
             n, bad = MarketTickStreamer._drain!(tail; block = 100) do t
                 push!(got, t)
-                isfile(part) && rm(part)
+                if isfile(part)
+                    open(part, "a") do io
+                        foreach(i -> println(io, trade_to_json(sample_trade(i))), 21:25)
+                    end
+                    rm(part)
+                end
             end
-            @test (n, bad) == (20, 0) && got == [sample_trade(i) for i in 1:20]
+            @test (n, bad) == (25, 0) && got == [sample_trade(i) for i in 1:25]
+        end
+        # The last line end lies before the final window: a line longer than
+        # the window is being written.
+        mktempdir() do raw
+            part = joinpath(raw, "long_part001.jsonl")
+            write(part, "first\n" * "x"^300)
+            @test MarketTickStreamer._last_line_end(part; window = 100) == 6
+            write(part, "y"^300)
+            @test MarketTickStreamer._last_line_end(part; window = 100) == 0
         end
     end
 
@@ -3003,6 +3035,7 @@ hostname = "$(gethostname())"
                 # 3.6 s to the deadline, then the stop grace
                 @test time() - t0 < 3.6 + MarketTickStreamer.STOP_GRACE_S + 5
                 @test result.ticks == 0
+                @test result.status == "failed"          # it never connected
             finally
                 foreach(close, held)
                 close(listener)
@@ -3394,8 +3427,8 @@ hostname = "$(gethostname())"
         @test parse_pages(row(7) * row(8); previous_id = 6).id_breaks == 0
         @test parse_pages(row(7) * row(8); previous_id = 5).id_breaks == 1    # day boundary
         @test parse_pages(row(7) * row(8)).last_id == 8
-        @test parse_pages("").last_id == 0
-        @test parse_pages(""; previous_id = 5).last_id == 0     # no row: no last id
+        @test parse_pages("").last_id === nothing
+        @test parse_pages(""; previous_id = 5).last_id == 5     # no row: the reference passes on
         @test_throws IntegrityError parse_csv("7,64000.5,0.25,$us,True\n")
         @test_throws IntegrityError parse_csv(
             "7,64000.5,0.25,10,12,$(us + 86_400_000_000),True,True\n",
@@ -3476,7 +3509,7 @@ hostname = "$(gethostname())"
                     prints = 0,
                     file = "",
                     id_breaks = 0,
-                    last_id = 0,
+                    last_id = nothing,
                 )
                 @test bulk_trades(
                     p,
@@ -3520,6 +3553,29 @@ hostname = "$(gethostname())"
                 @test !isfile(
                     joinpath(bad, "binance", "BTCUSDT", "BTCUSDT-aggTrades-2026-01-01.zip"),
                 )
+            finally
+                close(server)
+            end
+            # A zip whose entry fails its own CRC-32, under a checksum that
+            # matches: rejected before any row is handed over.
+            rest_port = freeport(9886)
+            server = start_mock_binance_rest(
+                rest_port;
+                trades_per_day = per_day,
+                corrupt_entry = true,
+            )
+            try
+                base = "http://127.0.0.1:$rest_port"
+                p = BinanceProvider("aggTrade", base, "ws://unused", base)
+                pages = Vector{Int}()
+                @test_throws IntegrityError bulk_trades(
+                    p,
+                    "BTCUSDT",
+                    MOCK_BINANCE_EPOCH;
+                    dest_dir = joinpath(dir, "crc"),
+                    each_page = pg -> push!(pages, length(pg)),
+                )
+                @test isempty(pages)
             finally
                 close(server)
             end
@@ -3591,36 +3647,52 @@ hostname = "$(gethostname())"
     end
 
     @testset "binance: trade-id breaks across the days of a bulk backfill" begin
-        mktempdir() do dir
-            rest_port = freeport(9931)
-            per_day = 7
-            # Day two's file lacks its first row: the gap shows only against
-            # the last id of day one, so the count needs the link across days.
-            server = start_mock_binance_rest(
-                rest_port;
-                trades_per_day = per_day,
-                drop_head = Dict(MOCK_BINANCE_EPOCH + Day(1) => 1),
-            )
-            try
-                cfg = load_config(
-                    mock_binance_config_toml(
-                        dir;
-                        ws_port = 9999,
-                        rest_port,
-                        source = "bulk",
-                        backfill_feed = "trade",
-                        start_date = string(MOCK_BINANCE_EPOCH),
-                        end_date = string(MOCK_BINANCE_EPOCH + Day(2)),
-                    ),
+        per_day = 7
+        day(i) = MOCK_BINANCE_EPOCH + Day(i)
+        # (port, files left short, unpublished days, breaks, prints). Day two
+        # lacking its first row shows only against the last id of day one, so
+        # the count needs the link across days; an empty or unpublished day two
+        # passes that id on, and day three's first row is measured against it.
+        cases = [
+            (9931, Dict(day(1) => 1), Date[], 1, 3 * per_day - 1),
+            (9936, Dict(day(1) => per_day, day(2) => 1), Date[], 1, 2 * per_day - 1),
+            (9941, Dict{Date,Int}(), [day(1)], 1, 2 * per_day),
+        ]
+        for (port, drop_head, missing_dates, breaks, prints) in cases
+            mktempdir() do dir
+                rest_port = freeport(port)
+                server = start_mock_binance_rest(
+                    rest_port;
+                    trades_per_day = per_day,
+                    drop_head,
+                    missing_dates,
                 )
-                run_backfill(cfg)
-                meta = TOML.parsefile(
-                    only(filter(endswith(".meta.toml"), readdir(cfg.raw_dir; join = true))),
-                )
-                @test meta["session"]["id_breaks"] == 1
-                @test meta["session"]["ticks"] == 3 * per_day - 1
-            finally
-                close(server)
+                try
+                    cfg = load_config(
+                        mock_binance_config_toml(
+                            dir;
+                            ws_port = 9999,
+                            rest_port,
+                            source = "bulk",
+                            backfill_feed = "trade",
+                            start_date = string(day(0)),
+                            end_date = string(day(2)),
+                        ),
+                    )
+                    run_backfill(cfg)
+                    meta = TOML.parsefile(
+                        only(
+                            filter(
+                                endswith(".meta.toml"),
+                                readdir(cfg.raw_dir; join = true),
+                            ),
+                        ),
+                    )
+                    @test meta["session"]["id_breaks"] == breaks
+                    @test meta["session"]["ticks"] == prints
+                finally
+                    close(server)
+                end
             end
         end
     end
@@ -3671,6 +3743,40 @@ hostname = "$(gethostname())"
             @test sort(rebuilt) == sort(files)
             backup(f) = string(first(splitext(f)), "_#1", last(splitext(f)))
             @test all(f -> !isfile(backup(f)) && read(f) == before[f], rebuilt)
+        end
+    end
+
+    @testset "binance: a quiet stream does not use up the reconnects" begin
+        mktempdir() do dir
+            ws_port = freeport(9856)
+            # A Binance stream sends nothing until a trade: no frame at all.
+            # Each connection stays up until the watchdog cuts it, so none is
+            # a failed attempt and the session runs to its deadline.
+            server = start_mock_binance_ws(
+                ws_port;
+                frames = Any[],
+                linger_s = 30.0,
+                fatal_after = 1_000,
+            )
+            try
+                cfg = load_config(
+                    mock_binance_config_toml(
+                        dir;
+                        ws_port,
+                        rest_port = 9999,
+                        stale_timeout_s = 1.0,
+                        # 14.4 s: the first connections of a cold process
+                        # take seconds to compile
+                        max_session_hours = 0.004,
+                    ),
+                )
+                s = live_source(BinanceProvider(cfg), cfg)
+                @test isempty(collect(s.channel))
+                @test s.outcome[] === :completed
+                @test s.stats[].reconnects >= 2
+            finally
+                close(server)
+            end
         end
     end
 

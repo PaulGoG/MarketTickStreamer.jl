@@ -19,9 +19,11 @@ unchanged.
   a warning per day that has any, and records the total as the sidecar's
   `session.id_breaks`. The checksum proves a dump is the one the venue
   published; the ids show a gap inside it or at a day boundary of the run
-  (#12). A count of zero is necessary for a complete span, not sufficient:
-  the start of the first day and the end of the last are compared with
-  nothing. The dump's zip entry is also checked against its own CRC-32.
+  (#12). A day without rows, or without a dump, passes the last id before
+  it on to the next. A count of zero is necessary for a complete span, not
+  sufficient: the start of the first day, the end of the last and the edges
+  of a day a resumed run skips are compared with nothing. The dump's zip
+  entry is also checked against its own CRC-32.
   `bulk_trades` returns `id_breaks` and `last_id` and takes `previous_id`;
   `finalize_session_meta` takes `id_breaks`.
 - `run_stream` returns `status` beside `ticks` and `raw_files`: the status
@@ -31,9 +33,8 @@ unchanged.
   distinct; all three still load.
 
 ### Changed
-- A connection that opened, delivered a frame and stayed open for
-  `stream.stale_timeout_s` resets the reconnect counter, as one that
-  delivered prints does. A quiet symbol cut by the watchdog every two minutes
+- A connection that opened and stayed open for `stream.stale_timeout_s`
+  resets the reconnect counter, as one that delivered prints does. A quiet symbol cut by the watchdog every two minutes
   used up ten attempts in about 25 minutes and ended a healthy session as
   `failed`. An endpoint that never opens a connection still uses them up,
   however long each attempt takes to fail.
@@ -50,9 +51,10 @@ unchanged.
 - A rewrite of a processed file with the same bytes leaves the file as it
   was, without a `_#N` backup; every write goes through a temporary name of
   its own (`<day>.<tag>.partial.<ext>`), so two writers of one day cannot
-  interleave in one file, and a backup claims its `_#N` with a hard link that
-  fails when another writer took the name. Of two overlapping writes the
-  earlier result can still end up under no name; no file is ever damaged.
+  interleave in one file, and a backup claims its `_#N` with a hard link, or
+  without hard links by creating the name exclusively, either of which fails
+  when another writer took the name. Of two overlapping writes the earlier
+  result can still end up under no name; no file is ever damaged.
 - A raw part the sink opened and never wrote to is removed when it closes,
   so a capture without prints leaves no part and lists none in `raw_files`.
   Such parts were left as zero-byte files and reported at every later start
@@ -75,8 +77,10 @@ unchanged.
   silent peer, and read the socket concurrently with the protocol loop,
   which could leave one of the two readers waiting for good. A producer
   still waiting for an upgrade the server never answers is out of reach of
-  both; five seconds after `stop!` its channel is closed, so the session
-  ends at its deadline whatever state the connection is in.
+  both; five seconds after `stop!` its channel is closed and the session
+  marked `failed`, so it ends at its deadline whatever state the connection
+  is in. A connection that opens while `stop!` runs is severed by one side
+  or the other.
 - A producer that ended on its own left its deadline and close guards
   running; they end with it. A reconnect backoff ends at a stop request or
   at the session deadline.
@@ -89,7 +93,9 @@ unchanged.
   handle per part, so a part deleted meanwhile is still read to its end. The
   monitor's rate is measured over the time between reads.
 - An error that escapes the live producer marks the session `failed` and is
-  logged; it ended the session as `completed`.
+  logged to the session's log; it ended the session as `completed`.
+- A print put into the channel just before the producer closed it could be
+  left unwritten by the sink.
 - An ITCH file that ends before the End of Messages event, which closes
   every trading day, is reported `truncated` even when it was cut between
   two messages. A symbol whose Stock Directory message is repeated is

@@ -87,8 +87,8 @@ end
 """
     start_mock_binance_rest(port; trades_per_day = 7, fail_after = typemax(Int),
                             missing_dates = Date[], corrupt_checksum = false,
-                            repeat_head = Dict{Date,Int}(), drop_head = Dict{Date,Int}(),
-                            seen_units = nothing)
+                            corrupt_entry = false, repeat_head = Dict{Date,Int}(),
+                            drop_head = Dict{Date,Int}(), seen_units = nothing)
         -> HTTP server
 
 Serve `/api/v3/aggTrades`. Honors `symbol`, `startTime`, `fromId` and `limit`
@@ -100,7 +100,9 @@ carry microseconds when it asks for them, as the venue does.
 
 Also serves the daily bulk files under `/data/spot/daily/` from the same tape.
 `missing_dates` answers 404 for those days' bulk files, `corrupt_checksum`
-serves a checksum that cannot match, and `repeat_head` maps a date to a number
+serves a checksum that cannot match, `corrupt_entry` alters one byte of the
+stored CSV after the zip recorded its CRC-32 (the checksum, taken afterwards,
+matches), and `repeat_head` maps a date to a number
 of its first rows that its file carries twice, with a valid checksum;
 `drop_head` maps a date to a number of its first rows its file leaves out.
 """
@@ -110,6 +112,7 @@ function start_mock_binance_rest(
     fail_after::Integer = typemax(Int),
     missing_dates::Vector{Date} = Date[],
     corrupt_checksum::Bool = false,
+    corrupt_entry::Bool = false,
     repeat_head::Dict{Date,Int} = Dict{Date,Int}(),
     drop_head::Dict{Date,Int} = Dict{Date,Int}(),
     seen_units::Union{Nothing,Vector{String}} = nothing,
@@ -162,16 +165,20 @@ function start_mock_binance_rest(
             (MOCK_BINANCE_EPOCH <= d <= last_day && !(d in missing_dates)) ||
                 return HTTP.Response(404, "no such file")
             name = "$sym-$kind-$d"
-            zip = mock_binance_bulk_zip(
-                "$name.csv",
-                mock_binance_bulk_csv(
-                    kind,
-                    d,
-                    trades_per_day;
-                    repeat_head = get(repeat_head, d, 0),
-                    drop_head = get(drop_head, d, 0),
-                ),
+            csv = mock_binance_bulk_csv(
+                kind,
+                d,
+                trades_per_day;
+                repeat_head = get(repeat_head, d, 0),
+                drop_head = get(drop_head, d, 0),
             )
+            zip = mock_binance_bulk_zip("$name.csv", csv)
+            if corrupt_entry
+                # The entry is stored, so its first row appears verbatim; the
+                # first digit of its id changes.
+                at = first(something(findfirst(csv[1:20], zip)))
+                zip[at] = zip[at] == UInt8('9') ? UInt8('8') : zip[at] + 0x01
+            end
             body = if m[4] !== nothing
                 sha = corrupt_checksum ? "0"^64 : bytes2hex(sha256(zip))
                 Vector{UInt8}("$sha  $name.zip\n")
@@ -280,6 +287,8 @@ function mock_binance_config_toml(
     keep_raw = true,
     resume = true,
     reconnect_max_retries::Integer = 1,
+    stale_timeout_s::Real = 30.0,
+    max_session_hours::Real = 0.02,
 )
     path = joinpath(dir, "binance.toml")
     write(
@@ -297,7 +306,7 @@ stop_at_market_close = $stop_at_market_close
 reconnect_max_retries = $reconnect_max_retries
 reconnect_base_delay_s = 0.05
 reconnect_max_delay_s = 0.2
-stale_timeout_s = 30.0
+stale_timeout_s = $stale_timeout_s
 
 [storage]
 data_dir = "$(joinpath(dir, "data"))"
@@ -306,7 +315,7 @@ flush_max_ticks = 100
 processed_format = "csv"
 
 [limits]
-max_session_hours = 0.02
+max_session_hours = $max_session_hours
 max_raw_file_mb = 64
 channel_capacity = 10000
 
