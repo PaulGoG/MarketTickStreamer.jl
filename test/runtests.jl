@@ -331,6 +331,7 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             # the deadline is Int64 ns
             rejected(base * "[limits]\nmax_session_hours = inf\n")
             rejected(base * "[limits]\nmax_session_hours = 3.0e6\n")
+            rejected(base * "[limits]\nmax_session_hours = 2.2e6\n")   # past Int64 ns from now
             # a table, not an array
             rejected(base * "[quality]\nnon_price_conditions = [\"I\"]\n")
             rejected(base * "[backfill]\nrate_limit_sleep_s = -0.1\n")
@@ -566,6 +567,24 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             n_files = length(readdir(dir))
             safesave(tmp -> write(tmp, "five"), p)
             @test length(readdir(dir)) == n_files && read(p, String) == "five"
+        end
+        # Two writers of one path: no error, no temporary file left, every
+        # file complete. Of overlapping writes the earlier result may be
+        # lost; the backups claim distinct names.
+        mktempdir() do dir
+            p = joinpath(dir, "c.csv")
+            body(w, i) = "writer $w, write $i\n"^50
+            tasks = [
+                Threads.@spawn(for i in 1:100
+                    safesave(tmp -> write(tmp, body(w, i)), p)
+                end) for w in 1:2
+            ]
+            foreach(wait, tasks)
+            files = readdir(dir)
+            @test !any(occursin(".partial", f) for f in files)
+            writes = Set(body(w, i) for w in 1:2 for i in 1:100)
+            @test all(f -> read(joinpath(dir, f), String) in writes, files)
+            @test read(p, String) in (body(1, 100), body(2, 100))
         end
     end
 
@@ -1304,6 +1323,7 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
         t = schedule_close_stop!(s, now_ns() + 300_000_000; grace_s = 0.0)   # closes in 0.3 s
         wait(t)
         @test s.stop[]
+        close(s.channel)       # no producer here to close it
         @test free_disk_gb(pwd()) > 0.0
         # feed delay drives the delayed-tape market-hours guard shifts
         mk_provider(feed) = AlpacaProvider(MOCK_KEY, MOCK_SECRET, feed, "", "", "")
@@ -1482,16 +1502,6 @@ hostname = "$(gethostname())"
             for (m, s) in zip(mem, spill)
                 @test CSV.read(m, DataFrame) == CSV.read(s, DataFrame)
             end
-            # The heap ceiling bounds the in-memory budget too: below the
-            # input's estimated footprint the spill path is taken, which checks
-            # the ceiling per group and stops (the in-memory path never would).
-            @test_throws ResourceError compact_raw(
-                [sink.path],
-                joinpath(dir, "capped");
-                format = :csv,
-                mem_fraction = 1.0,
-                max_live_heap_mb = 1e-6,
-            )
         end
         # The spill copy is the size of the input, so it goes beside out_dir,
         # never to tempdir() (a RAM-backed tmpfs on systemd distributions), and
@@ -1975,6 +1985,19 @@ hostname = "$(gethostname())"
             got = Trade[]
             @test MarketTickStreamer._drain!(t -> push!(got, t), tail) == (1, 0)
             @test got == [sample_trade(2)]
+        end
+        # A part deleted while it is drained (keep_raw = false compacts a day
+        # and removes it) is read to the end through the handle already open.
+        mktempdir() do raw
+            part = joinpath(raw, "gone_part001.jsonl")
+            write(part, join(trade_to_json(sample_trade(i)) * "\n" for i in 1:20))
+            tail = MarketTickStreamer.RawTail(raw, "gone")
+            got = Trade[]
+            n, bad = MarketTickStreamer._drain!(tail; block = 100) do t
+                push!(got, t)
+                isfile(part) && rm(part)
+            end
+            @test (n, bad) == (20, 0) && got == [sample_trade(i) for i in 1:20]
         end
     end
 
@@ -2728,7 +2751,7 @@ hostname = "$(gethostname())"
         end
     end
 
-    @testset "live: a close is bounded when the peer stops reading" begin
+    @testset "live: a close does not wait on a peer that stops reading" begin
         port = freeport(9881)
         server = HTTP.WebSockets.listen!("127.0.0.1", port; verbose = false) do ws
             HTTP.WebSockets.send(ws, "x")
@@ -2737,8 +2760,8 @@ hostname = "$(gethostname())"
         try
             HTTP.WebSockets.open("ws://127.0.0.1:$port") do ws
                 first(ws)
-                # The handshake alone would last as long as the server sleeps.
-                elapsed = @elapsed MarketTickStreamer._close_ws(ws; grace_s = 0.5)
+                # A handshake would last as long as the server sleeps.
+                elapsed = @elapsed MarketTickStreamer._close_ws(ws)
                 @test elapsed < 4
             end
         finally
@@ -2908,6 +2931,81 @@ hostname = "$(gethostname())"
                 @test nconn[] >= 3              # two attempts would have been all
             finally
                 close(ws)
+                close(rest)
+            end
+        end
+    end
+
+    @testset "live E2E: an endpoint that never upgrades uses up the reconnects" begin
+        mktempdir() do dir
+            ws_port, rest_port = freeport(9061), freeport(9066)
+            # Accepts TCP and drops it after 1.2 s without answering the
+            # upgrade: each attempt lasts longer than stale_timeout_s, yet no
+            # connection opened, so none resets the attempt counter.
+            listener = HTTP.Sockets.listen(HTTP.Sockets.ip"127.0.0.1", ws_port)
+            accepted = Threads.Atomic{Int}(0)
+            acceptor = @async while isopen(listener)
+                sock = try
+                    HTTP.Sockets.accept(listener)
+                catch
+                    break
+                end
+                Threads.atomic_add!(accepted, 1)
+                @async (sleep(1.2); close(sock))
+            end
+            rest = start_mock_rest(; port = rest_port)
+            try
+                cfg = load_config(
+                    mock_config_toml(
+                        dir;
+                        ws_port,
+                        rest_port,
+                        max_retries = 1,
+                        stale_timeout_s = 1.0,
+                        max_session_hours = 0.003,         # 10.8 s
+                    ),
+                )
+                p = AlpacaProvider(cfg, MOCK_KEY, MOCK_SECRET)
+                result = run_stream(cfg; provider = p)
+                @test result.status == "failed"
+                @test accepted[] == 2
+            finally
+                close(listener)
+                close(rest)
+            end
+        end
+    end
+
+    @testset "live E2E: a session ends when an upgrade is never answered" begin
+        mktempdir() do dir
+            ws_port, rest_port = freeport(9071), freeport(9076)
+            # Accepts TCP and never answers the upgrade: the producer blocks
+            # before any socket is registered, out of reach of stop!. The
+            # deadline's stop still ends the session, by closing the channel.
+            listener = HTTP.Sockets.listen(HTTP.Sockets.ip"127.0.0.1", ws_port)
+            held = Any[]
+            acceptor = @async while isopen(listener)
+                sock = try
+                    HTTP.Sockets.accept(listener)
+                catch
+                    break
+                end
+                push!(held, sock)
+            end
+            rest = start_mock_rest(; port = rest_port)
+            try
+                cfg = load_config(
+                    mock_config_toml(dir; ws_port, rest_port, max_session_hours = 0.001),
+                )
+                p = AlpacaProvider(cfg, MOCK_KEY, MOCK_SECRET)
+                t0 = time()
+                result = run_stream(cfg; provider = p)
+                # 3.6 s to the deadline, then the stop grace
+                @test time() - t0 < 3.6 + MarketTickStreamer.STOP_GRACE_S + 5
+                @test result.ticks == 0
+            finally
+                foreach(close, held)
+                close(listener)
                 close(rest)
             end
         end
@@ -3297,6 +3395,7 @@ hostname = "$(gethostname())"
         @test parse_pages(row(7) * row(8); previous_id = 5).id_breaks == 1    # day boundary
         @test parse_pages(row(7) * row(8)).last_id == 8
         @test parse_pages("").last_id == 0
+        @test parse_pages(""; previous_id = 5).last_id == 0     # no row: no last id
         @test_throws IntegrityError parse_csv("7,64000.5,0.25,$us,True\n")
         @test_throws IntegrityError parse_csv(
             "7,64000.5,0.25,10,12,$(us + 86_400_000_000),True,True\n",
@@ -3485,6 +3584,41 @@ hostname = "$(gethostname())"
                 @test meta["session"]["id_breaks"] == 1
                 # Resume: every day is under processed/, nothing is redone.
                 @test isempty(run_backfill(cfg))
+            finally
+                close(server)
+            end
+        end
+    end
+
+    @testset "binance: trade-id breaks across the days of a bulk backfill" begin
+        mktempdir() do dir
+            rest_port = freeport(9931)
+            per_day = 7
+            # Day two's file lacks its first row: the gap shows only against
+            # the last id of day one, so the count needs the link across days.
+            server = start_mock_binance_rest(
+                rest_port;
+                trades_per_day = per_day,
+                drop_head = Dict(MOCK_BINANCE_EPOCH + Day(1) => 1),
+            )
+            try
+                cfg = load_config(
+                    mock_binance_config_toml(
+                        dir;
+                        ws_port = 9999,
+                        rest_port,
+                        source = "bulk",
+                        backfill_feed = "trade",
+                        start_date = string(MOCK_BINANCE_EPOCH),
+                        end_date = string(MOCK_BINANCE_EPOCH + Day(2)),
+                    ),
+                )
+                run_backfill(cfg)
+                meta = TOML.parsefile(
+                    only(filter(endswith(".meta.toml"), readdir(cfg.raw_dir; join = true))),
+                )
+                @test meta["session"]["id_breaks"] == 1
+                @test meta["session"]["ticks"] == 3 * per_day - 1
             finally
                 close(server)
             end
@@ -3790,6 +3924,14 @@ hostname = "$(gethostname())"
             write(cut, stream[1:(end-30)])
             c = itch50_trades(cut, date; broken = :keep)
             @test c.truncated && c.prints == 7 && c.messages == 23
+            # a file cut between two messages, before the End of Messages event
+            # (the last 14 bytes): every print is there, and the file is incomplete
+            full = itch50_trades(raw, date; broken = :keep)
+            cut2 = joinpath(dir, "cut2.bin")
+            write(cut2, stream[1:(end-14)])
+            c2 = itch50_trades(cut2, date; broken = :keep)
+            @test !full.truncated && c2.truncated
+            @test c2.prints == full.prints && c2.messages == full.messages - 1
             # a gzip member cut short, as a partial download is: read to the cut, reported
             gzcut = joinpath(dir, "cut.gz")
             write(gzcut, read(gz)[1:(end-12)])
@@ -4058,10 +4200,12 @@ hostname = "$(gethostname())"
             # message is counted as a gap, though the sequence numbers agree.
             short = segment(0x8003, 7, 1, [T("AAPL", 0, t0, 100, 1_000_000, 1)])
             short[15:16] .= le(2, 2)                     # claims two messages
+            # the next segment follows the claimed count: no second gap
+            after = segment(0x8003, 7, 3, [T("AAPL", 0, t0 + 1, 100, 1_000_000, 2)])
             f4 = joinpath(dir, "short.pcapng")
-            write(f4, vcat(shb(), idb(), epb(frame(short))))
+            write(f4, vcat(shb(), idb(), epb(frame(short)), epb(frame(after))))
             got4 = iex_hist_trades(f4)
-            @test got4.prints == 1 && got4.messages == 1 && got4.gaps == 1
+            @test got4.prints == 2 && got4.messages == 2 && got4.gaps == 1
             # Buffer boundaries: the frames handed over do not depend on the
             # chunk, down to the largest block of the capture (header included).
             frames = [frame(s) for s in (seg_hb, seg1, seg2, seg3, seg3, seg4)]
@@ -4322,6 +4466,19 @@ hostname = "$(gethostname())"
                 write(q, bad)
                 @test fetch_iex_hist(Date(2020, 1, 2), dir; api_base = api, policy) == q
                 @test read(q) == payload
+                # A transfer resumed from a complete partial file meets only a 416,
+                # which carries no checksum: the host is asked for it, and a
+                # corrupted partial of the right size is caught and removed.
+                deep = joinpath(dir, "iex", "20200102_IEXTP1_DEEP1.0.pcap.gz")
+                write(deep * ".partial", bad)
+                @test_throws IntegrityError fetch_iex_hist(
+                    Date(2020, 1, 2),
+                    dir;
+                    feed = "deep",
+                    api_base = api,
+                    policy,
+                )
+                @test !isfile(deep)
                 # chunked transfer: one bounded request per chunk, the last one clipped
                 empty!(ranges)
                 chunked = joinpath(dir, "chunked.bin")

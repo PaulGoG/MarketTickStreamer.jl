@@ -398,10 +398,11 @@ function load_config(path::AbstractString = _default_config_path())
         ),
     )
     max_session_hours = _cfg_value(lim, "limits", "max_session_hours", Float64, 8.0)
-    # The deadline is an Int64 of nanoseconds, which holds about 2.56e6 hours.
-    0 < max_session_hours < 2.5e6 || throw(
+    # The deadline is an Int64 of nanoseconds since the epoch, which runs out
+    # about 2e6 hours from now.
+    0 < max_session_hours < 1e6 || throw(
         ArgumentError(
-            "limits.max_session_hours must be > 0 and below 2.5e6, got $max_session_hours",
+            "limits.max_session_hours must be > 0 and below 1e6, got $max_session_hours",
         ),
     )
     max_raw_file_mb = _cfg_value(lim, "limits", "max_raw_file_mb", Int, 1024)
@@ -613,7 +614,7 @@ function load_config(path::AbstractString = _default_config_path())
             ("bulk_subdir", "bulk"),
         )
     ]
-    allunique(normpath.(subdirs)) ||
+    allunique(rstrip.(normpath.(subdirs), '/')) ||
         @warn "storage.raw_subdir, processed_subdir and bulk_subdir are not distinct" subdirs config =
             path
 

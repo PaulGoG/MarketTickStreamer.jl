@@ -18,7 +18,10 @@ unchanged.
   previous one, within a day and from one day of the run to the next, logs
   a warning per day that has any, and records the total as the sidecar's
   `session.id_breaks`. The checksum proves a dump is the one the venue
-  published; the ids show whether it holds the whole day (#12).
+  published; the ids show a gap inside it or at a day boundary of the run
+  (#12). A count of zero is necessary for a complete span, not sufficient:
+  the start of the first day and the end of the last are compared with
+  nothing. The dump's zip entry is also checked against its own CRC-32.
   `bulk_trades` returns `id_breaks` and `last_id` and takes `previous_id`;
   `finalize_session_meta` takes `id_breaks`.
 - `run_stream` returns `status` beside `ticks` and `raw_files`: the status
@@ -28,28 +31,35 @@ unchanged.
   distinct; all three still load.
 
 ### Changed
-- A connection that stayed up for `stream.stale_timeout_s` resets the
-  reconnect counter, as one that delivered prints does. A quiet symbol cut by
-  the watchdog every two minutes used up ten attempts in about 25 minutes
-  and ended a healthy session as `failed`.
-- An Alpaca connection limit (406) met after a reconnect is retried: the
-  server most likely still counts the session's previous connection. On the
-  first connection it stays fatal.
+- A connection that opened, delivered a frame and stayed open for
+  `stream.stale_timeout_s` resets the reconnect counter, as one that
+  delivered prints does. A quiet symbol cut by the watchdog every two minutes
+  used up ten attempts in about 25 minutes and ended a healthy session as
+  `failed`. An endpoint that never opens a connection still uses them up,
+  however long each attempt takes to fail.
+- An Alpaca connection limit (406) met after an earlier connection of the
+  session opened is retried: the server most likely still counts that
+  connection. Otherwise it stays fatal.
 - `wait_for_open` waits before the session takes the data tree's lock, so a
   capture started before a weekend leaves the tree to backfills meanwhile.
 - The data-tree lock is refreshed every minute and broken two minutes after
   its process died (was five and ten), so a restarted capture is not refused
-  for ten minutes.
+  for ten minutes. A lock written on another host, whose process cannot be
+  checked, and one whose holder is alive but starved for ten minutes, are
+  broken after ten (was fifty).
 - A rewrite of a processed file with the same bytes leaves the file as it
   was, without a `_#N` backup; every write goes through a temporary name of
   its own (`<day>.<tag>.partial.<ext>`), so two writers of one day cannot
-  interleave in one file.
-- `limits.max_live_heap_mb` bounds the in-memory compaction budget as well:
-  an input whose estimated footprint exceeds it is compacted through spill
-  files.
-- A `Retry-After` of up to ten minutes is honored as given (it was cut to
-  one minute, early enough for a venue to answer with a ban); a longer one
-  fails the request. A chunk's timeout adds the policy's timeout and a
+  interleave in one file, and a backup claims its `_#N` with a hard link that
+  fails when another writer took the name. Of two overlapping writes the
+  earlier result can still end up under no name; no file is ever damaged.
+- A raw part the sink opened and never wrote to is removed when it closes,
+  so a capture without prints leaves no part and lists none in `raw_files`.
+  Such parts were left as zero-byte files and reported at every later start
+  as the stubs of an aborted session.
+- A `Retry-After` of up to ten minutes is honored as given; it was cut to
+  one minute, so the request went out again before the venue allowed it. A
+  longer one fails the request. A chunk's timeout adds the policy's timeout and a
   quarter of margin to the paced transfer time.
 - A bulk dump is read from the archive as a stream instead of being
   decompressed whole.
@@ -59,10 +69,14 @@ unchanged.
   (a fatal stream error, exhausted reconnections). It exited 0, so a
   supervisor with `Restart=on-failure` did not restart it, contrary to the
   unattended-operation page.
-- Closing a connection whose peer has gone silent is bounded at 5 s. The
-  stale-connection watchdog and `stop!` waited for the peer's CLOSE frame,
-  that is, until TCP gave up. A `stop!` during the connection's opening
-  takes effect once it is open.
+- `stop!` and the stale-connection watchdog sever the connection's
+  transport instead of performing the CLOSE handshake from their own task.
+  The handshake waited for the peer's CLOSE frame, until TCP gave up on a
+  silent peer, and read the socket concurrently with the protocol loop,
+  which could leave one of the two readers waiting for good. A producer
+  still waiting for an upgrade the server never answers is out of reach of
+  both; five seconds after `stop!` its channel is closed, so the session
+  ends at its deadline whatever state the connection is in.
 - A producer that ended on its own left its deadline and close guards
   running; they end with it. A reconnect backoff ends at a stop request or
   at the session deadline.
@@ -71,17 +85,18 @@ unchanged.
   (symbol, day) part set and then waited for the sidecar. Attached with
   `from_start = false` in the middle of a line, they read that line once it
   is complete instead of counting a corrupt fragment; a far-behind reader
-  reads in blocks of 64 MiB instead of a part's whole tail. The monitor's
-  rate is measured over the time between reads.
+  reads in blocks of 64 MiB instead of a part's whole tail, through one
+  handle per part, so a part deleted meanwhile is still read to its end. The
+  monitor's rate is measured over the time between reads.
+- An error that escapes the live producer marks the session `failed` and is
+  logged; it ended the session as `completed`.
 - An ITCH file that ends before the End of Messages event, which closes
   every trading day, is reported `truncated` even when it was cut between
-  two messages. A Stock Directory message repeated for one symbol counts
-  it once.
+  two messages. A symbol whose Stock Directory message is repeated is
+  counted once.
 - An IEX capture of a protocol the reader does not know (DEEP+) is reported
   instead of read as empty, and a segment whose payload ends before its
   message count counts as a gap.
-- A raw part the sink opened and never wrote to is removed when it closes;
-  it was left as a zero-byte file and reported at every later start.
 - Volume and value bars complete at a threshold the running sum reaches
   only up to rounding (a hundred prints of 10.01 against 1001).
 - The tail exponent of the diagnostic figures leaves out the sizes tied with

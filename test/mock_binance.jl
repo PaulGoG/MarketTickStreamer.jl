@@ -53,10 +53,12 @@ function mock_binance_bulk_csv(
     d::Date,
     trades_per_day::Integer;
     repeat_head::Integer = 0,
+    drop_head::Integer = 0,
 )
     k0 = Dates.value(d - MOCK_BINANCE_EPOCH) * trades_per_day
     io = IOBuffer()
-    for k in vcat((k0+1):(k0+repeat_head), (k0+1):(k0+trades_per_day))
+    # `drop_head` leaves out the day's first rows, as a vendor gap would.
+    for k in vcat((k0+1):(k0+repeat_head), (k0+1+drop_head):(k0+trades_per_day))
         r = mock_binance_row(k, trades_per_day)
         us = r.T * 1000
         m = r.m ? "True" : "False"
@@ -85,7 +87,8 @@ end
 """
     start_mock_binance_rest(port; trades_per_day = 7, fail_after = typemax(Int),
                             missing_dates = Date[], corrupt_checksum = false,
-                            repeat_head = Dict{Date,Int}(), seen_units = nothing)
+                            repeat_head = Dict{Date,Int}(), drop_head = Dict{Date,Int}(),
+                            seen_units = nothing)
         -> HTTP server
 
 Serve `/api/v3/aggTrades`. Honors `symbol`, `startTime`, `fromId` and `limit`
@@ -98,7 +101,8 @@ carry microseconds when it asks for them, as the venue does.
 Also serves the daily bulk files under `/data/spot/daily/` from the same tape.
 `missing_dates` answers 404 for those days' bulk files, `corrupt_checksum`
 serves a checksum that cannot match, and `repeat_head` maps a date to a number
-of its first rows that its file carries twice, with a valid checksum.
+of its first rows that its file carries twice, with a valid checksum;
+`drop_head` maps a date to a number of its first rows its file leaves out.
 """
 function start_mock_binance_rest(
     port::Integer;
@@ -107,6 +111,7 @@ function start_mock_binance_rest(
     missing_dates::Vector{Date} = Date[],
     corrupt_checksum::Bool = false,
     repeat_head::Dict{Date,Int} = Dict{Date,Int}(),
+    drop_head::Dict{Date,Int} = Dict{Date,Int}(),
     seen_units::Union{Nothing,Vector{String}} = nothing,
 )
     router = HTTP.Router()
@@ -164,6 +169,7 @@ function start_mock_binance_rest(
                     d,
                     trades_per_day;
                     repeat_head = get(repeat_head, d, 0),
+                    drop_head = get(drop_head, d, 0),
                 ),
             )
             body = if m[4] !== nothing

@@ -172,8 +172,8 @@ _get_with_retry(url, headers; query = nothing, policy::RestPolicy = RestPolicy()
 # `download_connections > 1`, once a 206 has named the total length the rest
 # is fetched on that many connections (`_download_parallel!`). Progress is
 # logged every `progress_s` seconds.
-# Returns `(; found, headers)`, the headers of the last response, for the
-# caller's integrity check.
+# Returns `(; found, headers)`, the headers of the last 200 or 206 response
+# (empty when there was none), for the caller's integrity check.
 function _download_resumable(
     url::AbstractString,
     path::AbstractString,

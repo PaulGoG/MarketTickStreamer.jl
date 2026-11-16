@@ -378,7 +378,8 @@ function _parse_bulk_csv(
     day_lo = round(Int64, datetime2unix(DateTime(date))) * NS_PER_SEC
     day_hi = day_lo + 86_400 * NS_PER_SEC
     pages = TradePages(each_page, page_rows)
-    last_id = previous_id === nothing ? Int64(-1) : Int64(previous_id)
+    reference = previous_id === nothing ? Int64(-1) : Int64(previous_id)
+    last_id = Int64(0)
     id_breaks = 0
     first_line = true
     for line in eachline(csv)
@@ -401,17 +402,12 @@ function _parse_bulk_csv(
                 "$name: a row dated $(trading_date(t.time_ns; tz = tz"UTC")) in the file of $date",
             ),
         )
-        last_id >= 0 && t.id != last_id + 1 && (id_breaks += 1)
-        last_id = t.id
+        reference >= 0 && t.id != reference + 1 && (id_breaks += 1)
+        reference = last_id = t.id
         push!(pages, t)
     end
     _hand_over!(pages)
-    return (;
-        kept = pages.kept,
-        prints = pages.prints,
-        id_breaks,
-        last_id = max(last_id, 0),
-    )
+    return (; kept = pages.kept, prints = pages.prints, id_breaks, last_id)
 end
 
 _parse_bulk_csv(csv::AbstractVector{UInt8}, args...; kwargs...) =
@@ -448,10 +444,13 @@ on; both are read.
 The trade ids of a dump are consecutive per symbol, and so are those of
 consecutive days. `id_breaks` counts the rows whose id does not follow the
 previous one, the first row measured against `previous_id` (the `last_id` of
-the day before) when it is given, so it is zero on a complete span. A
-missing run of prints counts once, and so does a run the vendor repeated
-(compaction drops the copies). The checksum proves the file is the one the
-venue published; the ids show whether that file holds the whole day.
+the day before) when it is given. A missing run of prints counts once, and so
+does a run the vendor repeated (compaction drops the copies). The checksum
+proves the file is the one the venue published; the ids show a gap inside
+it, and at its start when the day before is given. A gap at the end of a day
+shows only against the next day, so a count of zero is necessary for a
+complete span and not sufficient: the last day of a span is not checked at
+its end. `last_id` is `0` for a day without rows.
 """
 function bulk_trades(
     p::BinanceProvider,
@@ -486,7 +485,19 @@ function bulk_trades(
             join(entries, ", "),
         ),
     )
-    # Streamed: a busy day's CSV is a gigabyte or more uncompressed.
+    # The entry's own CRC-32 is checked first, as reading it whole did; the
+    # rows are then streamed, a busy day's CSV being a gigabyte or more.
+    try
+        zip_test_entry(archive, 1)
+    catch e
+        e isa InterruptException && rethrow()
+        throw(
+            IntegrityError(
+                path,
+                "$(basename(path)): the zip entry fails its own check: $(sprint(showerror, e))",
+            ),
+        )
+    end
     r = let io = zip_openentry(archive, only(entries))
         try
             _parse_bulk_csv(

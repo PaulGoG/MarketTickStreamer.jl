@@ -81,42 +81,67 @@ end
 # however far behind the reader is.
 const DRAIN_BLOCK = 64 << 20
 
+# A part opened for reading, or `nothing` when it disappeared before the open
+# (`backfill.keep_raw = false` deletes a day's parts once it is compacted).
+function _open_part(path::AbstractString)
+    try
+        return open(path)
+    catch e
+        (e isa SystemError && !isfile(path)) || rethrow()
+        return nothing
+    end
+end
+
 # Read the bytes appended to every part since the last call, parse the
 # complete NDJSON lines in file order and hand each print to `f`. The
 # incomplete trailing line of a file is carried until its newline arrives (a
 # mid-write attach or a kill leaves torn lines); a part that has disappeared
 # (`backfill.keep_raw = false`) is skipped. Returns `(prints, corrupt)`: the
 # prints delivered and the complete lines that did not parse.
-function _drain!(f, t::RawTail)
+function _drain!(f, t::RawTail; block::Integer = DRAIN_BLOCK)
     prints = 0
     corrupt = 0
     for path in _session_parts(t)
         isfile(path) || continue
         off = get(t.offsets, path, Int64(0))
         sz = filesize(path)
-        while off < sz
-            chunk = open(path) do io
-                seek(io, off)
-                String(read(io, min(sz - off, DRAIN_BLOCK)))
+        off < sz || continue
+        # One handle per part and call: a part deleted while it is read stays
+        # readable through it.
+        io = _open_part(path)
+        io === nothing && continue
+        seek(io, off)
+        try
+            prints, corrupt = _drain_part!(f, t, path, io, off, sz, block, prints, corrupt)
+        finally
+            close(io)
+        end
+    end
+    return (prints, corrupt)
+end
+
+# Read `path` from `off` to `sz` through `io` in steps of `block` bytes,
+# carrying a torn line between steps and calls.
+function _drain_part!(f, t::RawTail, path, io, off, sz, block, prints, corrupt)
+    while off < sz
+        chunk = String(read(io, min(sz - off, block)))
+        isempty(chunk) && break
+        off += sizeof(chunk)
+        t.offsets[path] = off
+        carry = get(t.carries, path, "")
+        lines = split(isempty(carry) ? chunk : carry * chunk, '\n')
+        t.carries[path] = String(lines[end])
+        for ln in @view lines[1:(end-1)]
+            all(isspace, ln) && continue
+            trade = try
+                json_to_trade(ln)
+            catch e
+                e isa InterruptException && rethrow()
+                corrupt += 1
+                continue
             end
-            isempty(chunk) && break
-            off += sizeof(chunk)
-            t.offsets[path] = off
-            carry = get(t.carries, path, "")
-            lines = split(isempty(carry) ? chunk : carry * chunk, '\n')
-            t.carries[path] = String(lines[end])
-            for ln in @view lines[1:(end-1)]
-                all(isspace, ln) && continue
-                trade = try
-                    json_to_trade(ln)
-                catch e
-                    e isa InterruptException && rethrow()
-                    corrupt += 1
-                    continue
-                end
-                f(trade)
-                prints += 1
-            end
+            f(trade)
+            prints += 1
         end
     end
     return (prints, corrupt)

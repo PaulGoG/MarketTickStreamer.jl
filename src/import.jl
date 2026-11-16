@@ -27,7 +27,7 @@ ITCH file carries its own). With `keep_raw = false` the day's raw parts are
 deleted once the day is under `processed/`, the checksummed vendor file being
 the record, as `backfill.keep_raw` does for a bulk day.
 
-A file that ends inside a message, as a partial download does, is imported
+A file that ends early, as a partial download does, is imported
 to that point and logged as incomplete; the sidecar's `source.truncated`
 says so. The configured provider contributes its calendar and timestamp
 unit only; `"alpaca"` is the host for both US-equity formats.

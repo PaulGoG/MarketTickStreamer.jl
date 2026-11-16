@@ -261,7 +261,11 @@ belongs to one session and not to the process.
 
 `outcome` records how the producer ended: `:running` while it streams,
 `:completed` when it stopped on request or at the deadline, `:failed` after a
-fatal stream error or exhausted reconnection attempts.
+fatal stream error, exhausted reconnection attempts or an unexpected error.
+
+`opens` counts the connections that opened (a protocol loop's
+[`spawn_watchdog`](@ref) call records each) and `opened_at` holds the
+`time()` of the latest; the reconnect loop judges a connection by them.
 """
 struct LiveSession
     channel::Channel{Trade}
@@ -269,45 +273,65 @@ struct LiveSession
     ws::Ref{Any}
     stats::Ref{NamedTuple{(:ticks, :frames, :reconnects),NTuple{3,Int}}}
     outcome::Ref{Symbol}
+    opens::Threads.Atomic{Int}
+    opened_at::Threads.Atomic{Float64}
 end
 
-LiveSession(channel, stop, ws, stats) = LiveSession(channel, stop, ws, stats, Ref(:running))
+LiveSession(channel, stop, ws, stats, outcome = Ref(:running)) = LiveSession(
+    channel,
+    stop,
+    ws,
+    stats,
+    outcome,
+    Threads.Atomic{Int}(0),
+    Threads.Atomic{Float64}(0.0),
+)
 
 """
     stop!(s::LiveSession)
 
-Request shutdown: set the stop flag and close the underlying WebSocket,
-which unblocks the producer loop; the tick channel then closes and the sinks
-drain.
+Request shutdown: set the stop flag and sever the WebSocket's transport,
+which ends the producer loop's read at once; the tick channel then closes
+and the sinks drain. Returns `nothing`.
 
-The close is bounded: if the peer has not completed the closing handshake after
-5 s the transport is severed. Returns `nothing`.
+No closing handshake is attempted from here: HTTP.jl's `close(ws)` reads
+until the peer's CLOSE frame arrives, which on a silent peer lasts until TCP
+gives up, and it would read the socket concurrently with the protocol loop,
+which can leave one of the two readers waiting forever.
+
+A producer blocked before its connection is registered (an upgrade request
+the server never answers) cannot be reached through a socket; if the channel
+is still open `STOP_GRACE_S` seconds after the request, it is closed here, so
+the consumers end whatever state the producer is in.
 """
 function stop!(s::LiveSession)
-    s.stop[] = true
+    stopped_before = Threads.atomic_xchg!(s.stop, true)
     ws = s.ws[]
     ws === nothing || _close_ws(ws)
+    # One grace task per session: a repeated stop!, or a producer that already
+    # ended and set the flag itself, needs none.
+    stopped_before || Threads.@spawn begin
+        sleep(STOP_GRACE_S)
+        if isopen(s.channel)
+            @warn "producer did not end after the stop request; closing its channel" grace_s =
+                STOP_GRACE_S
+            close(s.channel)
+        end
+    end
     return nothing
 end
 
-# Close `ws`, severing the transport when the closing handshake has not
-# completed after `grace_s`. `close(ws)` sends a CLOSE frame and then reads
-# until the peer's arrives, so on a peer that has gone silent it blocks until
-# TCP gives up; the timer is armed first for that reason.
-function _close_ws(ws; grace_s::Real = 5.0)
-    sever = Timer(grace_s) do _
-        try
-            close(ws.io)
-        catch e
-            e isa InterruptException && rethrow()
-        end
-    end
+# Seconds `stop!` waits for the producer to close the channel itself.
+const STOP_GRACE_S = 5.0
+
+# Close `ws` from a task other than the one reading it: sever the transport.
+# The reading task then meets the end of the stream, and HTTP.jl's own close,
+# which runs in that task when the handler returns, finishes at once.
+function _close_ws(ws)
     try
-        close(ws)
+        close(ws.io)
     catch e
         e isa InterruptException && rethrow()
-    finally
-        close(sever)
     end
     return nothing
 end
@@ -372,6 +396,8 @@ forever. A protocol loop spawns it on connect, writes `time()` into
 `last_frame` (an atomic `Float64`) per frame, and before returning sets
 `alive[] = false` and `wait`s the task. Both atomics are written by the
 protocol loop and read by this task on another thread.
+
+The call also records the connection as opened (`s.opens`, `s.opened_at`).
 """
 function spawn_watchdog(
     ws,
@@ -380,6 +406,8 @@ function spawn_watchdog(
     alive::Threads.Atomic{Bool},
     stale_timeout_s::Float64,
 )
+    s.opened_at[] = time()
+    Threads.atomic_add!(s.opens, 1)
     return Threads.@spawn begin
         while alive[] && !s.stop[]
             if time() - last_frame[] > stale_timeout_s
@@ -430,8 +458,9 @@ Reconnects with jittered exponential backoff
 (`stream.reconnect_base_delay_s * 2^attempt`, capped at
 `stream.reconnect_max_delay_s` before a jitter factor in [0.5, 1.5) drawn from a
 generator seeded by `rng.seed`); the attempt counter resets after any connection
-that delivered prints or stayed up for `stream.stale_timeout_s`, so a quiet
-market does not exhaust the attempts of a healthy feed.
+that delivered prints, or that opened, delivered a frame and stayed open for
+`stream.stale_timeout_s`, so a quiet market does not exhaust the attempts of
+a healthy feed while an endpoint that never answers still does.
 """
 function live_source(
     p::AbstractProvider,
@@ -456,60 +485,73 @@ function live_source(
         now_ns() + round(Int64, cfg.max_session_hours * 3600 * NS_PER_SEC),
         "session deadline reached; stopping session",
     )
-    Threads.@spawn begin
-        attempt = 0
-        rng = Xoshiro(UInt64(cfg.rng_seed))
-        try
-            while !session.stop[] && time() < deadline
-                ticks_before = session.stats[].ticks
-                connected_at = time()
-                try
-                    stream_protocol!(ch, p, cfg, session; on_quote, on_bar)
-                    session.stop[] || @warn "stream closed by server"
-                catch e
-                    (e isa FatalStreamError || e isa InterruptException) && rethrow()
+    # Monitored: an error that escapes the producer is logged, not lost with
+    # an unwaited task.
+    errormonitor(
+        Threads.@spawn begin
+            attempt = 0
+            rng = Xoshiro(UInt64(cfg.rng_seed))
+            try
+                while !session.stop[] && time() < deadline
+                    ticks_before = session.stats[].ticks
+                    frames_before = session.stats[].frames
+                    opens_before = session.opens[]
+                    try
+                        stream_protocol!(ch, p, cfg, session; on_quote, on_bar)
+                        session.stop[] || @warn "stream closed by server"
+                    catch e
+                        (e isa FatalStreamError || e isa InterruptException) && rethrow()
+                        session.stop[] && break
+                        @warn "stream disconnected" exception = (e, catch_backtrace())
+                    end
                     session.stop[] && break
-                    @warn "stream disconnected" exception = (e, catch_backtrace())
+                    # A connection that delivered prints was healthy, and so was one
+                    # that opened, answered with a frame and stayed open as long as
+                    # the watchdog allows a silent one: a quiet symbol cut by the
+                    # watchdog is not a failure to connect. The time is counted from
+                    # the opening, so an attempt that takes long to fail does not
+                    # pass for a connection.
+                    healthy =
+                        session.stats[].ticks > ticks_before || (
+                            session.opens[] > opens_before &&
+                            session.stats[].frames > frames_before &&
+                            time() - session.opened_at[] >= cfg.stale_timeout_s
+                        )
+                    healthy && (attempt = 0)
+                    attempt += 1
+                    if attempt > cfg.reconnect_max_retries
+                        @error "reconnection attempts exhausted" attempt
+                        session.outcome[] = :failed
+                        break
+                    end
+                    bump!(session; reconnects = 1)
+                    delay = _backoff_delay(
+                        rng,
+                        cfg.reconnect_base_delay_s,
+                        attempt - 1,
+                        cfg.reconnect_max_delay_s,
+                    )
+                    @info "reconnecting" attempt delay = round(delay; digits = 1)
+                    # Slept in slices, so a stop request or the deadline ends the wait.
+                    wake = min(time() + delay, deadline)
+                    while !session.stop[] && time() < wake
+                        sleep(clamp(wake - time(), 0.0, 0.25))
+                    end
                 end
-                session.stop[] && break
-                # A connection that delivered prints, or that stayed up as long
-                # as the watchdog allows a silent one, was healthy: a quiet
-                # symbol cut by the watchdog is not a failure to connect.
-                (
-                    session.stats[].ticks > ticks_before ||
-                    time() - connected_at >= cfg.stale_timeout_s
-                ) && (attempt = 0)
-                attempt += 1
-                if attempt > cfg.reconnect_max_retries
-                    @error "reconnection attempts exhausted" attempt
-                    session.outcome[] = :failed
-                    break
-                end
-                bump!(session; reconnects = 1)
-                delay = _backoff_delay(
-                    rng,
-                    cfg.reconnect_base_delay_s,
-                    attempt - 1,
-                    cfg.reconnect_max_delay_s,
-                )
-                @info "reconnecting" attempt delay = round(delay; digits = 1)
-                # Slept in slices, so a stop request or the deadline ends the wait.
-                wake = min(time() + delay, deadline)
-                while !session.stop[] && time() < wake
-                    sleep(clamp(wake - time(), 0.0, 0.25))
-                end
+            catch e
+                # An unexpected error is a failure too, not an orderly end; an
+                # interrupt leaves the outcome to whoever handles it.
+                e isa InterruptException || (session.outcome[] = :failed)
+                e isa FatalStreamError || rethrow()
+                @error "fatal stream error; aborting" e.msg
+            finally
+                session.outcome[] === :running && (session.outcome[] = :completed)
+                # The guard tasks end on the stop flag; without it they would outlive
+                # a producer that ended on its own and stop a dead session later.
+                session.stop[] = true
+                close(ch)
             end
-        catch e
-            e isa FatalStreamError || rethrow()
-            session.outcome[] = :failed
-            @error "fatal stream error; aborting" e.msg
-        finally
-            session.outcome[] === :running && (session.outcome[] = :completed)
-            # The guard tasks end on the stop flag; without it they would outlive
-            # a producer that ended on its own and stop a dead session later.
-            session.stop[] = true
-            close(ch)
         end
-    end
+    )
     return session
 end

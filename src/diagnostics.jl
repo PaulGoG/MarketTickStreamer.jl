@@ -112,10 +112,14 @@ therefore adds, in quadrature, `σ_threshold`: the larger of the two shifts of
 `α̂` when the tail fraction is halved and when it is doubled. The term is
 zero when both alternatives select the same samples as `frac` does (fewer
 than about 150 samples, or one tied value spanning the three ranks), and `σ`
-is then statistical only. The sizes above the threshold are still discrete:
-on integer sizes `α̂` is low by about `α̂ / 2u`, which is 0.6 % at a threshold
-of 100 shares and 6 % at 10. The value is a diagnostic of tail weight, not a
-measurement of a power law.
+is then statistical only; below about 300 samples only the doubled fraction
+can differ. On an exact Pareto sample the term is not zero but sampling noise
+between the nested estimates, which makes `σ` about 1.5 times the
+statistical error. The sizes above the threshold are still discrete: on
+whole-share sizes `α̂` is low by a relative `α̂ / 2u` or so (0.6 % at a
+threshold of 100 shares, 6 % at 10), and by more where sizes cluster on
+round lots. The value is a diagnostic of tail weight, not a measurement of a
+power law.
 
 Returns `(; α, σ, σ_stat, σ_threshold)`, or `nothing` for fewer than 50
 samples, for fewer than 30 above the threshold, or for a tail spanning less

@@ -123,20 +123,22 @@ interrupt (tested).
 
 - **Reconnection**: jittered exponential backoff
   (`base·2^attempt`, capped), attempt counter reset after any connection
-  that delivered prints or stayed up for `stream.stale_timeout_s`, so a
-  quiet symbol cut by the watchdog does not use up the attempts; bounded by
-  `reconnect_max_retries`.
+  that delivered prints, or that opened, delivered a frame and stayed open
+  for `stream.stale_timeout_s`, so a quiet symbol cut by the watchdog does
+  not use up the attempts while an endpoint that never answers still does;
+  bounded by `reconnect_max_retries`.
 - **Session deadline**: `limits.max_session_hours` is enforced by a guard
   task, so it also ends a connection that never drops; the reconnect loop
   alone would only test it between connections.
 - **Fatal vs retryable**: Alpaca error codes 401–406 and 409–411 (bad auth,
   connection limit, bad subscription) abort immediately, since retrying them
-  risks a ban. The exception is a connection limit (406) met after a
-  reconnect: the server most likely still counts the session's previous
-  connection, which the watchdog cut, so it is retried. Both adapters carry the fatal signal out of the WebSocket
-  handler by value and throw it after the connection returns, since an
-  exception thrown inside the handler arrives wrapped and would be retried as
-  a disconnect. Both paths are tested against the mocks.
+  risks a ban. The exception is a connection limit (406) met after an
+  earlier connection of the session opened: the server most likely still
+  counts that connection, which the watchdog cut, so it is retried. Both
+  adapters carry the fatal signal out of the WebSocket handler by value and
+  throw it after the connection returns, since an exception thrown inside the
+  handler arrives wrapped and would be retried as a disconnect. Both paths
+  are tested against the mocks.
 - **Stale connections**: HTTP.jl 1.x websockets have no read-idle timeout, so
   a watchdog task force-closes the socket after `stream.stale_timeout_s`
   without a frame, triggering the normal reconnect path.
@@ -153,9 +155,14 @@ interrupt (tested).
   post-open window and the close guard runs to `next_close + delay + 65 s`
   (`next_close + 5 s` on a real-time feed) so the delayed tail of the tape
   is captured.
-- **Shutdown**: `close(ws)` is a handshake; a peer that never
-  acks the CLOSE frame would hang the read loop, so `stop!` severs the raw
-  transport after a 5 s grace if the close handshake has not completed.
+- **Shutdown**: `stop!` and the watchdog sever the transport instead of
+  performing the CLOSE handshake: the handshake reads until the peer
+  answers, which a silent peer never does, and from another task than the
+  protocol loop's it would read the socket concurrently with it. The read
+  loop meets the end of the stream and returns. A producer still waiting
+  for an upgrade the server never answers has no socket to sever yet; five
+  seconds after `stop!` the tick channel is closed regardless, so the sinks
+  finish and the session ends.
 - **Resource guards**: free-disk check before and during a session
   (`limits.min_free_disk_gb`; a breach mid-session stops the stream through
   `stop!`); compaction reroutes raw inputs whose estimated footprint

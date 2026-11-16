@@ -382,12 +382,12 @@ function stream_protocol!(
                     elseif frame_type == "error"
                         code = Int(get(msg, :code, 0))
                         m = String(get(msg, :msg, "unknown"))
-                        # A connection limit (406) met after a reconnect is
-                        # most likely this session's previous connection, which
-                        # the server has not yet seen close; it is retried. On
-                        # the first connection it is another client's.
+                        # A connection limit (406) met after an earlier
+                        # connection of this session opened is most likely that
+                        # connection, which the server has not yet seen close;
+                        # it is retried. Otherwise it is another client's.
                         code in FATAL_WS_CODES &&
-                            !(code == 406 && s.stats[].reconnects > 0) &&
+                            !(code == 406 && s.opens[] > 1) &&
                             (fatal[] = FatalStreamError("Alpaca error $code: $m"))
                         fatal[] === nothing && error("Alpaca stream error $code: $m")   # retryable
                     elseif frame_type == "q"

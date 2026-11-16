@@ -33,12 +33,12 @@ processed_format = "csv"         # one of: "csv" | "arrow"
 processed_compression = "none"   # Arrow record-batch compression; one of: "none" | "zstd" | "lz4"; requires processed_format = "arrow"
 
 [limits]
-max_session_hours = 8.0          # hard stop for a live session [h]; 0 < x < 2.5e6
+max_session_hours = 8.0          # hard stop for a live session [h]; 0 < x < 1e6
 max_raw_file_mb = 1024           # roll to a new raw file beyond this size [MiB]; >= 1
 channel_capacity = 100000        # in-flight tick buffer [ticks]; >= 1
 max_symbols = 30                 # subscription cap; >= 1
 min_free_disk_gb = 2.0           # minimum free space to start or continue a session [GiB]; >= 0
-max_live_heap_mb = 4096          # live-heap ceiling for backfill and compaction [MiB]; > 0
+max_live_heap_mb = 4096          # live-heap ceiling for backfill pages and spill compaction [MiB]; > 0
 max_open_spill_files = 256       # spill-compaction file handles held open; >= 1
 compact_mem_fraction = 0.5       # in-memory compaction up to this share of free RAM; 0 < x <= 1
 spill_headroom = 1.1             # scratch space required, as a multiple of the input size; >= 1

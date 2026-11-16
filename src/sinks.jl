@@ -402,11 +402,13 @@ it displaces is kept as a numbered backup `YYYY-MM-DD_#N.csv|.arrow`
 overlapping backfill/live captures, rows a vendor file repeats) via
 [`deduplicate_trades`](@ref), logging the count for each symbol and day that
 had any. Small inputs are compacted in memory; when the estimated footprint
-exceeds `mem_fraction` of currently free RAM, or `max_live_heap_mb` when it
-is given, the input is instead streamed line by line into per-(symbol, day)
-spill files and each group is compacted independently, so memory stays
-bounded by the largest single group. `max_live_heap_mb` also enforces the
-heap ceiling per group ([`check_live_heap`](@ref)).
+exceeds `mem_fraction` of currently free RAM the input is instead streamed
+line by line into per-(symbol, day) spill files and each group is compacted
+independently, so memory stays bounded by the largest single group.
+`max_live_heap_mb` enforces the heap ceiling per group
+([`check_live_heap`](@ref)); the in-memory path is bounded by `mem_fraction`
+alone, since a single (symbol, day), which is all a backfill compacts at a
+time, gains nothing from spilling.
 
 The spill pass writes a verbatim copy of the input, so it needs scratch space
 of the input's own size. `scratch_dir` places it; the default is the directory
@@ -470,9 +472,7 @@ function _compact_raw(
     )
     bytes = sum(filesize, raw_paths; init = 0)
     est = footprint_factor * bytes          # parsed structs + DataFrame + sort scratch
-    budget = mem_fraction * Sys.free_memory()
-    max_live_heap_mb === nothing || (budget = min(budget, max_live_heap_mb * 2^20))
-    est > budget && return _compact_spill(
+    est > mem_fraction * Sys.free_memory() && return _compact_spill(
         raw_paths,
         out_dir;
         format,
@@ -701,8 +701,13 @@ exists it holds a complete file at every instant, the previous one or the new
 one, never a half-written one. Backups are numbered in order of displacement:
 `_#1` is the oldest.
 
-If `write_fn` throws, the partial file is removed, `path` is left untouched
-and the exception propagates.
+If `write_fn` throws, or a later step does, the partial file is removed,
+`path` is left as it was and the exception propagates. Two writers of one
+path are not serialized: every file `path` holds is complete, each displaced
+file gets a backup slot of its own (a hard link claims the name or fails),
+but of two writes that overlap the earlier result can end up under no name.
+A write killed before its rename leaves its partial file, which no reader
+reads and which may be deleted.
 
 These are the semantics of DrWatson's `safesave` (newest data canonical,
 prior results kept as numbered backups) without the dependency.
@@ -713,16 +718,16 @@ function _safesave(write_fn, path::AbstractString)
     partial = "$(base).$(tag).partial$(ext)"
     try
         write_fn(partial)
+        if isfile(path) && _same_bytes(partial, path)
+            rm(partial; force = true)
+            return String(path)
+        end
+        ispath(path) && _backup!(path)
+        Base.Filesystem.rename(partial, path)
     catch
         rm(partial; force = true)
         rethrow()
     end
-    if isfile(path) && _same_bytes(partial, path)
-        rm(partial; force = true)
-        return String(path)
-    end
-    ispath(path) && _link_or_copy(path, _backup_path(path))
-    Base.Filesystem.rename(partial, path)
     return String(path)
 end
 
@@ -739,14 +744,21 @@ function _same_bytes(a::AbstractString, b::AbstractString)
     end
 end
 
-# Hard links are refused by some filesystems (FAT, several network mounts);
-# the backup is then a plain copy.
-function _link_or_copy(src::AbstractString, dst::AbstractString)
-    try
-        hardlink(src, dst)
-    catch e
-        e isa Base.IOError || rethrow()
-        cp(src, dst)
+# Preserve `path` under the first free `_#N` and return that name. The hard
+# link claims its slot atomically, failing when the name exists, so a writer
+# that loses a slot to another takes the next one. A filesystem that refuses
+# links (FAT, several network mounts) gets a plain copy.
+function _backup!(path::AbstractString)
+    for _ in 1:10_000
+        dst = _backup_path(path)
+        try
+            hardlink(path, dst)
+        catch e
+            e isa Base.IOError || rethrow()
+            ispath(dst) && continue                 # taken meanwhile
+            cp(path, dst)
+        end
+        return dst
     end
-    return dst
+    throw(IntegrityError(path, "no free backup name for $path after 10 000 attempts"))
 end

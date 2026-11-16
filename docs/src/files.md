@@ -110,7 +110,8 @@ venues and late prints are normal. A part rolls to the next one once it
 reaches `limits.max_raw_file_mb` MiB, checked after each batch, so a part may
 exceed the limit by one batch; parts are numbered from `001` and read in name
 order. A part the sink opened and never wrote to (after a roll that ended the
-session, or in a session without prints) is removed when the sink closes. Batches are flushed on `flush_interval_s` or `flush_max_ticks`, and a
+session, or in a session without prints) is removed when the sink closes.
+Batches are flushed on `flush_interval_s` or `flush_max_ticks`, and a
 write can reach the file in pieces, so the last line of a running session's
 newest part may be torn. A reader carries it until its newline arrives.
 Every reader in the package skips a line that does not parse and counts it;
@@ -192,7 +193,8 @@ otherwise be typed as integers.
 
 A file is written to `<YYYY-MM-DD>.<tag>.partial.<ext>`, `tag` unique to the
 write, and renamed into place, so the canonical name is either the previous
-complete file or the new one. A rewrite with other content keeps the
+complete file or the new one; a write killed before its rename leaves its
+partial file, which may be deleted. A rewrite with other content keeps the
 displaced file as `<YYYY-MM-DD>_#N.<ext>`, `N` counting up from 1; a rewrite
 with the same bytes leaves the file as it was. The tree has no source dimension: an ITCH or IEX day is filed where a
 capture of that day would be, so each source (capture, ITCH, IEX) has a data
@@ -212,7 +214,9 @@ consecutive per symbol within a day and across days. A bulk backfill counts
 the rows that break the sequence as the sidecar's `session.id_breaks`, the
 first row of a day measured against the last of the day before when both
 are in the run; a missing run of prints counts once, and so does a run the
-vendor repeated, which compaction then drops. A consumer never reads these files except as the record of a
+vendor repeated, which compaction then drops. A count of zero is necessary
+for a complete span, not sufficient: the start of the run's first day and
+the end of its last day are compared with nothing. A consumer never reads these files except as the record of a
 day: the prints they hold reach it through the raw and processed layers, and
 an import's sidecar names the file and its SHA-256.
 
@@ -222,7 +226,8 @@ an import's sidecar names the file and its SHA-256.
 tree admits at a time: a capture, a backfill or an import. A second producer
 on the same tree refuses to start; a lock left by a dead process is broken
 by the next one once it has gone two minutes without a refresh (a live
-producer refreshes it every minute). Consumers never take it, and their reads
+producer refreshes it every minute); one written on another host, whose
+process cannot be checked, after ten. Consumers never take it, and their reads
 never wait on it.
 
 ## Versioning
