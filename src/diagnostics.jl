@@ -108,11 +108,14 @@ standard error is too small by a large factor
 empirical tail is not one, and the estimate moves with the threshold by far
 more than `σ_stat` (on a liquid US equity day, from 1.16 to 1.29 between the
 top 10 % and the top 5 % of sizes, with `σ_stat` = 0.004). The returned `σ`
-therefore adds, in quadrature, `σ_threshold`: half the range of `α̂` over
-thresholds at `frac / 2`, `frac` and `2 frac`. The sizes above the threshold
-are still discrete: a grid whose spacing is not small against `u` biases `α̂`
-low, by under 1 % for share counts above a round lot. The value is a
-diagnostic of tail weight, not a measurement of a power law.
+therefore adds, in quadrature, `σ_threshold`: the larger of the two shifts of
+`α̂` when the tail fraction is halved and when it is doubled. The term is
+zero when both alternatives select the same samples as `frac` does (fewer
+than about 150 samples, or one tied value spanning the three ranks), and `σ`
+is then statistical only. The sizes above the threshold are still discrete:
+on integer sizes `α̂` is low by about `α̂ / 2u`, which is 0.6 % at a threshold
+of 100 shares and 6 % at 10. The value is a diagnostic of tail weight, not a
+measurement of a power law.
 
 Returns `(; α, σ, σ_stat, σ_threshold)`, or `nothing` for fewer than 50
 samples, for fewer than 30 above the threshold, or for a tail spanning less
@@ -121,14 +124,12 @@ than a factor of two.
 function _tail_fit(x::Vector{Float64}; frac::Real = 0.1)
     fit = _hill(x, frac)
     fit === nothing && return nothing
-    lo = hi = fit.α
+    σ_threshold = 0.0
     for f in (frac / 2, 2frac)
         other = _hill(x, f)
         other === nothing && continue
-        lo = min(lo, other.α)
-        hi = max(hi, other.α)
+        σ_threshold = max(σ_threshold, abs(other.α - fit.α))
     end
-    σ_threshold = (hi - lo) / 2
     return (;
         α = fit.α,
         σ = hypot(fit.σ, σ_threshold),
@@ -158,10 +159,8 @@ end
 function _zero_gap_note(dts::Vector{Float64})
     n_zero = count(==(0.0), dts)
     n_zero == 0 && return nothing
-    pct = 100 * n_zero / length(dts)
-    share =
-        pct >= 10 ? string(round(Int, pct)) :
-        pct >= 0.1 ? string(round(pct; digits = 1)) : "< 0.1"
+    pct = round(100 * n_zero / length(dts); digits = 1)
+    share = pct >= 10 ? string(round(Int, pct)) : pct >= 0.1 ? string(pct) : "< 0.1"
     return "Zero gaps (excluded): $share %"
 end
 

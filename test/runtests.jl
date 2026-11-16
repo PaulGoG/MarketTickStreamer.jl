@@ -1982,12 +1982,13 @@ hostname = "$(gethostname())"
             # Threshold term: the top 5 % gives the same 500 exceedances, the
             # top 20 % has u = 50 and all 1500 samples above it, where
             # Σ ln(x/50) = 1500 ln 2 + (500 - ln(2)/2)/α = 1372.823, so
-            # α̂ = 1.092639 there against 1.501040 here; half the range:
-            @test fit.σ_threshold ≈ 0.204200 atol = 1e-5
+            # α̂ = 1.092639 there against 1.501040 here; the larger shift:
+            @test fit.σ_threshold ≈ 0.408401 atol = 1e-5
             @test fit.σ ≈ hypot(fit.σ_stat, fit.σ_threshold) rtol = 1e-12
         end
         # At least 30 samples above the threshold: 30 at 5 over 970 at 1 give
-        # α̂ = 1/ln 5 at every threshold tried; 29 give no fit.
+        # α̂ = 1/ln 5, and every threshold tried sits on the same tied value,
+        # so the threshold term vanishes; 29 give no fit.
         let fit = MarketTickStreamer._tail_fit(sort!(vcat(fill(1.0, 970), fill(5.0, 30))))
             @test fit.α ≈ 1 / log(5) rtol = 1e-12
             @test fit.σ_stat ≈ fit.α / sqrt(30) rtol = 1e-12
@@ -2006,6 +2007,9 @@ hostname = "$(gethostname())"
               "Zero gaps (excluded): 2.5 %"
         @test MarketTickStreamer._zero_gap_note(vcat(0.0, fill(1.0, 1999))) ==
               "Zero gaps (excluded): < 0.1 %"
+        # 9.95 % rounds to 10 and is written as the integer.
+        @test MarketTickStreamer._zero_gap_note(vcat(zeros(199), ones(1801))) ==
+              "Zero gaps (excluded): 10 %"
         # annotations: value and uncertainty share their decimals
         @test M._value_pm(1.4294, 0.0041) == ("1.429", "0.004")
         @test M._value_pm(1.8676, 0.0684) == ("1.87", "0.07")

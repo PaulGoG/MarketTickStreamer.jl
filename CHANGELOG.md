@@ -33,11 +33,12 @@ configuration schema are unchanged.
   its threshold, which were counted while adding nothing to the Hill sum: on
   a liquid US equity day 19 % of the top decile sat on the 100-share
   threshold and the estimate read 1.43 where the exceedances give 1.16. Its
-  uncertainty adds the dependence on the threshold (half the range of the
-  estimate over half and twice the tail fraction) to the statistical error,
-  which alone understated it by an order of magnitude. The survival-function
-  panels are labeled `P(X ≥ x)`, carry one point per distinct value, and the
-  inter-arrival panels state the share of zero gaps they leave out.
+  uncertainty adds the dependence on the threshold (the larger shift of the
+  estimate when the tail fraction is halved or doubled) to the statistical
+  error, which alone understated it thirtyfold on that day. The
+  survival-function panels are labeled `P(X ≥ x)`, carry one point per
+  distinct value, and the inter-arrival panels state the share of zero gaps
+  they leave out.
 - The worked examples measure the gap after a late print from the latest
   timestamp seen, not from the late one; `print_rate` counts the prints whose
   gap was not positive, over a span that starts at the earliest timestamp.
