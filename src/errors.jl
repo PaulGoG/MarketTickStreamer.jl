@@ -20,8 +20,8 @@ retry policy ([`RestPolicy`](@ref)) propagate as HTTP.jl's own exceptions.
 | [`CredentialError`](@ref) | credentials the provider needs are missing |
 | [`FatalStreamError`](@ref) | the venue ends a live stream for a reason a reconnect cannot fix |
 
-Every subtype has a field `msg`, the account `showerror` prints, beside the
-fields a handler branches on.
+Every subtype has a field `msg`, which `showerror` prints, beside the fields a
+handler branches on.
 """
 abstract type MarketTickStreamerError <: Exception end
 

@@ -100,8 +100,8 @@ end
     write_batch!(s::RawSink, trades) -> RawSink
 
 Append a batch of trades as NDJSON lines and flush the stream once (buffered
-writes reach the OS per batch, not per line). Rolls to a new part file when
-the size limit is exceeded.
+writes reach the OS per batch, not per line). Rolls to a new part once a batch
+brings the file to the size limit; a batch is not split.
 """
 function write_batch!(s::RawSink, trades::AbstractVector{Trade})
     isempty(trades) && return s
@@ -119,8 +119,8 @@ end
 """
     close_sink!(s::RawSink)
 
-Flush and close the sink's file handle. The file is never reopened: a later
-write goes to the next part.
+Flush and close the sink's file handle. The file is never reopened, and the
+sink takes no further writes.
 """
 close_sink!(s::RawSink) = (flush(s.io); close(s.io); nothing)
 
@@ -415,12 +415,12 @@ file-descriptor limit however many symbol-days the input spans. The pipeline
 takes all of them from `[limits]`.
 
 Arrow output stores the `symbol`, `exchange`, `conditions` and `tape` columns
-dictionary-encoded, which costs nothing to read and takes a liquid US equity
-day from 65 to 44 bytes per print. `compression` (`:zstd` or `:lz4`, Arrow
-only; `:none` by default) compresses the record batches as well — 8 bytes per print with `:zstd`
-on the same day — at the price of memory-mapped reads: an uncompressed file is
-mapped and touched lazily, a compressed one is decompressed on load (64 ms
-against under 1 ms for that day). Uncompressed is the default.
+dictionary-encoded, which leaves the read cost unchanged and takes a liquid US
+equity day from 65 to 44 bytes per print. `compression` (`:zstd` or `:lz4`,
+Arrow only; `:none` by default) also compresses the record batches, to 8 bytes
+per print with `:zstd` on the same day, at the price of memory-mapped reads: an
+uncompressed file is mapped and touched lazily, a compressed one is decompressed
+on load (64 ms against under 1 ms for that day).
 """
 compact_raw(raw_paths::AbstractVector{<:AbstractString}, out_dir::AbstractString; kw...) =
     _compact_raw(raw_paths, out_dir; kw...).files
@@ -682,11 +682,11 @@ newest complete result and nothing already there is lost.
 The content goes to `<base>.partial<ext>` in the same directory first (the
 extension is kept last because writers such as `FileIO.save` infer the format
 from it). If `path` already exists it is then preserved as the first free
-`<base>_#N<ext>`, `N` from 1 — a hard link where the filesystem allows one, a
-copy otherwise — and finally the partial file is renamed onto `path`. The
-rename replaces atomically on one filesystem, so at every instant `path` is
-either the previous complete file or the new complete one, never absent and
-never half-written. Backups are numbered in order of displacement: `_#1` is
+`<base>_#N<ext>`, `N` from 1 (a hard link where the filesystem allows one, a
+copy otherwise), and finally the partial file is renamed onto `path`. The
+rename replaces atomically on one filesystem, so once `path` exists it holds a
+complete file at every instant, the previous one or the new one, never a
+half-written one. Backups are numbered in order of displacement: `_#1` is
 the oldest.
 
 If `write_fn` throws, the partial file is removed, `path` is left untouched

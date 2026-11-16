@@ -3,7 +3,7 @@
 # All provider adapters normalize their wire formats into these types, so the
 # rest of the pipeline (sinks, replay, analysis) is provider-agnostic.
 # Timestamps are Int64 nanoseconds since the UNIX epoch (UTC): Dates.DateTime
-# is millisecond-resolution and would silently destroy exchange timestamps.
+# would round exchange timestamps to the millisecond.
 
 """
     Trade
@@ -44,8 +44,8 @@ exchange, `recv_ns` from local receipt.
 
 Quotes are parsed but not subscribed to by default, and not persisted. A
 quote stream carries an order of magnitude more messages than the trade
-stream, so persisting it is a storage decision, not a parsing one; reach them
-through the `on_quote` callback of [`live_source`](@ref).
+stream, so persisting it is a storage decision; reach them through the
+`on_quote` callback of [`live_source`](@ref).
 
 Sizes are round lots as the tape reports them, not shares.
 """
@@ -73,8 +73,8 @@ clock, so a bar and the prints inside it share a time origin.
 For an activity bar ([`tick_bars`](@ref), [`volume_bars`](@ref),
 [`dollar_bars`](@ref)) `time_ns` is the timestamp of its first print and
 `close_ns` that of the print that completed it. The duration
-`close_ns - time_ns` is then a random variable — the time the market needed to
-transact a fixed amount of activity — and is the observable a waiting-time
+`close_ns - time_ns` is then a random variable, the time the market needed to
+transact a fixed amount of activity, and is the observable a waiting-time
 study reads off an activity clock. For a venue-computed bar `close_ns` is the
 end of the venue's aggregation window.
 

@@ -1,7 +1,9 @@
 # Render diagnostic figures + print a session QA report.
 #
 #   julia scripts/visualize.jl <raw_file.jsonl>... [--out plots] [--format pdf,png]
-#   julia scripts/visualize.jl --overview [--symbols A,B] [--from YYYY-MM-DD] [--to YYYY-MM-DD]
+#         [--config path/to/config.toml]
+#   julia scripts/visualize.jl --overview [--symbols A,B] [--from YYYY-MM-DD]
+#         [--to YYYY-MM-DD] [--out plots] [--format pdf,png] [--config path/to/config.toml]
 #
 # Default mode: per-(symbol, day) session figures from raw NDJSON files (all
 # raw session files under the configured raw directory when none are given), plus

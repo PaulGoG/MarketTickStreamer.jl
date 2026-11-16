@@ -83,8 +83,8 @@ function _render(
         )
     end
     stall = time() - st.last_growth
-    stall > 3 * refresh_s && println(buf, "! no new data for ", round(Int, stall), " s")
-    st.corrupt > 0 && println(buf, "! ", st.corrupt, " corrupt lines skipped")
+    stall > 3 * refresh_s && println(buf, "No new data for ", round(Int, stall), " s")
+    st.corrupt > 0 && println(buf, "Skipped ", st.corrupt, " corrupt lines")
     top = sort(collect(st.per_symbol); by = last, rev = true)
     top = top[1:min(top_symbols, length(top))]
     plots = Base.get_extension(@__MODULE__, :MarketTickStreamerUnicodePlotsExt)

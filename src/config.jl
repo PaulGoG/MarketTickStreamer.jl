@@ -257,7 +257,7 @@ _draw_seed() = Int(rand(RandomDevice(), UInt64) >> 1)
 Check the parsed TOML against `CONFIG_KEYS` and the tables of the registered
 providers ([`registered_providers`](@ref)), each against its spec's
 `endpoint_keys`. Throws `ArgumentError` naming the offending table or key, so
-a misspelt entry cannot be silently ignored in favor of a default.
+a misspelled entry cannot be silently ignored in favor of a default.
 """
 function _reject_unknown_keys(raw::AbstractDict)
     providers = registered_providers()
@@ -313,7 +313,7 @@ end
 Read and validate the TOML configuration. Relative `storage.data_dir`,
 `logging.log_dir` and `credentials.env_file` are resolved against the directory
 of `path`. Every key is checked for type and documented bounds, and unknown
-tables or keys are rejected, so a misspelt key cannot fall back to its default
+tables or keys are rejected, so a misspelled key cannot fall back to its default
 unnoticed. Throws `ArgumentError` naming the offending key.
 
 The no-argument form reads the configuration shipped with the repository and

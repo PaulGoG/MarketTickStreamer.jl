@@ -2,8 +2,8 @@
 #
 # A HIST file is a packet capture of IEX's own multicast feed, one trading
 # day: classic pcap until August 2017, pcapng since. Each UDP payload is one
-# IEX-TP segment — a 40-byte little-endian header and a run of length-prefixed
-# messages — and a Trade Report message (`T`) is one fill with the matching
+# IEX-TP segment (a 40-byte little-endian header and a run of length-prefixed
+# messages), and a Trade Report message (`T`) is one fill with the matching
 # engine's nanosecond timestamp, so no capture clock is ever read: the pcap
 # timestamps run on TAI since November 2024. TOPS 1.5 (protocol 0x8002),
 # TOPS 1.6 (0x8003) and DEEP 1.0 (0x8004) carry the same `T` layout; the 1.5
@@ -261,7 +261,7 @@ whose Trade Report is one and the same message), not from the file
 name. Timestamps are the matching engine's, nanoseconds since the epoch;
 the capture clock is not read.
 
-Each print carries `exchange = "V"` (IEX's market-centre code on the
+Each print carries `exchange = "V"` (IEX's market-center code on the
 consolidated tape), `id` = IEX trade id (unique within the day), `tape` as
 given (a string for every print, or a `Dict` from symbol to tape; IEX does
 not publish the listing venue), and `conditions` = the set sale-condition
@@ -469,12 +469,14 @@ end
 Download the HIST capture of `date` for `feed` (`"TOPS"` or `"DEEP"`,
 case-insensitive; the version is whatever IEX lists for that day) into
 `dir/iex/`, resuming an interrupted transfer, verify it against the CRC-32C
-the file host announces (`x-goog-hash`), and return its path. `nothing`
-when IEX lists no files for the date, a [`VendorError`](@ref) naming the
-feeds listed when the feed is not among them. A file already present is reused when its size
-matches the index entry and its CRC-32C the host's, and fetched again
-otherwise; a fresh download that fails the CRC-32C check is deleted and the
-call throws an [`IntegrityError`](@ref).
+(`x-goog-hash`) when the file host announces one, and return its path.
+`nothing` when IEX lists no files for the date, a [`VendorError`](@ref) naming
+the feeds listed when the feed is not among them. A file already present is
+reused when its size matches the index entry and, when the file host announces
+one, its CRC-32C matches the host's; otherwise it is fetched again. A fresh
+download is checked against the CRC-32C when the file host announces one; a
+download that fails the check is deleted and the call throws an
+[`IntegrityError`](@ref).
 """
 function fetch_iex_hist(
     date::Date,
@@ -556,8 +558,8 @@ function _crc32c_from_headers(headers)
 end
 
 # HEAD the file host for its announced CRC-32C. A retryable status is retried
-# on the policy's schedule and fails the call when it persists; without that,
-# a transient 5xx returned nothing and a cached file passed unverified.
+# on the policy's schedule and fails the call when it persists; otherwise a
+# transient 5xx would return nothing and pass a cached file unverified.
 function _announced_crc32c(url::AbstractString, policy::RestPolicy)
     resp = _with_retry(policy) do
         r = HTTP.head(

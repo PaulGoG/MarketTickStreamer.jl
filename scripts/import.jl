@@ -1,5 +1,5 @@
-# Import one vendor day file — a Nasdaq TotalView-ITCH 5.0 day or an IEX HIST
-# capture — into the processed tree.
+# Import one vendor day file (a Nasdaq TotalView-ITCH 5.0 day or an IEX HIST
+# capture) into the processed tree.
 #
 #   julia scripts/import.jl <itch50|iex> <file> [--config=path/to/config.toml]
 #         [--date=YYYY-MM-DD] [--symbols=A,B,C | --all] [--broken=drop|mark|keep]

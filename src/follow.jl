@@ -168,7 +168,7 @@ apply as to any source.
 
 ```julia
 for trade in follow_source(cfg.raw_dir)       # ends when the session ends
-    # ... a method under test, in a process the capture never sees
+    # ... a method under test, in a process separate from the capture
 end
 ```
 """

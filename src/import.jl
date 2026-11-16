@@ -22,10 +22,10 @@ beside the usual provenance. Returns the processed files written.
 read from the file name ([`itch50_date`](@ref), [`iex_hist_date`](@ref)) when
 not given; ITCH timestamps count from midnight and are dated by it.
 `symbols` defaults to the configured basket; `nothing` imports every symbol
-in the file. `broken` and `tape` pass to the reader. With `keep_raw = false`
-the day's raw parts are deleted once the day is under `processed/`, the
-checksummed vendor file being the record, as `backfill.keep_raw` does for a
-bulk day.
+in the file. `broken` passes to the reader, and `tape` to the IEX reader (an
+ITCH file carries its own). With `keep_raw = false` the day's raw parts are
+deleted once the day is under `processed/`, the checksummed vendor file being
+the record, as `backfill.keep_raw` does for a bulk day.
 
 A file that ends inside a message, as a partial download does, is imported
 to that point and logged as incomplete; the sidecar's `source.truncated`

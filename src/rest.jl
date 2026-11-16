@@ -22,8 +22,8 @@ download does not take the whole of a shared link; `Inf` leaves it uncapped.
 `download_connections` (1 to 8) is the number of
 Range requests a vendor file is fetched on at once, for hosts whose path
 limits each TCP connection; the cap applies to their sum.
-`rng` draws the jitter of the retry backoff; two policies are equal when their
-bounds are, the generator being state rather than policy.
+`rng` draws the jitter of the retry backoff. Two policies are equal when their
+bounds are; the generator is not compared.
 """
 struct RestPolicy
     request_timeout_s::Int
@@ -82,7 +82,7 @@ Base.hash(p::RestPolicy, h::UInt) = hash(
 )
 
 RestPolicy() = RestPolicy(30, 10, 5)
-# The REST generator takes the master seed's neighbour, so REST retries and
+# The REST generator takes the master seed's neighbor, so REST retries and
 # stream reconnects draw from independent streams of one recorded seed.
 # `max_download_mb_s` is in 10⁶ bytes per second, 0 meaning no cap.
 RestPolicy(cfg::Config) = RestPolicy(

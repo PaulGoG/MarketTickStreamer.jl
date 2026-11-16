@@ -17,8 +17,8 @@ The same loop run on a finished session reads it whole and stops at its end.
 
 # Activate the examples environment only when this file is run as a script.
 # The test suite includes it to check that the example still works, and there
-# the environment is already active — activating again would pull it out from
-# under the running suite.
+# the environment is already active; activating this one would replace it under
+# the running suite.
 if abspath(PROGRAM_FILE) == @__FILE__
     include(joinpath(@__DIR__, "activate.jl"))
 end
@@ -44,8 +44,8 @@ vwap(a::Vwap) = a.volume > 0 ? a.value / a.volume : NaN
     follow(dir; session = nothing, period_ns = 60 * 10^9, poll_s = 0.5, io = stdout) -> Int
 
 Follow the session's raw files under `dir` and print one row per period of
-exchange time — the boundary, the prints folded so far, the running VWAP —
-and a final row when the session ends. Returns the number of prints folded.
+exchange time (the boundary, the prints folded so far, the running VWAP) and
+a final row when the session ends. Returns the number of prints folded.
 """
 function follow(
     dir::AbstractString;

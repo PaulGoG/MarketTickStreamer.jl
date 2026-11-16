@@ -8,7 +8,7 @@
 
 Publication defaults: Computer Modern fonts, 26 pt labels over 22 pt ticks,
 boxed axes with 1.5-wide spines, inward ticks, no minor ticks, faint dashed
-grey grid, 3-wide data lines, frameless horizontal legends.
+gray grid, 3-wide data lines, frameless horizontal legends.
 
 Implemented by the CairoMakie extension: `using CairoMakie` first.
 """
@@ -103,7 +103,8 @@ tree (`processed_dir/SYMBOL/YYYY-MM-DD.csv|.arrow`; safesave `_#N` backups
 and `.partial` files are ignored — the base file per day is authoritative
 and always the newest). `symbols`, `from`, and `to` restrict the sweep.
 Output: `out_dir/SYMBOL_<from>_<to>.pdf|png` (safesave). Days are loaded one
-symbol at a time, so memory stays bounded by one symbol's span. `session` is
+symbol at a time, so memory stays bounded by one symbol's span. A symbol with
+fewer than `min_days` day files in the selection is skipped. `session` is
 passed to [`overview_figure`](@ref).
 
 `non_price` is the sale-condition table of the price-forming population,

@@ -26,7 +26,7 @@ Beyond the exported names, the implementer interface is `public`:
 qualified.
 
 The adapters that ship are `providers/alpaca.jl` (US equities, New York
-calendar, credentialed, closes overnight and at weekends) and
+calendar, credentialed, closes overnight and on weekends) and
 `providers/binance.jl` (crypto spot, UTC calendar, public, never closes).
 """
 abstract type AbstractProvider end
@@ -188,10 +188,10 @@ always_open(::AbstractProvider) = false
 
 The dates in `[start_date, end_date]` on which the venue trades, in order.
 
-Defaults to every calendar date. A venue that rests must opt out, never the
-reverse: requesting a day the venue was shut costs one empty response, while
-skipping a day it traded loses that day's tape silently, as a hard-coded
-weekday filter would for a 24-hour venue.
+Defaults to every calendar date; a venue with closed days overrides it.
+Requesting a day the venue was shut costs one empty response, while skipping a
+day it traded loses that day's tape, as a hard-coded weekday filter would for a
+24-hour venue.
 """
 session_days(::AbstractProvider, start_date::Date, end_date::Date) =
     collect(start_date:Day(1):end_date)
@@ -279,6 +279,9 @@ LiveSession(channel, stop, ws, stats) = LiveSession(channel, stop, ws, stats, Re
 Request shutdown: set the stop flag and close the underlying WebSocket,
 which unblocks the producer loop; the tick channel then closes and the sinks
 drain.
+
+The close is bounded: if the peer has not completed the closing handshake after
+5 s the transport is severed. Returns `nothing`.
 """
 function stop!(s::LiveSession)
     s.stop[] = true
@@ -425,9 +428,9 @@ shares with its logger.
 
 Reconnects with jittered exponential backoff
 (`stream.reconnect_base_delay_s * 2^attempt`, capped at
-`stream.reconnect_max_delay_s`, the jitter drawn from a generator seeded by
-`rng.seed`); the attempt counter resets after any connection that
-delivered data.
+`stream.reconnect_max_delay_s` before a jitter factor in [0.5, 1.5) drawn from a
+generator seeded by `rng.seed`); the attempt counter resets after any connection
+that delivered data.
 """
 function live_source(
     p::AbstractProvider,

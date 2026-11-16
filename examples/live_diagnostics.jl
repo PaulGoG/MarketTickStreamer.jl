@@ -3,16 +3,15 @@ Worked consumer: bounded-memory live diagnostics from a tick stream.
 
     julia examples/live_diagnostics.jl data/raw/<session>_part001.jsonl
 
-The companion to `waiting_times.jl`, and its opposite on both axes that matter
-when a consumer runs beside a live capture rather than after one.
+The companion to `waiting_times.jl`, for a consumer that runs beside a live
+capture rather than after one.
 
 `waiting_times.jl` takes the lossless tap and keeps every gap, because
 a distribution estimate must not be thinned by load. This file takes the
 lossy tap and keeps no samples at all: state is a fixed set of
 `OnlineStats` accumulators, so memory is constant in the length of the stream
 and a slow consumer sheds prints instead of applying backpressure to
-acquisition. That is the right trade for a dashboard and the wrong one for an
-estimator.
+acquisition.
 
 The accumulators (`Mean`, `Variance`, `Extrema`, `KHist`) do not grow with
 the stream, and the tap is lossy because acquisition must never wait for a
@@ -46,25 +45,24 @@ rather than 280 bytes; both are constant in the length of the stream.
 A bounded-memory sketch encodes an assumption about the
 distribution's shape, and an arrival process on a market tape violates the
 usual one. Check a sketch against exact statistics on a real sample before
-trusting it, because it fails quietly and returns a plausible number.
+relying on it: a failing sketch still returns a plausible number.
 
 On reservoir sampling: `StreamSampling.jl` attaches to a `tee` branch the same
 way, but buys little here. The raw layer already retains every print, so an
 offline analysis can read it, and uniform reservoir sampling destroys
 the arrival ordering that waiting-time, long-memory and criticality methods
-consume. Where it does earn its place is a live tail sketch over a multi-hour
-session, and there a weighted (exponential-jump) scheme beats a uniform one,
+consume. It is useful for a live tail sketch over a multi-hour session, and
+there a weighted (exponential-jump) scheme beats a uniform one,
 because the tail is exactly what uniform sampling under-represents. The
 deterministic sketches below cover the rest of the live diagnostic need.
 
-The estimators are ordinary: an external pipeline brings its own.
-This file is about the plumbing and the memory discipline.
+The estimators are ordinary; an external pipeline supplies its own.
 """
 
 # Activate the examples environment only when this file is run as a script.
 # The test suite includes it to check that the example still works, and there
-# the environment is already active — activating again would pull it out from
-# under the running suite.
+# the environment is already active; activating this one would replace it under
+# the running suite.
 if abspath(PROGRAM_FILE) == @__FILE__
     include(joinpath(@__DIR__, "activate.jl"))
 end
@@ -74,7 +72,7 @@ using OnlineStats: Extrema, KHist, Mean, Sum, Variance, fit!, nobs, value
 using Printf: @printf
 
 # Concrete field types taken from the constructors rather than spelled out:
-# OnlineStats parameterises these on the weighting scheme and element type
+# OnlineStats parameterizes these on the weighting scheme and element type
 # (`Mean{Float64,EqualWeight}`), and writing a bare `Mean` would leave the
 # field abstract and the accumulation loop dynamically dispatched.
 const MeanStat = typeof(Mean())
@@ -220,9 +218,8 @@ function consume(
         speed > 0 ? replay_source(paths; pace = :recorded, speed = speed) :
         replay_source(paths; pace = :max)
 
-    # Persistence is lossless; the diagnostic is lossy and
-    # yields. Reversing this would let a slow dashboard throttle acquisition,
-    # which is the failure a live capture cannot afford.
+    # Persistence is lossless and the diagnostic lossy; the reverse would let a
+    # slow dashboard throttle acquisition.
     persist, diagnose = tee(source, 2; capacity = capacity, lossy = [false, true])
 
     persisted = Ref(0)
@@ -262,7 +259,7 @@ function report(d::LiveDiagnostics, persisted::Integer, seen::Integer)
         ex.min,
         ex.max
     )
-    # The quantiles carry ≈ because they are bin centres of a sketch, not
+    # The quantiles carry ≈ because they are bin centers of a sketch, not
     # order statistics of a retained sample.
     @printf(
         "Δt  median≈%.6f s  p90≈%.6f s  p99≈%.6f s  p99.9≈%.4f s\n",

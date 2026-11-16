@@ -52,7 +52,7 @@ end
         ),
     )
 
-# Reduce a live order by `n` executed or cancelled shares, removing it once
+# Reduce a live order by `n` executed or canceled shares, removing it once
 # exhausted.
 function _itch50_reduce!(
     orders::Dict{UInt64,ItchOrder},
@@ -106,8 +106,8 @@ function _open_day_file(path::AbstractString)
 end
 
 # Fill `buf[len+1:end]` from `io`. Returns `(len, ended, cut)`: `ended` when
-# the stream has no more bytes, `cut` when a gzip member ended early — the
-# shape of a partial download — which ends the stream as well. Once `ended`,
+# the stream has no more bytes, `cut` when a gzip member ended early (the
+# shape of a partial download), which ends the stream as well. Once `ended`,
 # the stream is not read again: a cut gzip stream throws on every read.
 function _fill!(io::IO, buf::Vector{UInt8}, len::Int)
     ended = false

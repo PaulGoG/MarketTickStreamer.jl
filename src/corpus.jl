@@ -45,7 +45,7 @@ _processed_rows(path::AbstractString) =
 # date, so a transition day places 09:30 where its clock said 09:30 and a
 # full day spans 23 or 25 hours on the days the clock moves. Integer
 # millisecond arithmetic throughout; a Float64 of seconds would carry a
-# 256 ns resolution at this epoch.
+# 238 ns resolution at this epoch.
 function _window_ns(date::Date, window::Tuple{Float64,Float64}, tz::TimeZone)
     at(h) = begin
         local_dt = DateTime(date) + Millisecond(round(Int64, h * 3_600_000))

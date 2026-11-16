@@ -85,8 +85,8 @@ export tick_theme,
     session_figure, save_session_figures, overview_figure, save_overview_figures
 
 # The session plumbing: documented and stable under the package's versioning,
-# reached qualified. A consumer or an operator never calls it; the entry
-# points above do.
+# reached qualified. A consumer or operator rarely calls it; the entry points
+# above do.
 public RawSink,
     open_raw_sink,
     write_batch!,

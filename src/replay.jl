@@ -1,7 +1,7 @@
 # Recorded-session replay: re-emit persisted prints as a live-like stream
 # through the `Channel{Trade}` the live source feeds, so a consumer cannot
 # tell them apart and a real-time method is developed and validated on a
-# recording before it meets the wire.
+# recording before it runs live.
 #
 # Two inputs: the raw files of a session, read whole, and the processed day
 # files of a corpus, streamed a day at a time so that a symbol-year replays in
@@ -139,7 +139,7 @@ cannot be mixed.
 
 - Raw files are read whole and sorted, since arrival order is not
   chronological across venues and parts. This is the mode for a session.
-- Processed files are **streamed one trading day at a time**: the files of a
+- Processed files are streamed one trading day at a time: the files of a
   date — one per symbol — are loaded, merged on the replay clock and emitted
   before the next date is opened. Memory is bounded by the busiest date
   summed over the requested symbols, about 100 B per print: the busiest AAPL

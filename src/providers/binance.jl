@@ -102,8 +102,8 @@ _stream_name(p::BinanceProvider, sym::AbstractString) = "$(lowercase(sym))@$(p.f
 
 Combined-stream URL for `symbols`. Binance subscribes through the URL rather
 than through a post-connection message, so there is no auth or subscribe
-handshake: the connection *is* the subscription. `timeUnit=MICROSECOND` asks
-for microsecond timestamps; frames in either unit are read.
+handshake. `timeUnit=MICROSECOND` asks for microsecond timestamps; frames in
+either unit are read.
 """
 ws_url(p::BinanceProvider, symbols::Vector{String}) =
     "$(p.ws_base)/stream?streams=" *
@@ -120,8 +120,8 @@ orchestration never asks for them.
 market_clock(::BinanceProvider) = (; is_open = true, next_open = "", next_close = "")
 
 # Binance sends numbers as strings ("p":"64000.01"). Accepting a bare number
-# as well keeps the parser working against mocks and any future shape change,
-# and fails loudly rather than silently yielding NaN.
+# as well keeps the parser working against mocks and any future shape change;
+# any other type throws a `MethodError`.
 _num(x::AbstractString) = parse(Float64, x)
 _num(x::Real) = Float64(x)
 
@@ -142,7 +142,8 @@ _binance_ns(raw::Integer) =
 _aggressor(m::Bool) = m ? ["sell"] : ["buy"]
 
 # Trade and aggTrade frames differ only in the id field (`t` vs `a`), and the
-# REST rows differ again (`id`/`price`/`qty`/`time`/`isBuyerMaker`).
+# REST `aggTrades` rows carry the aggTrade frame's keys (`a`/`p`/`q`/`T`/`m`)
+# without the symbol `s`, which the caller passes as `symbol`.
 function parse_binance_trade(msg, recv_ns::Int64; symbol::AbstractString = "")
     sym = isempty(symbol) ? String(msg.s::AbstractString) : String(symbol)
     id = haskey(msg, :t) ? msg.t : get(msg, :a, 0)
@@ -178,9 +179,9 @@ Pagination is by trade id, not by time window. Binance rejects a
 with a single `startTime` request and then walked forward with
 `fromId = last id + 1` until a row's timestamp passes the end of the range.
 Walking hour-wide windows instead would issue 24 requests a day and still
-truncate any hour holding more than `page_limit` trades, silently.
-`page_limit` above the venue maximum of 1000 is rejected, because the server would
-clamp it silently.
+silently truncate any hour holding more than `page_limit` trades. `page_limit`
+above the venue maximum of 1000 is rejected, because the server would clamp it
+and answer 200.
 
 Rows are requested at microsecond resolution (`X-MBX-TIME-UNIT:
 MICROSECOND`), the clock of the bulk files, so a REST day and a bulk day
@@ -455,8 +456,8 @@ function bulk_trades(
     return (; trades = pages.kept, prints = pages.prints, file = path)
 end
 
-# Binance spot streaming. There is no auth and no subscribe handshake — the
-# stream set is named in the URL — so the protocol loop is only a read loop.
+# Binance spot streaming. There is no auth and no subscribe handshake (the
+# stream set is named in the URL), so the protocol loop is only a read loop.
 # Combined-stream frames wrap the payload as {"stream":name,"data":{...}}.
 function stream_protocol!(
     ch::Channel{Trade},

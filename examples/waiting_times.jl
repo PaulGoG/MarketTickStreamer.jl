@@ -4,9 +4,8 @@ Worked consumer: waiting-time statistics from a live-like tick stream.
     julia examples/waiting_times.jl data/raw/<session>_part001.jsonl
 
 This is the shape an external analysis pipeline takes against this package.
-It consumes a `Channel{Trade}` and never learns whether the ticks came from
-the wire or from a recording — swap `replay_source` for `live_source` and the
-consumer is unchanged.
+It consumes a `Channel{Trade}`, the same type from the wire as from a recording:
+swap `replay_source` for `live_source` and the consumer is unchanged.
 
 Beyond the arithmetic, it shows `tee` splitting one stream into two
 independent consumers, both lossless, as a waiting-time estimator requires;
@@ -15,14 +14,13 @@ single-pass accumulation, which bounds memory by the state of the estimator
 rather than by the length of the stream; and the population choice, every
 execution or price-forming prints only, made by the analysis.
 
-The estimator is minimal: an external pipeline brings its own; this file is
-about the plumbing.
+The estimator is minimal; an external pipeline supplies its own.
 """
 
 # Activate the examples environment only when this file is run as a script.
 # The test suite includes it to check that the example still works, and there
-# the environment is already active — activating again would pull it out from
-# under the running suite.
+# the environment is already active; activating this one would replace it under
+# the running suite.
 if abspath(PROGRAM_FILE) == @__FILE__
     include(joinpath(@__DIR__, "activate.jl"))
 end

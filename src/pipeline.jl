@@ -23,8 +23,8 @@ ends. Nothing is installed globally, so a session leaves the caller's logger
 as it found it and two sessions in one process keep separate logs.
 
 While `shutting_down[]` is true, records from HTTP.jl internals are dropped:
-during a deliberate shutdown an `EOFError` from a socket we closed ourselves is
-expected, not an incident.
+during a deliberate shutdown an `EOFError` from a socket the session closed
+itself is expected.
 """
 function setup_logging(
     cfg::Config;
@@ -851,7 +851,7 @@ function _run_backfill(
             finally
                 close_sink!(day_sink)
                 # A day that failed before writing anything leaves a zero-byte
-                # stub of our own making, carrying nothing to preserve.
+                # stub that holds nothing to preserve.
                 day_sink.n_written == 0 &&
                     filesize(day_sink.path) == 0 &&
                     rm(day_sink.path; force = true)
@@ -859,8 +859,8 @@ function _run_backfill(
             day_files = _raw_files_with_prefix(cfg.raw_dir, day_prefix)
             n_stored = 0
             if n == 0
-                # A holiday, a halt, or a symbol not yet listed: drop our own
-                # empty stub rather than accumulate them.
+                # A holiday, a halt, or a symbol not yet listed: drop the empty
+                # stub rather than let stubs accumulate.
                 for f in day_files
                     filesize(f) == 0 && rm(f; force = true)
                 end
