@@ -619,6 +619,13 @@ example_call(mod::Module, name::Symbol, args...; kw...) =
             @test all(f -> read(f, String) == "kept\n", slots)
             @test !MarketTickStreamer._copy_exclusive(p, first(slots))   # taken
             @test read(first(slots), String) == "kept\n"
+            # A copy that fails gives its slot up.
+            dst = joinpath(dir, "orphan.csv")
+            @test_throws SystemError MarketTickStreamer._copy_exclusive(
+                joinpath(dir, "absent.csv"),
+                dst,
+            )
+            @test !ispath(dst)
         end
     end
 
@@ -2820,6 +2827,74 @@ hostname = "$(gethostname())"
             end
             @test s.outcome[] === :failed
             @test s.opens[] == 0
+        end
+    end
+
+    @testset "live: the stop handshake severs a connection from either side" begin
+        s = LiveSession(
+            Channel{Trade}(1),
+            Threads.Atomic{Bool}(false),
+            Ref{Any}(nothing),
+            Ref((; ticks = 0, frames = 0, reconnects = 0)),
+        )
+        # Registered first: stop! finds the socket and severs it.
+        ws1 = (; io = IOBuffer())
+        @test !MarketTickStreamer._register_ws!(s, ws1) && isopen(ws1.io)
+        stop!(s)
+        @test !isopen(ws1.io)
+        # Registered after the stop: the provider severs it, and counts it.
+        ws2 = (; io = IOBuffer())
+        @test MarketTickStreamer._register_ws!(s, ws2) && !isopen(ws2.io)
+        @test s.opens[] == 1
+        close(s.channel)       # no producer here to close it
+    end
+
+    @testset "live: an orderly stop with a stalled consumer is not a failure" begin
+        # The producer waits on a full channel nobody reads; stop!'s bound
+        # closes the channel after STOP_GRACE_S and the producer ends on it.
+        @eval struct StallProvider <: MarketTickStreamer.AbstractProvider end
+        @eval function MarketTickStreamer.stream_protocol!(
+            ch,
+            ::StallProvider,
+            cfg,
+            s;
+            kwargs...,
+        )
+            ws = (; io = IOBuffer())
+            MarketTickStreamer._register_ws!(s, ws) && return nothing
+            last_frame = Threads.Atomic{Float64}(time())
+            alive = Threads.Atomic{Bool}(true)
+            watchdog = MarketTickStreamer.spawn_watchdog(
+                ws,
+                s,
+                last_frame,
+                alive,
+                cfg.stale_timeout_s,
+            )
+            try
+                put!(ch, sample_trade(1))
+                put!(ch, sample_trade(2))      # the channel holds one: waits
+            finally
+                alive[] = false
+                wait(watchdog)
+            end
+        end
+        mktempdir() do dir
+            cfg = load_config(
+                mock_config_toml(
+                    dir;
+                    ws_port = 9999,
+                    rest_port = 9998,
+                    channel_capacity = 1,
+                ),
+            )
+            s = live_source(StallProvider(), cfg)
+            @test timedwait(() -> isready(s.channel), 10.0) === :ok
+            stop!(s)
+            limit = MarketTickStreamer.STOP_GRACE_S + 10
+            @test timedwait(() -> s.outcome[] !== :running, limit) === :ok
+            @test s.outcome[] === :completed && s.opens[] == 1
+            @test take!(s.channel) == sample_trade(1)
         end
     end
 

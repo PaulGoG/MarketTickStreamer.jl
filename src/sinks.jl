@@ -772,18 +772,26 @@ function _copy_exclusive(src::AbstractString, dst::AbstractString)
         e isa Base.IOError && e.code == Base.UV_EEXIST && return false
         rethrow()
     end
+    done = false
     try
         open(src) do io
             while !eof(io)
                 write(out, read(io, 1 << 20))
             end
         end
-    catch
         close(out)
-        rm(dst; force = true)               # no incomplete backup holds the slot
-        rethrow()
+        done = true
+    finally
+        # A failed copy, or a close that reports a deferred write error, gives
+        # the slot up: no incomplete backup holds it.
+        if !done
+            try
+                isopen(out) && close(out)
+            finally
+                rm(dst; force = true)
+            end
+        end
     end
-    close(out)
     return true
 end
 

@@ -344,7 +344,11 @@ function _register_ws!(s::LiveSession, ws)
         s.ws[] = ws
         s.stop[]
     end
-    stopping && _close_ws(ws)
+    if stopping
+        # It did open, though it ends before its watchdog would record it.
+        Threads.atomic_add!(s.opens, 1)
+        _close_ws(ws)
+    end
     return stopping
 end
 
@@ -404,7 +408,9 @@ Provider interface: run one connect→auth→subscribe→stream cycle, pushing
 normalized `Trade`s into `ch`. Must return on orderly close, throw
 [`FatalStreamError`](@ref) on non-retryable protocol errors, and any other
 exception on retryable transport failures. Implemented by each provider
-(`providers/alpaca.jl`, `providers/binance.jl`).
+(`providers/alpaca.jl`, `providers/binance.jl`). Once connected it calls
+[`spawn_watchdog`](@ref), which also records the connection as opened: the
+reconnect counter and the session's status read that record.
 
 `on_quote` and `on_bar`, when given, receive normalized [`Quote`](@ref) and
 [`Bar`](@ref) values for the corresponding frames. Neither channel is

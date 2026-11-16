@@ -164,7 +164,7 @@ interrupt (tested).
   for an upgrade the server never answers has no socket to sever yet; five
   seconds after `stop!` the tick channel is closed regardless, so the sinks
   finish and the session ends, as `failed` when no connection of the session
-  ever opened.
+  opened and no print arrived.
 - **Resource guards**: free-disk check before and during a session
   (`limits.min_free_disk_gb`; a breach mid-session stops the stream through
   `stop!`); compaction reroutes raw inputs whose estimated footprint

@@ -79,7 +79,7 @@ unchanged.
   still waiting for an upgrade the server never answers is out of reach of
   both; five seconds after `stop!` its channel is closed, so the session
   ends at its deadline whatever state the connection is in, as `failed`
-  when none of its connections opened. A connection that opens while
+  when none of its connections opened and no print arrived. A connection that opens while
   `stop!` runs is severed by one side or the other.
 - A producer that ended on its own left its deadline and close guards
   running; they end with it. A reconnect backoff ends at a stop request or

@@ -616,8 +616,8 @@ Run one complete live capture session:
 
 Returns `(; ticks, raw_files, status)`, `status` being the one written to the
 sidecar: `"completed"`, `"interrupted"`, or `"failed"` after a fatal stream
-error, exhausted reconnections or a session in which no connection opened,
-which end the session without an exception.
+error, exhausted reconnections or a session in which no connection opened
+and no print arrived, which end the session without an exception.
 A session that finds the market closed and does not wait returns no ticks,
 no files and `"completed"`. Blocks until the session ends. Logging is scoped
 to the call: the session runs under its own logger and the caller's global
@@ -723,11 +723,14 @@ function _run_stream(
 
         try
             summary.ticks = fetch(sink_task)
-            # A session in which no connection opened never reached the venue,
-            # whatever ended it: an upgrade left unanswered is ended by stop!'s
-            # bound on the producer, which does not set the outcome.
-            (session.outcome[] === :failed || session.opens[] == 0) &&
-                (summary.status = "failed")
+            # A session in which no connection opened and no print arrived never
+            # reached the venue, whatever ended it: an upgrade left unanswered is
+            # ended by stop!'s bound on the producer, which does not set the
+            # outcome.
+            (
+                session.outcome[] === :failed ||
+                (session.opens[] == 0 && summary.ticks == 0)
+            ) && (summary.status = "failed")
         catch e
             if e isa InterruptException
                 summary.status = "interrupted"

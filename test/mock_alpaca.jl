@@ -235,6 +235,7 @@ function mock_config_toml(
     end_date = "2026-07-29",
     max_session_hours = 0.05,
     log_to_file = false,
+    channel_capacity = 10000,
 )
     path = joinpath(dir, "config.toml")
     write(
@@ -263,7 +264,7 @@ processed_format = "csv"
 [limits]
 max_session_hours = $max_session_hours
 max_raw_file_mb = 64
-channel_capacity = 10000
+channel_capacity = $channel_capacity
 
 [backfill]
 start_date = "$start_date"
