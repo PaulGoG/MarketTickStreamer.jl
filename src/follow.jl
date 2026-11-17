@@ -43,11 +43,15 @@ function latest_session_prefix(dir::AbstractString)
 end
 
 # The longest sidecar id in `dir` that prefixes `prefix`, or `nothing`.
-function _sidecar_id(dir::AbstractString, prefix::AbstractString)
+_sidecar_id(dir::AbstractString, prefix::AbstractString) =
+    _longest_prefix(_sidecar_ids(dir), prefix)
+
+_sidecar_ids(dir::AbstractString) =
+    [String(chopsuffix(f, ".meta.toml")) for f in readdir(dir) if endswith(f, ".meta.toml")]
+
+function _longest_prefix(ids::AbstractVector{<:AbstractString}, prefix::AbstractString)
     best = nothing
-    for f in readdir(dir)
-        endswith(f, ".meta.toml") || continue
-        id = chopsuffix(f, ".meta.toml")
+    for id in ids
         startswith(prefix, id) || continue
         (best === nothing || length(id) > length(best)) && (best = id)
     end

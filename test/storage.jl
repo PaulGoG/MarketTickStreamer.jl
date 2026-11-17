@@ -140,68 +140,112 @@ end
     end
 end
 
-@testset "compaction: a day known to be incomplete is not filed under its canonical name" begin
+@testset "compaction: a day known to be incomplete is marked" begin
     mktempdir() do dir
-        raw, out = joinpath(dir, "raw"), joinpath(dir, "processed")
+        raw = joinpath(dir, "raw")
         mkpath(raw)
-        day1 = Date(2025, 7, 30)                     # sample_trade's UTC date
-        one(i; sym = "AAPL") = sample_trade(i; sym)
-        later(i; sym = "AAPL") = (
-            t = one(i; sym);
-            Trade(
-                t.symbol,
-                t.time_ns + 86_400_000_000_000,
-                t.recv_ns + 86_400_000_000_000,
-                t.price,
-                t.size,
-                t.exchange,
-                t.conditions,
-                t.tape,
-                t.id,
-            )
+        day1, day2 = Date(2025, 7, 30), Date(2025, 7, 31)   # sample_trade's UTC dates
+        shift(t, d) = Trade(
+            t.symbol,
+            t.time_ns + d * 86_400_000_000_000,
+            t.recv_ns + d * 86_400_000_000_000,
+            t.price,
+            t.size,
+            t.exchange,
+            t.conditions,
+            t.tape,
+            t.id,
         )
         part(name, trades) = (
             p = joinpath(raw, name);
             write(p, join(trade_to_json.(trades), "\n") * "\n");
             p
         )
-        sidecar(status) =
-            write(joinpath(raw, "sess.meta.toml"), "[session]\nstatus = \"$status\"\n")
-        # A running session: day 1 in its first part, day 2 in its newest.
-        p1 = part("sess_part001.jsonl", [one(i) for i in 1:3])
-        sleep(0.05)
-        p2 = part("sess_part002.jsonl", [later(i) for i in 1:2])
-        @test mtime(p2) > mtime(p1)
-        sidecar("running")
-        files = compact_raw([p1, p2], out; format = :csv, tz = tz"UTC")
-        @test basename.(files) == ["2025-07-30.csv", "2025-07-31.incomplete.csv"]
-        @test basename.(processed_files(out, "AAPL")) == ["2025-07-30.csv"]
-        listed = processed_files(out, "AAPL"; incomplete = true)
-        @test basename.(listed) == ["2025-07-30.csv", "2025-07-31.incomplete.csv"]
-        @test length(read_processed(listed)) == 5   # explicit paths may name it
-        # Once the session has ended, the whole day takes the canonical name;
-        # the incomplete file stays and is no longer listed.
-        sidecar("completed")
-        files = compact_raw([p1, p2], out; format = :csv, tz = tz"UTC")
-        @test basename.(files) == ["2025-07-30.csv", "2025-07-31.csv"]
-        @test isfile(joinpath(out, "AAPL", "2025-07-31.incomplete.csv"))
-        @test basename.(processed_files(out, "AAPL"; incomplete = true)) ==
+        status(s) = write(joinpath(raw, "sess.meta.toml"), "[session]\nstatus = \"$s\"\n")
+        # A running session: AAPL on both days, MSFT on day 1 only, in the
+        # older part; the newest part is empty, as just after a roll.
+        p1 = part(
+            "sess_part001.jsonl",
+            [sample_trade(1), sample_trade(2), sample_trade(3; sym = "MSFT")],
+        )
+        p2 = part(
+            "sess_part002.jsonl",
+            [shift(sample_trade(4), 1), shift(sample_trade(5), 1)],
+        )
+        p3 = part("sess_part003.jsonl", Trade[])
+        parts = [p1, p2, p3]
+        marker(out, sym, d) = joinpath(out, sym, "$d.incomplete.toml")
+        compact(out; kw...) = compact_raw(parts, out; format = :csv, tz = tz"UTC", kw...)
+        out = joinpath(dir, "processed")
+        status("running")
+        files = compact(out)
+        @test basename.(files) == ["2025-07-30.csv", "2025-07-31.csv", "2025-07-30.csv"]
+        @test all(
+            isfile,
+            [
+                marker(out, "AAPL", day1),
+                marker(out, "AAPL", day2),
+                marker(out, "MSFT", day1),
+            ],
+        )
+        @test occursin("is running", TOML.parsefile(marker(out, "AAPL", day1))["reason"])
+        # Canonical names and the default listing are as before; asked for
+        # whole days, the listing leaves the marked ones out.
+        @test length(processed_files(out, "AAPL")) == 2
+        @test isempty(processed_files(out, "AAPL"; complete = true))
+        # Ended without completing, or with a sidecar that cannot be read:
+        # still marked. Completed: the markers go.
+        for s in ("interrupted", "failed", "aborted")
+            status(s)
+            compact(out)
+            @test occursin("is $s", TOML.parsefile(marker(out, "MSFT", day1))["reason"])
+        end
+        write(joinpath(raw, "sess.meta.toml"), "[[")
+        compact(out)
+        @test occursin("unreadable", TOML.parsefile(marker(out, "AAPL", day2))["reason"])
+        status("completed")
+        compact(out)
+        @test !any(
+            isfile,
+            [
+                marker(out, "AAPL", day1),
+                marker(out, "AAPL", day2),
+                marker(out, "MSFT", day1),
+            ],
+        )
+        @test length(processed_files(out, "AAPL"; complete = true)) == 2
+        # A completed session that read a vendor file cut short.
+        write(
+            joinpath(raw, "sess.meta.toml"),
+            "[session]\nstatus = \"completed\"\n[session.source]\ntruncated = true\n",
+        )
+        compact(out)
+        @test occursin("ends early", TOML.parsefile(marker(out, "AAPL", day1))["reason"])
+        # The spill path and Arrow output mark alike; a rewrite with other
+        # content displaces the file and leaves the marker in place.
+        status("running")
+        spill = joinpath(dir, "spill")
+        compact_raw(parts, spill; format = :arrow, tz = tz"UTC", mem_fraction = 1e-12)
+        @test isfile(joinpath(spill, "AAPL", "2025-07-30.arrow")) &&
+              isfile(marker(spill, "AAPL", day1))
+        part("sess_part003.jsonl", [sample_trade(6)])
+        compact(out)
+        @test isfile(joinpath(out, "AAPL", "2025-07-30_#1.csv")) &&
+              isfile(marker(out, "AAPL", day1))
+        @test basename.(processed_files(out, "AAPL")) ==
               ["2025-07-30.csv", "2025-07-31.csv"]
-        # Asked for: every day is incomplete, whatever the sidecar says.
-        out2 = joinpath(dir, "asked")
-        files = compact_raw([p1, p2], out2; format = :csv, tz = tz"UTC", incomplete = true)
-        @test all(endswith(".incomplete.csv"), files) && length(files) == 2
-        @test isempty(processed_files(out2, "AAPL"))
-        # Parts without a sidecar give no grounds to mark anything.
+        # Asked for, whatever the sidecar says; without a sidecar, nothing.
+        status("completed")
+        asked = joinpath(dir, "asked")
+        compact_raw(parts, asked; tz = tz"UTC", incomplete = true)
+        @test TOML.parsefile(marker(asked, "AAPL", day1))["reason"] ==
+              "marked by the caller"
         lone = joinpath(dir, "lone")
         mkpath(lone)
-        cp(p2, joinpath(lone, "other_part001.jsonl"))
-        files = compact_raw(
-            [joinpath(lone, "other_part001.jsonl")],
-            joinpath(dir, "o3");
-            tz = tz"UTC",
-        )
-        @test basename.(files) == ["2025-07-31.csv"]
+        cp(p1, joinpath(lone, "other_part001.jsonl"))
+        bare = joinpath(dir, "bare")
+        compact_raw([joinpath(lone, "other_part001.jsonl")], bare; tz = tz"UTC")
+        @test !isfile(marker(bare, "AAPL", day1))
     end
 end
 

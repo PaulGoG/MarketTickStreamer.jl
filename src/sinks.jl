@@ -259,13 +259,23 @@ function _write_group(
     date::Date,
     format::Symbol,
     compression::Symbol = :none;
-    incomplete::Bool = false,
+    incomplete::Union{Nothing,AbstractString} = nothing,
 )
     ts = sort(trades; by = t -> t.time_ns)
     out = trades_table(ts)
     dir = joinpath(out_dir, sym)
     mkpath(dir)
-    path = joinpath(dir, incomplete ? "$(date).incomplete.$(format)" : "$(date).$(format)")
+    path = joinpath(dir, "$(date).$(format)")
+    marker = _marker_path(dir, date)
+    # The marker goes first, so a partial day is never on disk unmarked; a
+    # whole day clears it once its file is in place.
+    incomplete === nothing || _write_marker(marker, incomplete)
+    written = _write_day(path, out, format, compression)
+    incomplete === nothing && rm(marker; force = true)
+    return written
+end
+
+function _write_day(path::AbstractString, out, format::Symbol, compression::Symbol)
     return _safesave(path) do tmp
         if format === :csv
             CSV.write(tmp, out)
@@ -354,12 +364,29 @@ end
 
 const PROCESSED_FILE = r"^(\d{4}-\d{2}-\d{2})\.(csv|arrow)$"
 
-# A day known to be incomplete when it was compacted (see `compact_raw`).
-const INCOMPLETE_FILE = r"^(\d{4}-\d{2}-\d{2})\.incomplete\.(csv|arrow)$"
+# Beside a day file: its day is known to be incomplete (see `compact_raw`).
+_marker_path(dir::AbstractString, date) = joinpath(dir, "$(date).incomplete.toml")
+
+function _write_marker(path::AbstractString, reason::AbstractString)
+    tmp = tempname(dirname(path); cleanup = false)
+    try
+        open(tmp, "w") do io
+            println(
+                io,
+                "# The day's file under its canonical name is known to be incomplete.",
+            )
+            TOML.print(io, Dict("reason" => reason, "written" => ns_to_rfc3339(now_ns())))
+        end
+        Base.Filesystem.rename(tmp, path)
+    finally
+        rm(tmp; force = true)
+    end
+    return path
+end
 
 """
     processed_files(processed_dir, symbol; from = nothing, to = nothing,
-                    incomplete = false) -> Vector{String}
+                    complete = false) -> Vector{String}
 
 The per-day files of `symbol` in a processed tree
 (`processed_dir/SYMBOL/YYYY-MM-DD.csv|.arrow`), in date order, optionally
@@ -367,10 +394,9 @@ restricted to `[from, to]`. Safesave backups (`_#N`) and partial files are not
 listed: the base file of a day is the newest and the only one a reader should
 open. Throws an `ArgumentError` when the symbol has no directory.
 
-Days that were known to be incomplete when they were compacted
-(`YYYY-MM-DD.incomplete.csv|.arrow`, see [`compact_raw`](@ref)) are listed
-only with `incomplete = true`, and then only where the day has no file under
-its canonical name, which supersedes them.
+With `complete = true`, a day whose file has the marker
+`YYYY-MM-DD.incomplete.toml` beside it, a day known to be incomplete when it
+was compacted (see [`compact_raw`](@ref)), is left out.
 
     replay_source(processed_files(cfg.processed_dir, "AAPL"; from = Date(2026, 5, 1)))
 """
@@ -379,30 +405,20 @@ function processed_files(
     symbol::AbstractString;
     from::Union{Nothing,Date} = nothing,
     to::Union{Nothing,Date} = nothing,
-    incomplete::Bool = false,
+    complete::Bool = false,
 )
     dir = joinpath(processed_dir, symbol)
     isdir(dir) || throw(ArgumentError("no processed data for $symbol under $processed_dir"))
-    inrange(d) = (from === nothing || d >= from) && (to === nothing || d <= to)
     files = String[]
-    whole = Set{Date}()
-    partial = Pair{Date,String}[]
     for f in sort(readdir(dir))
         m = match(PROCESSED_FILE, f)
-        if m !== nothing
-            d = Date(something(m[1]))
-            inrange(d) && (push!(files, joinpath(dir, f)); push!(whole, d))
-        elseif incomplete
-            m = match(INCOMPLETE_FILE, f)
-            m === nothing && continue
-            d = Date(something(m[1]))
-            inrange(d) && push!(partial, d => joinpath(dir, f))
-        end
+        m === nothing && continue
+        d = Date(something(m[1]))
+        (from === nothing || d >= from) &&
+            (to === nothing || d <= to) &&
+            !(complete && isfile(_marker_path(dir, d))) &&
+            push!(files, joinpath(dir, f))
     end
-    for (d, f) in partial
-        d in whole || push!(files, f)
-    end
-    incomplete && sort!(files; by = basename)       # names start with the date
     return files
 end
 
@@ -435,13 +451,19 @@ output is never destroyed: the new file takes the canonical name and the one
 it displaces is kept as a numbered backup `YYYY-MM-DD_#N.csv|.arrow`
 (safesave semantics, see `_safesave`). Returns the list of files written.
 
-A day known to be incomplete is written as `YYYY-MM-DD.incomplete.csv|.arrow`
-instead, which [`processed_files`](@ref) and the corpus readers skip unless
-asked: a day of a session that is still writing it (its sidecar
-`<id>.meta.toml`, beside the parts, says `running`, and the day appears in the
-session's newest part), or every day when `incomplete = true`. Parts without a
-sidecar give no grounds to mark anything. A later compaction of the whole day
-writes the canonical name, which supersedes the incomplete file.
+A day known to be incomplete gets the marker `YYYY-MM-DD.incomplete.toml`
+beside its file, written before the file, and a compaction that writes the
+day with nothing known against it removes the marker. A day is known to be
+incomplete when one of its prints comes from a raw part whose session (its
+sidecar `<id>.meta.toml` in the part's directory, the longest id that
+prefixes the part's name) has not completed (`running`, `interrupted`,
+`failed`, `aborted`, or a sidecar that cannot be read), or read a vendor file
+that ends early (`source.truncated`); with `incomplete = true` every day is.
+Parts without a sidecar give no grounds to mark anything. Every day of such a
+session is marked, a day the session had finished included: the sidecar
+records how the session ended, not which of its days were whole.
+[`processed_files`](@ref) leaves marked days out with `complete = true`; the
+canonical names and the default listings are the same either way.
 
 `dedup = true` drops exact duplicate prints (reconnection double-delivery,
 overlapping backfill/live captures, rows a vendor file repeats) via
@@ -484,38 +506,63 @@ function compact_raw(
     tz::TimeZone = tz"America/New_York",
     kw...,
 )
-    marked = incomplete ? _every_day : _days_in_progress(raw_paths, tz)
+    marked = incomplete ? _caller_marked : _session_marks(raw_paths, tz)
     return _compact_raw(raw_paths, out_dir; tz, incomplete = marked, kw...).files
 end
 
-_every_day(_, _) = true
-_no_day(_, _) = false
+_no_day(_, _) = nothing
+_caller_marked(_, _) = "marked by the caller"
 
-# The (symbol, day) groups a session is still writing, as a predicate: for
-# each session among `raw_paths` whose sidecar says `running`, the days in its
-# newest part. A session found by its sidecar: the longest sidecar id in the
-# part's directory that prefixes the part's name.
-function _days_in_progress(raw_paths::AbstractVector{<:AbstractString}, tz::TimeZone)
-    marked = Set{Tuple{String,Date}}()
-    seen = Set{String}()
+# The (symbol, day) groups known to be incomplete, as a predicate returning
+# the reason or `nothing`: every group with a print in a part of a session
+# that has not completed, or that read a vendor file that ends early. The
+# parts of such sessions are read line by line, so memory holds the set of
+# groups only.
+function _session_marks(raw_paths::AbstractVector{<:AbstractString}, tz::TimeZone)
+    marks = Dict{Tuple{String,Date},String}()
+    ids = Dict{String,Vector{String}}()              # directory → sidecar ids
+    reasons = Dict{String,Union{Nothing,String}}()   # sidecar → reason
     for p in raw_paths
         dir, name = splitdir(abspath(p))
         m = match(r"^(.*)_part\d+\.jsonl$", name)
         m === nothing && continue
-        id = _sidecar_id(dir, something(m[1]))
+        id = _longest_prefix(get!(() -> _sidecar_ids(dir), ids, dir), something(m[1]))
         id === nothing && continue
-        session = joinpath(dir, id)
-        session in seen && continue
-        push!(seen, session)
-        _sidecar_status(session * ".meta.toml") == "running" || continue
-        parts = _raw_files_with_prefix(dir, id)
-        isempty(parts) && continue
-        newest = parts[argmax(map(mtime, parts))]
-        for t in read_raw([newest])
-            push!(marked, (t.symbol, trading_date(t.time_ns; tz)))
+        sidecar = joinpath(dir, "$(id).meta.toml")
+        reason = get!(() -> _incomplete_reason(sidecar, id), reasons, sidecar)
+        reason === nothing && continue
+        for line in eachline(p)
+            isempty(strip(line)) && continue
+            t = try
+                json_to_trade(line)
+            catch e
+                e isa InterruptException && rethrow()
+                continue
+            end
+            get!(marks, (t.symbol, trading_date(t.time_ns; tz)), reason)
         end
     end
-    return (sym, day) -> (sym, day) in marked
+    return (sym, day) -> get(marks, (sym, day), nothing)
+end
+
+# Why the session of `sidecar` leaves its days incomplete, or `nothing`.
+function _incomplete_reason(sidecar::AbstractString, id::AbstractString)
+    meta = try
+        TOML.parsefile(sidecar)
+    catch e
+        e isa InterruptException && rethrow()
+        return "session $id: sidecar unreadable"
+    end
+    s = get(meta, "session", nothing)
+    s isa AbstractDict || return "session $id: sidecar without a session table"
+    status = get(s, "status", nothing)
+    status == "completed" ||
+        return "session $id $(status === nothing ? "has no status" : "is $status")"
+    src = get(s, "source", nothing)
+    src isa AbstractDict &&
+        get(src, "truncated", false) === true &&
+        return "session $id read a vendor file that ends early"
+    return nothing
 end
 
 # The compaction proper. Returns the files written and the number of prints
@@ -610,9 +657,8 @@ end
 Compact into `cfg.processed_dir` with everything else taken from the
 configuration: format, the provider's calendar, the heap ceiling and the spill
 thresholds of `[limits]`. This is the form the pipeline and the scripts use, so
-a capture is never filed under a calendar other than its provider's. Days a
-session is still writing, or every day with `incomplete = true`, are written
-as `YYYY-MM-DD.incomplete.csv|.arrow`, as in the other form.
+a capture is never filed under a calendar other than its provider's. Days
+known to be incomplete are marked as in the other form.
 """
 function compact_raw(
     cfg::Config,
@@ -620,12 +666,13 @@ function compact_raw(
     incomplete::Bool = false,
     kw...,
 )
-    marked = incomplete ? _every_day : _days_in_progress(raw_paths, cfg.exchange_tz)
+    marked = incomplete ? _caller_marked : _session_marks(raw_paths, cfg.exchange_tz)
     return _compact_raw(cfg, raw_paths; incomplete = marked, kw...).files
 end
 
-# The pipeline's own compaction: a backfill or an import compacts whole days
-# while its session runs, so no session status is consulted here.
+# The pipeline's own compaction: a backfill compacts whole days while its
+# session runs, and an import says itself whether its file was cut short, so
+# no sidecar is consulted here.
 _compact_raw(
     cfg::Config,
     raw_paths::AbstractVector{<:AbstractString};

@@ -28,9 +28,10 @@ deleted once the day is under `processed/`, the checksummed vendor file being
 the record, as `backfill.keep_raw` does for a bulk day.
 
 A file that ends early, as a partial download does, is imported
-to that point and logged as incomplete: its days are written as
-`YYYY-MM-DD.incomplete.csv|.arrow`, which the readers skip unless asked (see
-[`processed_files`](@ref)), and the sidecar's `source.truncated` says so. The configured provider contributes its calendar and timestamp
+to that point and logged as incomplete: the sidecar's `source.truncated` says
+so, and each day gets the marker `YYYY-MM-DD.incomplete.toml` beside its file
+(see [`compact_raw`](@ref)). A marked day does not count as existing for the
+check below, so a whole file of that day imports over it without `replace`. The configured provider contributes its calendar and timestamp
 unit only; `"alpaca"` is the host for both US-equity formats.
 
 The processed tree is keyed by symbol and day with no source dimension, so
@@ -149,19 +150,17 @@ function _run_import(
         if summary.ticks == 0
             @warn "no prints read from the file" file = basename(path)
         else
-            # A file that ends early holds part of its day only.
             c = _compact_raw(
                 cfg,
                 files;
-                incomplete = stats.truncated ? _every_day : _no_day,
+                incomplete = stats.truncated ? _truncated_marked : _no_day,
             )
             append!(processed, c.files)
             summary.ticks_processed = c.rows
             keep_raw || foreach(f -> rm(f; force = true), files)
         end
         stats.truncated &&
-            @warn "the file ends early; the day is filed as incomplete" file =
-                basename(path)
+            @warn "the file ends early; the day is marked incomplete" file = basename(path)
         @info "imported" format file = basename(path) messages = stats.messages prints =
             summary.ticks stored = summary.ticks_processed broken = stats.broken
         @info "import finished" status = summary.status files = length(processed) prints =
@@ -169,6 +168,8 @@ function _run_import(
         return processed
     end
 end
+
+_truncated_marked(_, _) = "the vendor file ends early"
 
 # The vendor file as the sidecar records it: identity and checksum, computed
 # once before the reader runs, and what the reader counted, merged in by

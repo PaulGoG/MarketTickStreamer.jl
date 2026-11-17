@@ -18,7 +18,8 @@ and versioned with the package.
 3. A processed file appears atomically and is never modified. A rewrite
    with other content displaces the old file to a `_#N` backup, so the
    canonical name always holds the newest data. A day known to be
-   incomplete when it was compacted never takes the canonical name.
+   incomplete when it was compacted has the marker
+   `<YYYY-MM-DD>.incomplete.toml` beside its file.
 4. The sidecar is the session's lifecycle, and its configuration snapshot is
    the source of every derived quantity: the calendar a print is filed under,
    the time zone of a window, the sale-condition lists.
@@ -32,7 +33,7 @@ stationary consumer reads the processed tree of sessions that have finished.
 | | Streaming | Stationary |
 | --- | --- | --- |
 | Attaches to | The raw parts of one session, running or finished. | The processed tree. |
-| Lifecycle signal | The sidecar's `session.status`: follow while it is `running`, stop once it leaves. | None: a file under its canonical name holds every print its sources recorded for the day. A day known to be incomplete when it was compacted (a session still writing it, a vendor file that ends early) is filed as `<YYYY-MM-DD>.incomplete.<ext>` instead. |
+| Lifecycle signal | The sidecar's `session.status`: follow while it is `running`, stop once it leaves. | None: a file under its canonical name holds every print its sources recorded for the day, and is a whole day unless the marker `<YYYY-MM-DD>.incomplete.toml` sits beside it. |
 | Order of prints | Arrival order, as the sink received them. | Ascending `time_ns` within each (symbol, day) file. |
 | Mutability | Append-only; the last line may be torn while the session runs. | Immutable; a rewrite takes the canonical name and moves the old file to `_#N`. |
 | Julia entry point | [`follow_source`](@ref) | [`eachday`](@ref), [`read_processed`](@ref), [`replay_source`](@ref) |
@@ -59,7 +60,7 @@ are the defaults of `raw_subdir`, `processed_subdir` and `bulk_subdir`.
 | `raw/<id>.manifest.toml` | Every session | Read. |
 | `processed/<SYMBOL>/<YYYY-MM-DD>.csv` or `.arrow` | Compaction: `compact_raw`, and each day of a backfill or import | Read. |
 | `processed/<SYMBOL>/<YYYY-MM-DD>_#N.csv` or `.arrow` | The rewrite that displaced it | Ignore, or read as history; `_#1` is the oldest. |
-| `processed/<SYMBOL>/<YYYY-MM-DD>.incomplete.csv` or `.arrow` | Compaction of a day known to be incomplete: a session still writing it, an import of a file that ends early, or `compact_raw(...; incomplete = true)` | Read on purpose only (`processed_files(...; incomplete = true)`); the canonical file of the same day supersedes it. Same columns and order as a canonical file. |
+| `processed/<SYMBOL>/<YYYY-MM-DD>.incomplete.toml` | A compaction that knew the day incomplete; removed by one that writes the day with nothing known against it | Read to tell a partial day; `processed_files(...; complete = true)` leaves marked days out. Keys `reason` and `written`. |
 | `*.partial.csv`, `*.partial.arrow`, `*.partial.toml`, `raw/<id>.meta.toml.partial`, `bulk/**/*.partial` | A write or a download in progress | Never read. |
 | `bulk/binance/<SYMBOL>/<SYMBOL>-<kind>-<YYYY-MM-DD>.zip` and `.zip.CHECKSUM` | A bulk backfill; `kind` is `aggTrades` or `trades` | Read only as the record of a day. |
 | `bulk/itch50/<file>`, `bulk/iex/<file>` | `fetch_itch50`, `fetch_iex_hist` | Read only as the record of a day. |
@@ -202,16 +203,20 @@ with the same bytes leaves the file as it was. The tree has no source dimension:
 capture of that day would be, so each source (capture, ITCH, IEX) has a data
 tree of its own.
 
-A day is filed as `<YYYY-MM-DD>.incomplete.<ext>` when the compaction knows
-it to be partial: the raw parts belong to a session whose sidecar still says
-`running` and the day is in that session's newest part, or the vendor file
-of an import ends early (`source.truncated`), or the caller says so. What the
-compaction cannot know, whether a finished capture covered the whole trading
-day, is the session's own record: its sidecar times, and
-[`coverage_report`](@ref) against the historical tape. A later compaction of
-the whole day takes the canonical name beside the incomplete file and leaves
-it in place; a repeated incomplete compaction displaces it to
-`<YYYY-MM-DD>.incomplete_#N.<ext>`, as any rewrite does.
+A day is known to be incomplete when one of its prints comes from a session
+that did not complete (its sidecar says `running`, `interrupted`, `failed` or
+`aborted`, or cannot be read), or from a vendor file that ends early
+(`source.truncated`). Its file still takes the canonical name, and the marker
+`<YYYY-MM-DD>.incomplete.toml` beside it says so and why. The marker is
+written before the file, so a partial day is never on disk unmarked, and a
+later compaction that writes the day with nothing known against it removes
+it. Every day of such a session is marked, those it had finished included:
+the sidecar records how the session ended, not which of its days were whole.
+What no record shows, whether a completed capture covered the whole trading
+day, is the session's own business: its sidecar times, and
+[`coverage_report`](@ref) against the historical tape. A backfill fetches a
+marked day again when it resumes, and an import replaces one without
+`replace = true`.
 
 ## Vendor and bulk files
 

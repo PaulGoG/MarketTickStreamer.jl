@@ -832,7 +832,8 @@ end
         @test src["bytes"] == filesize(file) && length(src["sha256"]) == 64
         @test src["messages"] == 11 && src["prints"] == 5 && src["truncated"] == false
         # The same day without its End of Messages event, in a tree of its
-        # own: the file ends early, so its days are filed as incomplete.
+        # own: imported, and marked incomplete; a recompaction of its raw
+        # parts keeps the marker, and the whole file imports over it.
         cut_file = joinpath(dir, "cut", "12302019.NASDAQ_ITCH50.gz")
         mkpath(dirname(cut_file))
         open(GzipCompressorStream, cut_file, "w") do io
@@ -844,13 +845,24 @@ end
             "[stream]\nsymbols = [\"AAPL\", \"MSFT\"]\n[storage]\ndata_dir = \"data\"\nprocessed_format = \"csv\"\n[logging]\nlog_to_file = false\n",
         )
         cfg_cut = load_config(pc)
-        # (the import logs through its session's logger, so the warning is
-        # not captured here; the names are the record)
         cut_files = run_import(cfg_cut, cut_file; format = :itch50)
-        @test length(cut_files) == 2 &&
-              all(endswith("2019-12-30.incomplete.csv"), cut_files)
-        @test isempty(processed_files(cfg_cut.processed_dir, "AAPL"))
-        @test length(processed_files(cfg_cut.processed_dir, "AAPL"; incomplete = true)) == 1
+        @test all(endswith("2019-12-30.csv"), cut_files) && length(cut_files) == 2
+        aapl = joinpath(cfg_cut.processed_dir, "AAPL")
+        @test isfile(joinpath(aapl, "2019-12-30.incomplete.toml"))
+        @test length(processed_files(cfg_cut.processed_dir, "AAPL")) == 1
+        @test isempty(processed_files(cfg_cut.processed_dir, "AAPL"; complete = true))
+        compact_raw(
+            cfg_cut,
+            filter(endswith(".jsonl"), readdir(cfg_cut.raw_dir; join = true)),
+        )
+        @test isfile(joinpath(aapl, "2019-12-30.incomplete.toml"))
+        @test !MarketTickStreamer._processed_exists(cfg_cut, "AAPL", Date(2019, 12, 30))
+        whole = joinpath(dirname(cut_file), "whole", "12302019.NASDAQ_ITCH50.gz")
+        mkpath(dirname(whole))
+        cp(file, whole)
+        run_import(cfg_cut, whole; format = :itch50)          # no `replace` needed
+        @test !isfile(joinpath(aapl, "2019-12-30.incomplete.toml"))
+        @test MarketTickStreamer._processed_exists(cfg_cut, "AAPL", Date(2019, 12, 30))
         @test length(meta["session"]["raw_files"]) == 1
         # a second import of one symbol without the raw copy: processed again
         # (safesave keeps the first), raw parts gone, the sidecar lists none.

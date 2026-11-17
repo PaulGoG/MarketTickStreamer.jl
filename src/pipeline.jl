@@ -762,8 +762,12 @@ function _run_stream(
     end
 end
 
+# Whether the day is in the tree and not known to be incomplete: a backfill's
+# resume fetches a marked day again, and an import may replace it.
 _processed_exists(cfg::Config, sym::AbstractString, day::Date) =
-    any(isfile(joinpath(cfg.processed_dir, sym, "$day.$ext")) for ext in ("csv", "arrow"))
+    any(
+        isfile(joinpath(cfg.processed_dir, sym, "$day.$ext")) for ext in ("csv", "arrow")
+    ) && !isfile(_marker_path(joinpath(cfg.processed_dir, sym), day))
 
 """
     run_backfill(cfg::Config; provider = nothing) -> Vector{String}

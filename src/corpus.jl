@@ -20,15 +20,11 @@ const BYTES_PER_PRINT = 102
 function _days_from_files(paths::AbstractVector{<:AbstractString})
     groups = Dict{Date,Vector{String}}()
     for p in paths
-        m = something(
-            match(PROCESSED_FILE, basename(p)),
-            match(INCOMPLETE_FILE, basename(p)),
-            Some(nothing),
-        )
+        m = match(PROCESSED_FILE, basename(p))
         m === nothing && throw(
             ArgumentError(
-                "not a processed day file (YYYY-MM-DD[.incomplete].csv|.arrow): $p; " *
-                "safesave backups and partial files are not read",
+                "not a processed day file (YYYY-MM-DD.csv|.arrow): $p; safesave " *
+                "backups and partial files are not read",
             ),
         )
         isfile(p) || throw(ArgumentError("no such file: $p"))
