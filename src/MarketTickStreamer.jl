@@ -34,6 +34,7 @@ using Mmap: Mmap
 using Printf: @sprintf
 using Random: RandomDevice, Xoshiro
 using SHA: sha1, sha256
+using Sockets: TCPSocket
 using Statistics: Statistics, median
 using TOML: TOML
 

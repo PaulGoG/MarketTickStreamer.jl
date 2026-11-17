@@ -360,8 +360,11 @@ function load_config(path::AbstractString = _default_config_path())
         ),
     )
     stale_timeout = _cfg_value(st, "stream", "stale_timeout_s", Float64, 120.0)
-    stale_timeout > 0 ||
-        throw(ArgumentError("stream.stale_timeout_s must be > 0, got $stale_timeout"))
+    # A day bounds it: beyond that a session has no use for the watchdog, and
+    # a timer of `Inf` or anything near it cannot be armed.
+    0 < stale_timeout <= 86_400 || throw(
+        ArgumentError("stream.stale_timeout_s must be in (0, 86400], got $stale_timeout"),
+    )
 
     sto = tbl("storage")
     data_dir = _resolve(_cfg_value(sto, "storage", "data_dir", String, "data"), config_dir)

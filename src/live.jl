@@ -362,7 +362,20 @@ const CLOSE_GRACE_S = 2.0
 # Sever `conn` (an `HTTP.Connection`) from a task other than the one reading
 # it. The reading task then meets the end of the stream, and a closing
 # handshake still running in it finishes at once.
+#
+# Julia's `close` of a socket first waits for its queued writes to drain,
+# which a peer that has stopped reading never lets happen once the send
+# buffer is full. `shutdown(2)` on the descriptor beforehand fails the queued
+# writes and ends the pending read, so the close returns at once.
 function _sever(conn)
+    tcp = _tcp_socket(conn)
+    if tcp !== nothing && Sys.isunix()
+        try
+            isopen(tcp) && ccall(:shutdown, Cint, (Cint, Cint), Base._fd(tcp), 2)   # SHUT_RDWR
+        catch e
+            e isa InterruptException && rethrow()
+        end
+    end
     try
         close(conn)
     catch e
@@ -371,20 +384,39 @@ function _sever(conn)
     return nothing
 end
 
+# The TCP socket under `x`: `x` itself, or a field of it, or a field of one
+# of its fields: an `HTTP.Connection` holds the socket or the TLS stream
+# (OpenSSL.jl, MbedTLS.jl) that wraps it.
+function _tcp_socket(x, depth::Int = 2)
+    x isa TCPSocket && return x
+    depth == 0 && return nothing
+    x isa IO || return nothing
+    for f in fieldnames(typeof(x))
+        isdefined(x, f) || continue
+        tcp = _tcp_socket(getfield(x, f), depth - 1)
+        tcp === nothing || return tcp
+    end
+    return nothing
+end
+
 _close_ws(ws) = _sever(ws.io)
 
 # Close `ws` with a CLOSE frame and wait up to `CLOSE_GRACE_S` for the peer's
-# answer, then sever the transport. HTTP.jl's `close(ws)` alone reads until
-# the answer arrives, which on a silent peer lasts until TCP gives up.
+# answer, then sever the transport and wait as long again for the handshake to
+# end. HTTP.jl's `close(ws)` alone reads until the answer arrives, which on a
+# silent peer lasts until TCP gives up. Returns the task that ran the
+# handshake.
 function _close_bounded(ws)
     closing = Threads.@spawn try
         close(ws)
     catch e
         e isa InterruptException && rethrow()
     end
-    timedwait(() -> istaskdone(closing), CLOSE_GRACE_S; pollint = 0.05) === :ok ||
+    if timedwait(() -> istaskdone(closing), CLOSE_GRACE_S; pollint = 0.05) !== :ok
         _close_ws(ws)
-    return nothing
+        timedwait(() -> istaskdone(closing), CLOSE_GRACE_S; pollint = 0.05)
+    end
+    return closing
 end
 
 # Guard task: `stop!` the session once the wall clock passes `stop_ns`
@@ -539,8 +571,22 @@ function stream_websocket!(
     ]
     fatal = Ref{Union{Nothing,FatalStreamError}}(nothing)
     # The client half of `HTTP.WebSockets.open`, taken here so that the
-    # connection is in hand before the answer to the upgrade is read.
-    HTTP.open("GET", url, request_headers) do http
+    # connection is in hand before the answer to the upgrade is read. HTTP.jl's
+    # own retries are off: the session's reconnect loop owns the attempts and
+    # their backoff.
+    try
+        _websocket_request(on_frame, s, url, request_headers, key, stale_timeout_s, fatal)
+    catch e
+        # A stop severs the transport, and whatever was reading it fails:
+        # that is the orderly end the stop asked for.
+        (s.stop[] && !(e isa InterruptException)) || rethrow()
+    end
+    fatal[] === nothing || throw(fatal[])
+    return nothing
+end
+
+function _websocket_request(on_frame, s, url, request_headers, key, stale_timeout_s, fatal)
+    HTTP.open("GET", url, request_headers; retry = false) do http
         conn = http.stream
         _register_ws!(s, conn) && return nothing      # stopped before the answer
         _await_upgrade(http, key, stale_timeout_s)
@@ -566,7 +612,6 @@ function stream_websocket!(
             _close_bounded(ws)
         end
     end
-    fatal[] === nothing || throw(fatal[])
     return nothing
 end
 
@@ -593,7 +638,10 @@ function _await_upgrade(http, key::AbstractString, timeout_s::Float64)
     ok =
         r.status == 101 &&
         lowercase(HTTP.header(r, "Upgrade")) == "websocket" &&
-        occursin("upgrade", lowercase(HTTP.header(r, "Connection"))) &&
+        any(
+            t -> strip(t) == "upgrade",
+            split(lowercase(HTTP.header(r, "Connection")), ','),
+        ) &&
         HTTP.header(r, "Sec-WebSocket-Accept") == accept
     ok || error("WebSocket upgrade refused: HTTP $(r.status)")
     return nothing

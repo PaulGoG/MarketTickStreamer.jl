@@ -54,6 +54,9 @@
         rejected(base * "[alpaca]\nrest_base = \"http://x\"\n")   # a Binance key
         rejected(base * "[kraken]\nrest_base = \"http://x\"\n")   # no such provider
         # bounds
+        rejected(base * "stale_timeout_s = 0.0\n")
+        rejected(base * "stale_timeout_s = inf\n")              # no timer can be armed
+        rejected(base * "stale_timeout_s = 86401.0\n")
         rejected(base * "reconnect_max_retries = -1\n")
         rejected(base * "reconnect_base_delay_s = 2.0\nreconnect_max_delay_s = 1.0\n")
         rejected(base * "[storage]\nflush_max_ticks = 0\n")

@@ -220,7 +220,50 @@ end
     end
 end
 
-@testset "live: a close waits on a peer that stops reading for a bounded time" begin
+@testset "live: a sever is immediate and a close bounded, on every transport" begin
+    # The peer never reads, and the client fills its send buffer first:
+    # Julia's close of a socket would wait for those writes to drain.
+    mktempdir() do dir
+        sslconfig = self_signed_sslconfig(dir)
+        silent(port; tls) = HTTP.WebSockets.listen!(
+            "127.0.0.1",
+            port;
+            verbose = false,
+            sslconfig = tls ? sslconfig : nothing,
+        ) do ws
+            HTTP.WebSockets.send(ws, "x")
+            sleep(20)
+        end
+        ws_port, wss_port = freeport(9901), freeport(9911)
+        servers = (silent(ws_port; tls = false), silent(wss_port; tls = true))
+        grace = MarketTickStreamer.CLOSE_GRACE_S
+        try
+            for (url, tls) in (
+                ("ws://127.0.0.1:$ws_port", nothing),
+                ("wss://127.0.0.1:$wss_port", TLS_STACKS[1]),
+                ("wss://127.0.0.1:$wss_port", TLS_STACKS[2]),
+            )
+                with_tls(something(tls, HTTP.SOCKET_TYPE_TLS[])) do
+                    HTTP.WebSockets.open(url; suppress_close_error = true) do ws
+                        first(ws)
+                        filler = Threads.@spawn try
+                            for _ in 1:1000
+                                HTTP.WebSockets.send(ws, repeat("y", 1 << 16))
+                            end
+                        catch
+                        end
+                        sleep(0.5)
+                        elapsed = @elapsed closing = MarketTickStreamer._close_bounded(ws)
+                        @test grace <= elapsed < grace + 2
+                        @test istaskdone(closing)
+                        @test timedwait(() -> istaskdone(filler), 5.0) === :ok
+                    end
+                end
+            end
+        finally
+            foreach(close, servers)
+        end
+    end
     port = freeport(9881)
     server = HTTP.WebSockets.listen!("127.0.0.1", port; verbose = false) do ws
         HTTP.WebSockets.send(ws, "x")
@@ -255,6 +298,97 @@ end
     finally
         close(server)
         close(server2)
+    end
+end
+
+@testset "live: stream_websocket! is not retried by HTTP.jl, and is bounded" begin
+    mktempdir() do dir
+        # A listener that accepts and drops at once. HTTP.jl would retry the
+        # request on its own; the session's reconnect loop owns the attempts.
+        port = freeport(9921)
+        listener = HTTP.Sockets.listen(HTTP.Sockets.ip"127.0.0.1", port)
+        accepted = Threads.Atomic{Int}(0)
+        acceptor = @async while isopen(listener)
+            sock = try
+                HTTP.Sockets.accept(listener)
+            catch
+                break
+            end
+            Threads.atomic_add!(accepted, 1)
+            close(sock)
+        end
+        try
+            @test_throws Exception MarketTickStreamer.stream_websocket!(
+                (ws, msg) -> nothing,
+                bare_session(),
+                "ws://127.0.0.1:$port",
+                30.0,
+            )
+            @test accepted[] == 1
+        finally
+            close(listener)
+        end
+        # Servers that read the upgrade request and never answer it.
+        sslconfig = self_signed_sslconfig(dir)
+        mute(port; tls) = HTTP.listen!(
+            "127.0.0.1",
+            port;
+            verbose = false,
+            sslconfig = tls ? sslconfig : nothing,
+        ) do http
+            sleep(30)
+        end
+        ws_port, wss_port = freeport(9931), freeport(9941)
+        servers = (mute(ws_port; tls = false), mute(wss_port; tls = true))
+        try
+            for (url, tls) in (
+                ("ws://127.0.0.1:$ws_port", nothing),
+                ("wss://127.0.0.1:$wss_port", TLS_STACKS[1]),
+                ("wss://127.0.0.1:$wss_port", TLS_STACKS[2]),
+            )
+                with_tls(something(tls, HTTP.SOCKET_TYPE_TLS[])) do
+                    # Stopped already: returns at once, without an error.
+                    s = bare_session()
+                    stop!(s)
+                    @test (@elapsed MarketTickStreamer.stream_websocket!(
+                        (ws, msg) -> nothing,
+                        s,
+                        url,
+                        30.0,
+                    )) < 2
+                    close(s.channel)
+                    # Unanswered: cut after the timeout, a retryable error.
+                    s = bare_session()
+                    t =
+                        @elapsed @test_throws Exception MarketTickStreamer.stream_websocket!(
+                            (ws, msg) -> nothing,
+                            s,
+                            url,
+                            0.5,
+                        )
+                    @test t < 5
+                    @test s.opens[] == 0
+                    close(s.channel)
+                    # Stopped while unanswered: the stop reaches the request.
+                    s = bare_session()
+                    task = Threads.@spawn MarketTickStreamer.stream_websocket!(
+                        (ws, msg) -> nothing,
+                        s,
+                        url,
+                        30.0,
+                    )
+                    @test timedwait(() -> s.ws[] !== nothing, 10.0) === :ok
+                    t0 = time()
+                    stop!(s)
+                    @test timedwait(() -> istaskdone(task), 5.0) === :ok
+                    @test time() - t0 < 2
+                    @test fetch(task) === nothing
+                    close(s.channel)
+                end
+            end
+        finally
+            foreach(close, servers)
+        end
     end
 end
 
@@ -546,20 +680,7 @@ end
     # the session is stopped from this task while the producer reads on a
     # worker thread, once through each TLS stack HTTP.jl offers.
     mktempdir() do dir
-        key = OpenSSL.EvpPKey(OpenSSL.rsa_generate_key())
-        cert = OpenSSL.X509Certificate()
-        name = OpenSSL.X509Name()
-        OpenSSL.add_entry(name, "CN", "127.0.0.1")
-        cert.subject_name = name
-        cert.issuer_name = name
-        Dates.adjust(cert.time_not_before, Second(0))
-        Dates.adjust(cert.time_not_after, Day(1))
-        cert.public_key = key
-        OpenSSL.sign_certificate(cert, key)
-        certfile, keyfile = joinpath(dir, "cert.pem"), joinpath(dir, "key.pem")
-        write(certfile, sprint(write, cert))
-        write(keyfile, sprint(write, key))
-        sslconfig = MbedTLS.SSLConfig(certfile, keyfile)
+        sslconfig = self_signed_sslconfig(dir)
         ws_port = freeport(9091)
         frames = [mock_binance_frame("BTCUSDT", k) for k in 1:3]
         server = start_mock_binance_ws(
@@ -578,11 +699,9 @@ end
                 max_session_hours = 0.05,
             ),
         )
-        default_tls = HTTP.SOCKET_TYPE_TLS[]
         try
-            for tls in (OpenSSL.SSLStream, MbedTLS.SSLContext)
-                HTTP.SOCKET_TYPE_TLS[] = tls
-                withenv("JULIA_SSL_NO_VERIFY_HOSTS" => "127.0.0.1") do
+            for tls in TLS_STACKS
+                with_tls(tls) do
                     s = live_source(BinanceProvider(cfg), cfg)
                     got = Trade[]
                     for _ in 1:3
@@ -601,7 +720,6 @@ end
                 end
             end
         finally
-            HTTP.SOCKET_TYPE_TLS[] = default_tls
             close(server)
         end
     end

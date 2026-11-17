@@ -65,6 +65,47 @@ function freeport(start)
     error("no free port in $start:$last")
 end
 
+# A self-signed certificate for 127.0.0.1, valid for a day, as the server
+# configuration of a TLS mock. Clients are told not to verify it through
+# `JULIA_SSL_NO_VERIFY_HOSTS`.
+function self_signed_sslconfig(dir)
+    key = OpenSSL.EvpPKey(OpenSSL.rsa_generate_key())
+    cert = OpenSSL.X509Certificate()
+    name = OpenSSL.X509Name()
+    OpenSSL.add_entry(name, "CN", "127.0.0.1")
+    cert.subject_name = name
+    cert.issuer_name = name
+    Dates.adjust(cert.time_not_before, Second(0))
+    Dates.adjust(cert.time_not_after, Day(1))
+    cert.public_key = key
+    OpenSSL.sign_certificate(cert, key)
+    certfile, keyfile = joinpath(dir, "cert.pem"), joinpath(dir, "key.pem")
+    write(certfile, sprint(write, cert))
+    write(keyfile, sprint(write, key))
+    return MbedTLS.SSLConfig(certfile, keyfile)
+end
+
+# The TLS stacks an HTTP.jl client can use; `with_tls` runs `f` on one of
+# them, with certificate verification off for the local mocks.
+const TLS_STACKS = (OpenSSL.SSLStream, MbedTLS.SSLContext)
+function with_tls(f, tls)
+    default_tls = HTTP.SOCKET_TYPE_TLS[]
+    HTTP.SOCKET_TYPE_TLS[] = tls
+    try
+        withenv(f, "JULIA_SSL_NO_VERIFY_HOSTS" => "127.0.0.1")
+    finally
+        HTTP.SOCKET_TYPE_TLS[] = default_tls
+    end
+end
+
+# A session with no producer, for calling the connection functions directly.
+bare_session() = LiveSession(
+    Channel{Trade}(10),
+    Threads.Atomic{Bool}(false),
+    Ref{Any}(nothing),
+    Ref((; ticks = 0, frames = 0, reconnects = 0)),
+)
+
 sample_trade(i; sym = "AAPL") = Trade(
     sym,
     1_753_886_600_000_000_000 + i * 1_000_000,
