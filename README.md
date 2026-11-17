@@ -301,9 +301,9 @@ The full contract, for consumers in any language, is on the
   per-day files for the analysis pipeline. Existing files are never
   destroyed (the new file takes the canonical name; the displaced one is
   kept as a `_#N` backup; a rewrite with the same bytes leaves the file as
-  it was). A day known to be incomplete, from a session that did not
-  complete or a vendor file that ends early, has the marker
-  `YYYY-MM-DD.incomplete.toml` beside its file.
+  it was). A day file known to hold a partial day, from a session that did
+  not complete or a vendor file that ends early, has the marker
+  `<file>.incomplete.toml` beside it.
 - Timestamps are Int64 nanoseconds since the UNIX epoch (UTC) everywhere;
   `time_ns` is the exchange timestamp, `recv_ns` local receive time
   (`0` marks backfilled records).

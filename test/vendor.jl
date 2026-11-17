@@ -833,7 +833,8 @@ end
         @test src["messages"] == 11 && src["prints"] == 5 && src["truncated"] == false
         # The same day without its End of Messages event, in a tree of its
         # own: imported, and marked incomplete; a recompaction of its raw
-        # parts keeps the marker, and the whole file imports over it.
+        # parts keeps the marker; the whole file needs `replace`, as for any
+        # day in the tree, and clears the marker.
         cut_file = joinpath(dir, "cut", "12302019.NASDAQ_ITCH50.gz")
         mkpath(dirname(cut_file))
         open(GzipCompressorStream, cut_file, "w") do io
@@ -848,21 +849,21 @@ end
         cut_files = run_import(cfg_cut, cut_file; format = :itch50)
         @test all(endswith("2019-12-30.csv"), cut_files) && length(cut_files) == 2
         aapl = joinpath(cfg_cut.processed_dir, "AAPL")
-        @test isfile(joinpath(aapl, "2019-12-30.incomplete.toml"))
+        @test isfile(joinpath(aapl, "2019-12-30.csv.incomplete.toml"))
         @test length(processed_files(cfg_cut.processed_dir, "AAPL")) == 1
         @test isempty(processed_files(cfg_cut.processed_dir, "AAPL"; complete = true))
         compact_raw(
             cfg_cut,
             filter(endswith(".jsonl"), readdir(cfg_cut.raw_dir; join = true)),
         )
-        @test isfile(joinpath(aapl, "2019-12-30.incomplete.toml"))
-        @test !MarketTickStreamer._processed_exists(cfg_cut, "AAPL", Date(2019, 12, 30))
+        @test isfile(joinpath(aapl, "2019-12-30.csv.incomplete.toml"))
         whole = joinpath(dirname(cut_file), "whole", "12302019.NASDAQ_ITCH50.gz")
         mkpath(dirname(whole))
         cp(file, whole)
-        run_import(cfg_cut, whole; format = :itch50)          # no `replace` needed
-        @test !isfile(joinpath(aapl, "2019-12-30.incomplete.toml"))
-        @test MarketTickStreamer._processed_exists(cfg_cut, "AAPL", Date(2019, 12, 30))
+        @test_throws ArgumentError run_import(cfg_cut, whole; format = :itch50)
+        run_import(cfg_cut, whole; format = :itch50, replace = true)
+        @test !isfile(joinpath(aapl, "2019-12-30.csv.incomplete.toml"))
+        @test length(processed_files(cfg_cut.processed_dir, "AAPL"; complete = true)) == 1
         @test length(meta["session"]["raw_files"]) == 1
         # a second import of one symbol without the raw copy: processed again
         # (safesave keeps the first), raw parts gone, the sidecar lists none.

@@ -762,12 +762,10 @@ function _run_stream(
     end
 end
 
-# Whether the day is in the tree and not known to be incomplete: a backfill's
-# resume fetches a marked day again, and an import may replace it.
+_unfinished_marked(_, _) = "fetched before the day ended"
+
 _processed_exists(cfg::Config, sym::AbstractString, day::Date) =
-    any(
-        isfile(joinpath(cfg.processed_dir, sym, "$day.$ext")) for ext in ("csv", "arrow")
-    ) && !isfile(_marker_path(joinpath(cfg.processed_dir, sym), day))
+    any(isfile(joinpath(cfg.processed_dir, sym, "$day.$ext")) for ext in ("csv", "arrow"))
 
 """
     run_backfill(cfg::Config; provider = nothing) -> Vector{String}
@@ -902,7 +900,14 @@ function _run_backfill(
             day_files = _raw_files_with_prefix(cfg.raw_dir, day_prefix)
             n_stored = 0
             if n > 0
-                c = _compact_raw(cfg, day_files)
+                # A day fetched before it ended on the exchange calendar holds
+                # what the venue had published so far.
+                open_day = day >= trading_date(now_ns(); tz = cfg.exchange_tz)
+                c = _compact_raw(
+                    cfg,
+                    day_files;
+                    incomplete = open_day ? _unfinished_marked : _no_day,
+                )
                 append!(processed, c.files)
                 n_stored = c.rows
                 # A bulk day's record is the verified vendor file; its NDJSON

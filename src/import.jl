@@ -29,9 +29,8 @@ the record, as `backfill.keep_raw` does for a bulk day.
 
 A file that ends early, as a partial download does, is imported
 to that point and logged as incomplete: the sidecar's `source.truncated` says
-so, and each day gets the marker `YYYY-MM-DD.incomplete.toml` beside its file
-(see [`compact_raw`](@ref)). A marked day does not count as existing for the
-check below, so a whole file of that day imports over it without `replace`. The configured provider contributes its calendar and timestamp
+so, and each day file gets the marker `<file>.incomplete.toml` beside it (see
+[`compact_raw`](@ref)), as it does for an IEX capture with sequence gaps. The configured provider contributes its calendar and timestamp
 unit only; `"alpaca"` is the host for both US-equity formats.
 
 The processed tree is keyed by symbol and day with no source dimension, so
@@ -150,11 +149,7 @@ function _run_import(
         if summary.ticks == 0
             @warn "no prints read from the file" file = basename(path)
         else
-            c = _compact_raw(
-                cfg,
-                files;
-                incomplete = stats.truncated ? _truncated_marked : _no_day,
-            )
+            c = _compact_raw(cfg, files; incomplete = _import_marked(stats))
             append!(processed, c.files)
             summary.ticks_processed = c.rows
             keep_raw || foreach(f -> rm(f; force = true), files)
@@ -169,7 +164,14 @@ function _run_import(
     end
 end
 
-_truncated_marked(_, _) = "the vendor file ends early"
+# What an import knows against its days: a file that ends early, or a
+# capture with sequence gaps (IEX).
+function _import_marked(stats)
+    stats.truncated && return (_, _) -> "the vendor file ends early"
+    gaps = hasproperty(stats, :gaps) ? stats.gaps : 0
+    gaps > 0 && return (_, _) -> "the capture has $gaps sequence gaps"
+    return _no_day
+end
 
 # The vendor file as the sidecar records it: identity and checksum, computed
 # once before the reader runs, and what the reader counted, merged in by

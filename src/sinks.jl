@@ -266,7 +266,7 @@ function _write_group(
     dir = joinpath(out_dir, sym)
     mkpath(dir)
     path = joinpath(dir, "$(date).$(format)")
-    marker = _marker_path(dir, date)
+    marker = _marker_path(path)
     # The marker goes first, so a partial day is never on disk unmarked; a
     # whole day clears it once its file is in place.
     incomplete === nothing || _write_marker(marker, incomplete)
@@ -364,11 +364,13 @@ end
 
 const PROCESSED_FILE = r"^(\d{4}-\d{2}-\d{2})\.(csv|arrow)$"
 
-# Beside a day file: its day is known to be incomplete (see `compact_raw`).
-_marker_path(dir::AbstractString, date) = joinpath(dir, "$(date).incomplete.toml")
+# Beside a day file `<YYYY-MM-DD>.<ext>`: the file is known to hold an
+# incomplete day (see `compact_raw`).
+_marker_path(file::AbstractString) = file * ".incomplete.toml"
 
 function _write_marker(path::AbstractString, reason::AbstractString)
-    tmp = tempname(dirname(path); cleanup = false)
+    tag = string(getpid(); base = 36) * string(rand(RandomDevice(), UInt32); base = 36)
+    tmp = "$(chopsuffix(path, ".toml")).$(tag).partial.toml"
     try
         open(tmp, "w") do io
             println(
@@ -394,9 +396,9 @@ restricted to `[from, to]`. Safesave backups (`_#N`) and partial files are not
 listed: the base file of a day is the newest and the only one a reader should
 open. Throws an `ArgumentError` when the symbol has no directory.
 
-With `complete = true`, a day whose file has the marker
-`YYYY-MM-DD.incomplete.toml` beside it, a day known to be incomplete when it
-was compacted (see [`compact_raw`](@ref)), is left out.
+With `complete = true`, a file with the marker `<file>.incomplete.toml`
+beside it, known to hold an incomplete day when it was compacted (see
+[`compact_raw`](@ref)), is left out.
 
     replay_source(processed_files(cfg.processed_dir, "AAPL"; from = Date(2026, 5, 1)))
 """
@@ -416,7 +418,7 @@ function processed_files(
         d = Date(something(m[1]))
         (from === nothing || d >= from) &&
             (to === nothing || d <= to) &&
-            !(complete && isfile(_marker_path(dir, d))) &&
+            !(complete && isfile(_marker_path(joinpath(dir, f)))) &&
             push!(files, joinpath(dir, f))
     end
     return files
@@ -451,19 +453,26 @@ output is never destroyed: the new file takes the canonical name and the one
 it displaces is kept as a numbered backup `YYYY-MM-DD_#N.csv|.arrow`
 (safesave semantics, see `_safesave`). Returns the list of files written.
 
-A day known to be incomplete gets the marker `YYYY-MM-DD.incomplete.toml`
-beside its file, written before the file, and a compaction that writes the
-day with nothing known against it removes the marker. A day is known to be
-incomplete when one of its prints comes from a raw part whose session (its
-sidecar `<id>.meta.toml` in the part's directory, the longest id that
-prefixes the part's name) has not completed (`running`, `interrupted`,
-`failed`, `aborted`, or a sidecar that cannot be read), or read a vendor file
-that ends early (`source.truncated`); with `incomplete = true` every day is.
-Parts without a sidecar give no grounds to mark anything. Every day of such a
-session is marked, a day the session had finished included: the sidecar
-records how the session ended, not which of its days were whole.
-[`processed_files`](@ref) leaves marked days out with `complete = true`; the
-canonical names and the default listings are the same either way.
+A day file known to hold an incomplete day gets the marker
+`<file>.incomplete.toml` beside it (`YYYY-MM-DD.csv.incomplete.toml`, keys
+`reason` and `written`), written before the file; a compaction that writes the
+file with nothing known against it removes the marker, which so describes the
+latest write. A day is known to be incomplete when one of the prints written
+for it comes from a raw part whose session (its sidecar `<id>.meta.toml` in
+the part's directory, the longest id that prefixes the part's name) has not
+completed (`running`, `interrupted`, `failed`, `aborted`, a sidecar without a
+status or that cannot be read), or read a vendor file that ends early
+(`source.truncated`); with `incomplete = true` every day is. The marks are
+taken from the same read that groups the prints, so a print appended in
+between is never written unmarked. Parts without a sidecar give no grounds to
+mark anything. Every day of such a session is marked, a day the session had
+finished included, and so is a day another, whole source also covers: the
+sidecar records how a session ended, not which of its days were whole. An
+unmarked day is not thereby whole: a capture stopped by its deadline or a
+guard completes. [`processed_files`](@ref) leaves marked files out with
+`complete = true`; the canonical names and the default listings are the same
+either way. Compactions of one day are expected one at a time: a manual
+compaction does not take the data tree's lock.
 
 `dedup = true` drops exact duplicate prints (reconnection double-delivery,
 overlapping backfill/live captures, rows a vendor file repeats) via
@@ -506,20 +515,25 @@ function compact_raw(
     tz::TimeZone = tz"America/New_York",
     kw...,
 )
-    marked = incomplete ? _caller_marked : _session_marks(raw_paths, tz)
-    return _compact_raw(raw_paths, out_dir; tz, incomplete = marked, kw...).files
+    return _compact_raw(
+        raw_paths,
+        out_dir;
+        tz,
+        incomplete = incomplete ? _caller_marked : _no_day,
+        part_reasons = _part_reasons(raw_paths),
+        kw...,
+    ).files
 end
 
 _no_day(_, _) = nothing
 _caller_marked(_, _) = "marked by the caller"
 
-# The (symbol, day) groups known to be incomplete, as a predicate returning
-# the reason or `nothing`: every group with a print in a part of a session
-# that has not completed, or that read a vendor file that ends early. The
-# parts of such sessions are read line by line, so memory holds the set of
-# groups only.
-function _session_marks(raw_paths::AbstractVector{<:AbstractString}, tz::TimeZone)
-    marks = Dict{Tuple{String,Date},String}()
+# For each raw part whose session has not completed, or read a vendor file
+# that ends early, the reason; a session is found by its sidecar, the longest
+# sidecar id in the part's directory that prefixes the part's name. Sidecar
+# ids are listed once per directory and each sidecar is read once.
+function _part_reasons(raw_paths::AbstractVector{<:AbstractString})
+    out = Dict{String,String}()
     ids = Dict{String,Vector{String}}()              # directory → sidecar ids
     reasons = Dict{String,Union{Nothing,String}}()   # sidecar → reason
     for p in raw_paths
@@ -530,19 +544,9 @@ function _session_marks(raw_paths::AbstractVector{<:AbstractString}, tz::TimeZon
         id === nothing && continue
         sidecar = joinpath(dir, "$(id).meta.toml")
         reason = get!(() -> _incomplete_reason(sidecar, id), reasons, sidecar)
-        reason === nothing && continue
-        for line in eachline(p)
-            isempty(strip(line)) && continue
-            t = try
-                json_to_trade(line)
-            catch e
-                e isa InterruptException && rethrow()
-                continue
-            end
-            get!(marks, (t.symbol, trading_date(t.time_ns; tz)), reason)
-        end
+        reason === nothing || (out[p] = reason)
     end
-    return (sym, day) -> get(marks, (sym, day), nothing)
+    return out
 end
 
 # Why the session of `sidecar` leaves its days incomplete, or `nothing`.
@@ -582,6 +586,7 @@ function _compact_raw(
     max_open_spill_files::Integer = 256,
     compression::Symbol = :none,
     incomplete = _no_day,
+    part_reasons::AbstractDict{<:AbstractString,<:AbstractString} = Dict{String,String}(),
 )
     format in (:csv, :arrow) ||
         throw(ArgumentError("format must be :csv or :arrow, got $(repr(format))"))
@@ -615,10 +620,17 @@ function _compact_raw(
         max_open_spill_files,
         compression,
         incomplete,
+        part_reasons,
     )
     groups = Dict{Tuple{String,Date},Vector{Trade}}()
-    for t in read_raw(raw_paths)
-        push!(get!(() -> Trade[], groups, (t.symbol, trading_date(t.time_ns; tz))), t)
+    marks = Dict{Tuple{String,Date},String}()
+    for p in raw_paths
+        reason = get(part_reasons, p, nothing)
+        for t in read_raw([p])
+            key = (t.symbol, trading_date(t.time_ns; tz))
+            push!(get!(() -> Trade[], groups, key), t)
+            reason === nothing || get!(marks, key, reason)
+        end
     end
     files = String[]
     rows = 0
@@ -633,7 +645,11 @@ function _compact_raw(
                 k[2],
                 format,
                 compression;
-                incomplete = incomplete(k[1], k[2]),
+                incomplete = something(
+                    incomplete(k[1], k[2]),
+                    get(marks, k, nothing),
+                    Some(nothing),
+                ),
             ),
         )
         rows += length(trades)
@@ -666,19 +682,25 @@ function compact_raw(
     incomplete::Bool = false,
     kw...,
 )
-    marked = incomplete ? _caller_marked : _session_marks(raw_paths, cfg.exchange_tz)
-    return _compact_raw(cfg, raw_paths; incomplete = marked, kw...).files
+    return _compact_raw(
+        cfg,
+        raw_paths;
+        incomplete = incomplete ? _caller_marked : _no_day,
+        part_reasons = _part_reasons(raw_paths),
+        kw...,
+    ).files
 end
 
-# The pipeline's own compaction: a backfill compacts whole days while its
-# session runs, and an import says itself whether its file was cut short, so
-# no sidecar is consulted here.
+# The pipeline's own compaction: a backfill and an import say themselves
+# what they know of a day while their session runs, so no sidecar is
+# consulted here.
 _compact_raw(
     cfg::Config,
     raw_paths::AbstractVector{<:AbstractString};
     dedup::Bool = true,
     scratch_dir::Union{Nothing,AbstractString} = nothing,
     incomplete = _no_day,
+    part_reasons::AbstractDict{<:AbstractString,<:AbstractString} = Dict{String,String}(),
 ) = _compact_raw(
     raw_paths,
     cfg.processed_dir;
@@ -693,6 +715,7 @@ _compact_raw(
     spill_headroom = cfg.spill_headroom,
     max_open_spill_files = cfg.max_open_spill_files,
     incomplete,
+    part_reasons,
 )
 
 # Where the spill copy goes. abspath(_, "..") rather than dirname: it
@@ -779,6 +802,7 @@ function _compact_spill(
     max_open_spill_files::Integer = 256,
     compression::Symbol = :none,
     incomplete = _no_day,
+    part_reasons::AbstractDict{<:AbstractString,<:AbstractString} = Dict{String,String}(),
 )
     bytes = sum(filesize, raw_paths; init = 0)
     mkpath(out_dir)
@@ -795,21 +819,26 @@ function _compact_spill(
     written = String[]
     # The count is the closure's value: a variable reassigned inside it would
     # be boxed.
+    marks = Dict{Tuple{String,Date},String}()
     rows = mktempdir(parent; prefix = "compact_spill_") do spill
         pool = SpillPool(spill, max_open_spill_files)
         n_corrupt = 0
         try
-            for p in raw_paths, line in eachline(p)
-                isempty(strip(line)) && continue
-                t = try
-                    json_to_trade(line)
-                catch e
-                    e isa InterruptException && rethrow()
-                    n_corrupt += 1
-                    continue
+            for p in raw_paths
+                reason = get(part_reasons, p, nothing)
+                for line in eachline(p)
+                    isempty(strip(line)) && continue
+                    t = try
+                        json_to_trade(line)
+                    catch e
+                        e isa InterruptException && rethrow()
+                        n_corrupt += 1
+                        continue
+                    end
+                    key = (t.symbol, trading_date(t.time_ns; tz))
+                    println(_spill_handle!(pool, key), line)
+                    reason === nothing || get!(marks, key, reason)
                 end
-                key = (t.symbol, trading_date(t.time_ns; tz))
-                println(_spill_handle!(pool, key), line)
             end
         finally
             _close_all!(pool)
@@ -829,7 +858,11 @@ function _compact_spill(
                     date,
                     format,
                     compression;
-                    incomplete = incomplete(sym, date),
+                    incomplete = something(
+                        incomplete(sym, date),
+                        get(marks, key, nothing),
+                        Some(nothing),
+                    ),
                 ),
             )
             n += length(trades)

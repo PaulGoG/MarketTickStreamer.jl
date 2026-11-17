@@ -12,15 +12,17 @@ Notable changes to MarketTickStreamer. The format follows
   gets the session's side of a connection: the stop handshake, the
   watchdog, the bound on the upgrade and on the closing handshake, and the
   record of the connection as opened.
-- A day known to be incomplete when it is compacted gets the marker
-  `YYYY-MM-DD.incomplete.toml` beside its file: a day with a print from a
-  session that did not complete (`running`, `interrupted`, `failed`,
-  `aborted`, an unreadable sidecar) or from a vendor file that ends early,
-  or every day with `compact_raw(...; incomplete = true)`. The file keeps
-  its canonical name; `processed_files(...; complete = true)` leaves marked
-  days out. A compaction that writes the day with nothing known against it
-  removes the marker. A backfill's resume fetches a marked day again, and
-  an import replaces one without `replace = true`.
+- A day file known to hold a partial day when it is compacted gets the
+  marker `<file>.incomplete.toml` beside it (keys `reason`, `written`): a
+  day with a print from a session that did not complete (`running`,
+  `interrupted`, `failed`, `aborted`, an unreadable sidecar), from a vendor
+  file that ends early or an IEX capture with sequence gaps, a day a
+  backfill fetched before it ended, or every day with
+  `compact_raw(...; incomplete = true)`. The file keeps its canonical name,
+  and `processed_files(...; complete = true)` leaves marked files out. A
+  compaction that writes the file with nothing known against it removes the
+  marker. Nothing else changes: resume and the import's collision check
+  treat a marked day as any other.
 
 ### Changed
 - An upgrade request the server leaves unanswered for
@@ -45,8 +47,9 @@ Notable changes to MarketTickStreamer. The format follows
 - The file contract stated that a day file under its canonical name is
   complete, which a compaction of a session still writing the day, or the
   import of a vendor file that ends early, contradicted with nothing on disk
-  to tell. It now states what holds, and such days carry the marker of the
-  entry under Added.
+  to tell. It now says that a canonical file holds every print its sources
+  recorded for the day, and that the marker of the entry under Added tells
+  a day known to be partial; an unmarked file is not thereby whole.
 - The CTA lists of `NON_PRICE_CONDITIONS` (tapes `A` and `B`) and of the
   shipped configuration hold `8`, which the CTS sale-condition matrix
   reserves and bars from the consolidated last; the lists follow that rule

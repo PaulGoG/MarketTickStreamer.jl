@@ -174,7 +174,7 @@ end
         )
         p3 = part("sess_part003.jsonl", Trade[])
         parts = [p1, p2, p3]
-        marker(out, sym, d) = joinpath(out, sym, "$d.incomplete.toml")
+        marker(out, sym, d; ext = "csv") = joinpath(out, sym, "$d.$ext.incomplete.toml")
         compact(out; kw...) = compact_raw(parts, out; format = :csv, tz = tz"UTC", kw...)
         out = joinpath(dir, "processed")
         status("running")
@@ -227,7 +227,7 @@ end
         spill = joinpath(dir, "spill")
         compact_raw(parts, spill; format = :arrow, tz = tz"UTC", mem_fraction = 1e-12)
         @test isfile(joinpath(spill, "AAPL", "2025-07-30.arrow")) &&
-              isfile(marker(spill, "AAPL", day1))
+              isfile(marker(spill, "AAPL", day1; ext = "arrow"))
         part("sess_part003.jsonl", [sample_trade(6)])
         compact(out)
         @test isfile(joinpath(out, "AAPL", "2025-07-30_#1.csv")) &&
@@ -246,6 +246,27 @@ end
         bare = joinpath(dir, "bare")
         compact_raw([joinpath(lone, "other_part001.jsonl")], bare; tz = tz"UTC")
         @test !isfile(marker(bare, "AAPL", day1))
+        # Selection is per day: day 1 from the part without a sidecar, day 2
+        # from the running session.
+        status("running")
+        compact_raw([p2], bare; tz = tz"UTC")
+        @test basename.(processed_files(bare, "AAPL"; complete = true)) ==
+              ["2025-07-30.csv"]
+        @test length(processed_files(bare, "AAPL")) == 2
+        # The marker precedes the file: a day file that cannot be written
+        # leaves the marker behind.
+        broken = joinpath(dir, "broken")
+        mkpath(joinpath(broken, "AAPL", "2025-07-31.csv"))      # a directory in its way
+        @test_throws Exception compact_raw([p2], broken; format = :csv, tz = tz"UTC")
+        @test isfile(marker(broken, "AAPL", day2))
+        # The other reasons a sidecar gives.
+        reason(text) = (
+            write(joinpath(raw, "sess.meta.toml"), text);
+            compact(out);
+            TOML.parsefile(marker(out, "AAPL", day2))["reason"]
+        )
+        @test occursin("has no status", reason("[session]\nid = \"sess\"\n"))
+        @test occursin("without a session table", reason("id = \"sess\"\n"))
     end
 end
 
