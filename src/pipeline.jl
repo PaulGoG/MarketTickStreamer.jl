@@ -696,8 +696,10 @@ function _run_stream(
                 delay +
                 (delay > 0 ? 60 * NS_PER_SEC : Int64(0)),
             )
-        sink = open_raw_sink(cfg.raw_dir, sid; max_mb = cfg.max_raw_file_mb)
+        # The sidecar first: a compaction that finds a part also finds the
+        # session it belongs to, running.
         meta_path = start_meta()
+        sink = open_raw_sink(cfg.raw_dir, sid; max_mb = cfg.max_raw_file_mb)
         @info "session started" id = sid raw = sink.path symbols = cfg.symbols
 
         on_flush = function (n, tot)
@@ -764,6 +766,9 @@ end
 
 _unfinished_marked(_, _) = "fetched before the day ended"
 
+# Whether `day` has not yet ended on the exchange calendar of `cfg`.
+_day_not_over(cfg::Config, day::Date) = day >= trading_date(now_ns(); tz = cfg.exchange_tz)
+
 _processed_exists(cfg::Config, sym::AbstractString, day::Date) =
     any(isfile(joinpath(cfg.processed_dir, sym, "$day.$ext")) for ext in ("csv", "arrow"))
 
@@ -791,6 +796,10 @@ RAM stays bounded by one page and `limits.max_live_heap_mb`.
 `backfill.resume` depends on that granularity. The skip test asks whether a
 day is already present under `processed/`, so a day must land there the
 moment it is complete and not before: a run killed after eight of twelve hours resumes at hour eight.
+A day fetched before it has ended on the exchange calendar is the exception:
+it lands with the marker `<file>.incomplete.toml` beside it (see
+[`compact_raw`](@ref)), and a later run needs `resume = false` for that day to
+fetch it whole.
 Compacting only at the end would leave a killed run with raw data that resume
 cannot see, and the rerun would start from nothing.
 
@@ -902,7 +911,7 @@ function _run_backfill(
             if n > 0
                 # A day fetched before it ended on the exchange calendar holds
                 # what the venue had published so far.
-                open_day = day >= trading_date(now_ns(); tz = cfg.exchange_tz)
+                open_day = _day_not_over(cfg, day)
                 c = _compact_raw(
                     cfg,
                     day_files;

@@ -462,7 +462,8 @@ for it comes from a raw part whose session (its sidecar `<id>.meta.toml` in
 the part's directory, the longest id that prefixes the part's name) has not
 completed (`running`, `interrupted`, `failed`, `aborted`, a sidecar without a
 status or that cannot be read), or read a vendor file that ends early
-(`source.truncated`); with `incomplete = true` every day is. The marks are
+(`source.truncated`) or a capture with sequence gaps (`source.gaps`); with
+`incomplete = true` every day is. The marks are
 taken from the same read that groups the prints, so a print appended in
 between is never written unmarked. Parts without a sidecar give no grounds to
 mark anything. Every day of such a session is marked, a day the session had
@@ -540,13 +541,25 @@ function _part_reasons(raw_paths::AbstractVector{<:AbstractString})
         dir, name = splitdir(abspath(p))
         m = match(r"^(.*)_part\d+\.jsonl$", name)
         m === nothing && continue
-        id = _longest_prefix(get!(() -> _sidecar_ids(dir), ids, dir), something(m[1]))
+        id =
+            _longest_prefix(get!(() -> _listed_sidecar_ids(dir), ids, dir), something(m[1]))
         id === nothing && continue
         sidecar = joinpath(dir, "$(id).meta.toml")
         reason = get!(() -> _incomplete_reason(sidecar, id), reasons, sidecar)
         reason === nothing || (out[p] = reason)
     end
     return out
+end
+
+# A directory that is missing or cannot be listed has no sidecar to consult;
+# the read that follows reports the part as it always has.
+function _listed_sidecar_ids(dir::AbstractString)
+    return try
+        _sidecar_ids(dir)
+    catch e
+        e isa InterruptException && rethrow()
+        String[]
+    end
 end
 
 # Why the session of `sidecar` leaves its days incomplete, or `nothing`.
@@ -563,9 +576,13 @@ function _incomplete_reason(sidecar::AbstractString, id::AbstractString)
     status == "completed" ||
         return "session $id $(status === nothing ? "has no status" : "is $status")"
     src = get(s, "source", nothing)
-    src isa AbstractDict &&
-        get(src, "truncated", false) === true &&
+    src isa AbstractDict || return nothing
+    get(src, "truncated", false) === true &&
         return "session $id read a vendor file that ends early"
+    gaps = get(src, "gaps", 0)
+    gaps isa Integer &&
+        gaps > 0 &&
+        return "session $id read a capture with $gaps sequence gaps"
     return nothing
 end
 

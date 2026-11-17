@@ -441,6 +441,27 @@ end
         @test ("T" in t.conditions) == !(t.time_ns in regular)
         @test ("I" in t.conditions) == (t.size < 100)
     end
+    # Imported, the excerpt's sequence gaps mark the day, and a recompaction
+    # of the import's raw parts keeps the marker.
+    mktempdir() do dir
+        p = joinpath(dir, "c.toml")
+        write(
+            p,
+            "[stream]\nsymbols = [\"AAPL\"]\n[storage]\ndata_dir = \"data\"\nprocessed_format = \"csv\"\n[logging]\nlog_to_file = false\n",
+        )
+        cfg = load_config(p)
+        files = run_import(
+            cfg,
+            joinpath(fixtures, "iex_AAPL_20251209.pcapng");
+            format = :iex,
+            date = Date(2025, 12, 9),
+        )
+        @test length(files) == 1
+        marker = only(files) * ".incomplete.toml"
+        @test occursin("4 sequence gaps", TOML.parsefile(marker)["reason"])
+        compact_raw(cfg, filter(endswith(".jsonl"), readdir(cfg.raw_dir; join = true)))
+        @test occursin("4 sequence gaps", TOML.parsefile(marker)["reason"])
+    end
     if sip === nothing
         @test_skip "local SIP reference not present"
     else
