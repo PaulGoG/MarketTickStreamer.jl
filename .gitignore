@@ -7,3 +7,9 @@ Manifest*.toml
 *.cov
 *.mem
 lcov.info
+# Nasdaq publishes its sample ITCH files without a licence: the golden
+# excerpt is cut locally (test/fixtures/extract_itch50.jl) and never committed.
+/test/fixtures/itch50_*.bin
+# Alpaca's terms forbid redistributing its market data: the SIP reference of
+# the golden tests is written locally (test/fixtures/extract_sip_reference.jl).
+/test/fixtures/sip_*.toml

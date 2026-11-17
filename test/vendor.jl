@@ -402,6 +402,70 @@ end
     end
 end
 
+@testset "vendor readers on published bytes" begin
+    # Fixtures, generators and provenance: test/fixtures/PROVENANCE.md. The
+    # committed IEX bytes are checked against facts of the day that do not
+    # come from the reader (session hours, AAPL's 100-share round lot); where
+    # the local SIP reference exists, every print is also checked against the
+    # consolidated tape's record of the same execution: price and size equal,
+    # the SIP's stamp after the venue's, the SIP's T, I, O and 6 flags.
+    fixtures = joinpath(@__DIR__, "fixtures")
+    reference = joinpath(fixtures, "sip_AAPL_20251209.toml")
+    sip = isfile(reference) ? TOML.parsefile(reference) : nothing
+    ns(dt) = Dates.value(dt - DateTime(1970)) * 1_000_000
+    regular = ns(DateTime(2025, 12, 9, 14, 30)):(ns(DateTime(2025, 12, 9, 21))-1)
+    function against_sip(trades, rows, bound)
+        @test length(rows["price"]) == length(trades)
+        for (k, t) in enumerate(trades)
+            f = rows["flags"][k]
+            @test t.price == rows["price"][k] && t.size == rows["size"][k]
+            @test 0 < rows["time_ns"][k] - t.time_ns < bound
+            @test ("I" in t.conditions) == occursin('I', f)
+            @test ("cross_open" in t.conditions) == occursin('O', f)
+            @test ("cross_close" in t.conditions) == occursin('6', f)
+        end
+    end
+
+    q = iex_hist_trades(joinpath(fixtures, "iex_AAPL_20251209.pcapng"); symbols = ["AAPL"])
+    @test (q.prints, q.packets, q.segments) == (10, 10, 10)
+    @test q.gaps == 4                     # the excerpt skips the frames between
+    @test all(t -> t.symbol == "AAPL" && t.exchange == "V", q.trades)
+    @test issorted(map(t -> t.time_ns, q.trades)) && allunique(map(t -> t.id, q.trades))
+    for t in q.trades
+        @test ("T" in t.conditions) == !(t.time_ns in regular)
+        @test ("I" in t.conditions) == (t.size < 100)
+    end
+    if sip === nothing
+        @test_skip "local SIP reference not present"
+    else
+        against_sip(q.trades, sip["iex"], 1_000_000)
+        @test all(
+            k -> ("T" in q.trades[k].conditions) == occursin('T', sip["iex"]["flags"][k]),
+            1:10,
+        )
+    end
+
+    itch = joinpath(fixtures, "itch50_AAPL_20251209.bin")
+    if isfile(itch)
+        r = itch50_trades(itch, Date(2025, 12, 9); symbols = ["AAPL"])
+        @test (r.messages, r.prints, r.unresolved, r.symbols, r.truncated) ==
+              (37, 22, 0, 1, false)
+        @test all(t -> t.tape == "C" && t.exchange == "Q", r.trades)
+        crosses = filter(t -> startswith(t.conditions[1], "cross"), r.trades)
+        @test [c.conditions[1] for c in crosses] == ["cross_open", "cross_close"]
+        @test crosses[1].time_ns - regular[1] in 0:60_000_000_000
+        @test crosses[2].time_ns - (regular[end] + 1) in 0:60_000_000_000
+        for t in r.trades
+            t in crosses || @test ("I" in t.conditions) == (t.size < 100)
+        end
+        sip === nothing || haskey(sip, "itch") && against_sip(r.trades, sip["itch"], 25_000)
+    else
+        # Nasdaq's sample files carry no licence; the excerpt is cut locally
+        # by test/fixtures/extract_itch50.jl.
+        @test_skip "ITCH 5.0 golden excerpt not present"
+    end
+end
+
 @testset "fetch: resumable Range downloads, announced sizes, CRC-32C" begin
     payload = rand(Xoshiro(3), UInt8, 3 * 1024 * 1024 + 123)
     crc = string(crc32c(payload); base = 16, pad = 8)

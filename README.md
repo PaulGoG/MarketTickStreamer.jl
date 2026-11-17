@@ -393,7 +393,8 @@ Citation metadata is in [`CITATION.cff`](CITATION.cff). BibTeX:
 │   │                       #   analysis, examples, sessions, live, providers, vendor, extensions
 │   ├── mock_alpaca.jl      # in-process mock of Alpaca REST + WebSocket APIs
 │   ├── mock_binance.jl     # in-process mock of Binance REST + WebSocket APIs and bulk files
-│   └── vendor_bytes.jl     # byte writers for ITCH 5.0 and IEX HIST, shared with bench/
+│   ├── vendor_bytes.jl     # byte writers for ITCH 5.0 and IEX HIST, shared with bench/
+│   └── fixtures/           # published vendor bytes for golden tests, their generators and provenance
 ├── examples/
 │   ├── Project.toml        # examples environment (package consumed by path)
 │   ├── activate.jl         # silent environment activation
@@ -436,4 +437,6 @@ Environment, tests, formatting and commit conventions are in
 
 ## License
 
-MIT — see `LICENSE`.
+MIT — see `LICENSE`. The IEX HIST excerpt in `test/fixtures/` is IEX's data,
+under the IEX Historical Data Terms of Use and not the MIT licence; see
+`test/fixtures/PROVENANCE.md`.
