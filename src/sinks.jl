@@ -258,13 +258,14 @@ function _write_group(
     sym::AbstractString,
     date::Date,
     format::Symbol,
-    compression::Symbol = :none,
+    compression::Symbol = :none;
+    incomplete::Bool = false,
 )
     ts = sort(trades; by = t -> t.time_ns)
     out = trades_table(ts)
     dir = joinpath(out_dir, sym)
     mkpath(dir)
-    path = joinpath(dir, "$(date).$(format)")
+    path = joinpath(dir, incomplete ? "$(date).incomplete.$(format)" : "$(date).$(format)")
     return _safesave(path) do tmp
         if format === :csv
             CSV.write(tmp, out)
@@ -353,15 +354,23 @@ end
 
 const PROCESSED_FILE = r"^(\d{4}-\d{2}-\d{2})\.(csv|arrow)$"
 
+# A day known to be incomplete when it was compacted (see `compact_raw`).
+const INCOMPLETE_FILE = r"^(\d{4}-\d{2}-\d{2})\.incomplete\.(csv|arrow)$"
+
 """
-    processed_files(processed_dir, symbol; from = nothing, to = nothing)
-        -> Vector{String}
+    processed_files(processed_dir, symbol; from = nothing, to = nothing,
+                    incomplete = false) -> Vector{String}
 
 The per-day files of `symbol` in a processed tree
 (`processed_dir/SYMBOL/YYYY-MM-DD.csv|.arrow`), in date order, optionally
 restricted to `[from, to]`. Safesave backups (`_#N`) and partial files are not
 listed: the base file of a day is the newest and the only one a reader should
 open. Throws an `ArgumentError` when the symbol has no directory.
+
+Days that were known to be incomplete when they were compacted
+(`YYYY-MM-DD.incomplete.csv|.arrow`, see [`compact_raw`](@ref)) are listed
+only with `incomplete = true`, and then only where the day has no file under
+its canonical name, which supersedes them.
 
     replay_source(processed_files(cfg.processed_dir, "AAPL"; from = Date(2026, 5, 1)))
 """
@@ -370,18 +379,30 @@ function processed_files(
     symbol::AbstractString;
     from::Union{Nothing,Date} = nothing,
     to::Union{Nothing,Date} = nothing,
+    incomplete::Bool = false,
 )
     dir = joinpath(processed_dir, symbol)
     isdir(dir) || throw(ArgumentError("no processed data for $symbol under $processed_dir"))
+    inrange(d) = (from === nothing || d >= from) && (to === nothing || d <= to)
     files = String[]
+    whole = Set{Date}()
+    partial = Pair{Date,String}[]
     for f in sort(readdir(dir))
         m = match(PROCESSED_FILE, f)
-        m === nothing && continue
-        d = Date(something(m[1]))
-        (from === nothing || d >= from) &&
-            (to === nothing || d <= to) &&
-            push!(files, joinpath(dir, f))
+        if m !== nothing
+            d = Date(something(m[1]))
+            inrange(d) && (push!(files, joinpath(dir, f)); push!(whole, d))
+        elseif incomplete
+            m = match(INCOMPLETE_FILE, f)
+            m === nothing && continue
+            d = Date(something(m[1]))
+            inrange(d) && push!(partial, d => joinpath(dir, f))
+        end
     end
+    for (d, f) in partial
+        d in whole || push!(files, f)
+    end
+    incomplete && sort!(files; by = basename)       # names start with the date
     return files
 end
 
@@ -405,13 +426,22 @@ const SPILL_HEADROOM = 1.1
                 mem_fraction = 0.5, tz = tz"America/New_York",
                 max_live_heap_mb = nothing, scratch_dir = nothing,
                 footprint_factor = 4.0, spill_headroom = SPILL_HEADROOM,
-                max_open_spill_files = 256, compression = :none) -> Vector{String}
+                max_open_spill_files = 256, compression = :none,
+                incomplete = false) -> Vector{String}
 
 Compact raw NDJSON files into per-symbol, per-trading-day analysis files
 (`out_dir/SYMBOL/YYYY-MM-DD.csv|.arrow`), sorted by `time_ns`. An existing
 output is never destroyed: the new file takes the canonical name and the one
 it displaces is kept as a numbered backup `YYYY-MM-DD_#N.csv|.arrow`
 (safesave semantics, see `_safesave`). Returns the list of files written.
+
+A day known to be incomplete is written as `YYYY-MM-DD.incomplete.csv|.arrow`
+instead, which [`processed_files`](@ref) and the corpus readers skip unless
+asked: a day of a session that is still writing it (its sidecar
+`<id>.meta.toml`, beside the parts, says `running`, and the day appears in the
+session's newest part), or every day when `incomplete = true`. Parts without a
+sidecar give no grounds to mark anything. A later compaction of the whole day
+writes the canonical name, which supersedes the incomplete file.
 
 `dedup = true` drops exact duplicate prints (reconnection double-delivery,
 overlapping backfill/live captures, rows a vendor file repeats) via
@@ -447,8 +477,46 @@ per print with `:zstd` on the same day, at the price of memory-mapped reads: an
 uncompressed file is mapped and touched lazily, a compressed one is decompressed
 on load (64 ms against under 1 ms for that day).
 """
-compact_raw(raw_paths::AbstractVector{<:AbstractString}, out_dir::AbstractString; kw...) =
-    _compact_raw(raw_paths, out_dir; kw...).files
+function compact_raw(
+    raw_paths::AbstractVector{<:AbstractString},
+    out_dir::AbstractString;
+    incomplete::Bool = false,
+    tz::TimeZone = tz"America/New_York",
+    kw...,
+)
+    marked = incomplete ? _every_day : _days_in_progress(raw_paths, tz)
+    return _compact_raw(raw_paths, out_dir; tz, incomplete = marked, kw...).files
+end
+
+_every_day(_, _) = true
+_no_day(_, _) = false
+
+# The (symbol, day) groups a session is still writing, as a predicate: for
+# each session among `raw_paths` whose sidecar says `running`, the days in its
+# newest part. A session found by its sidecar: the longest sidecar id in the
+# part's directory that prefixes the part's name.
+function _days_in_progress(raw_paths::AbstractVector{<:AbstractString}, tz::TimeZone)
+    marked = Set{Tuple{String,Date}}()
+    seen = Set{String}()
+    for p in raw_paths
+        dir, name = splitdir(abspath(p))
+        m = match(r"^(.*)_part\d+\.jsonl$", name)
+        m === nothing && continue
+        id = _sidecar_id(dir, something(m[1]))
+        id === nothing && continue
+        session = joinpath(dir, id)
+        session in seen && continue
+        push!(seen, session)
+        _sidecar_status(session * ".meta.toml") == "running" || continue
+        parts = _raw_files_with_prefix(dir, id)
+        isempty(parts) && continue
+        newest = parts[argmax(map(mtime, parts))]
+        for t in read_raw([newest])
+            push!(marked, (t.symbol, trading_date(t.time_ns; tz)))
+        end
+    end
+    return (sym, day) -> (sym, day) in marked
+end
 
 # The compaction proper. Returns the files written and the number of prints
 # they hold, which is what a backfill records as stored: it differs from the
@@ -466,6 +534,7 @@ function _compact_raw(
     spill_headroom::Real = SPILL_HEADROOM,
     max_open_spill_files::Integer = 256,
     compression::Symbol = :none,
+    incomplete = _no_day,
 )
     format in (:csv, :arrow) ||
         throw(ArgumentError("format must be :csv or :arrow, got $(repr(format))"))
@@ -498,6 +567,7 @@ function _compact_raw(
         spill_headroom,
         max_open_spill_files,
         compression,
+        incomplete,
     )
     groups = Dict{Tuple{String,Date},Vector{Trade}}()
     for t in read_raw(raw_paths)
@@ -507,7 +577,18 @@ function _compact_raw(
     rows = 0
     for k in sort!(collect(keys(groups)))
         trades = dedup ? _deduplicate_group(groups[k], k) : groups[k]
-        push!(files, _write_group(trades, out_dir, k[1], k[2], format, compression))
+        push!(
+            files,
+            _write_group(
+                trades,
+                out_dir,
+                k[1],
+                k[2],
+                format,
+                compression;
+                incomplete = incomplete(k[1], k[2]),
+            ),
+        )
         rows += length(trades)
     end
     return (; files, rows)
@@ -523,22 +604,34 @@ function _deduplicate_group(trades::Vector{Trade}, key::Tuple{String,Date})
 end
 
 """
-    compact_raw(cfg::Config, raw_paths; dedup = true, scratch_dir = nothing)
-        -> Vector{String}
+    compact_raw(cfg::Config, raw_paths; dedup = true, scratch_dir = nothing,
+                incomplete = false) -> Vector{String}
 
 Compact into `cfg.processed_dir` with everything else taken from the
 configuration: format, the provider's calendar, the heap ceiling and the spill
 thresholds of `[limits]`. This is the form the pipeline and the scripts use, so
-a capture is never filed under a calendar other than its provider's.
+a capture is never filed under a calendar other than its provider's. Days a
+session is still writing, or every day with `incomplete = true`, are written
+as `YYYY-MM-DD.incomplete.csv|.arrow`, as in the other form.
 """
-compact_raw(cfg::Config, raw_paths::AbstractVector{<:AbstractString}; kw...) =
-    _compact_raw(cfg, raw_paths; kw...).files
+function compact_raw(
+    cfg::Config,
+    raw_paths::AbstractVector{<:AbstractString};
+    incomplete::Bool = false,
+    kw...,
+)
+    marked = incomplete ? _every_day : _days_in_progress(raw_paths, cfg.exchange_tz)
+    return _compact_raw(cfg, raw_paths; incomplete = marked, kw...).files
+end
 
+# The pipeline's own compaction: a backfill or an import compacts whole days
+# while its session runs, so no session status is consulted here.
 _compact_raw(
     cfg::Config,
     raw_paths::AbstractVector{<:AbstractString};
     dedup::Bool = true,
     scratch_dir::Union{Nothing,AbstractString} = nothing,
+    incomplete = _no_day,
 ) = _compact_raw(
     raw_paths,
     cfg.processed_dir;
@@ -552,6 +645,7 @@ _compact_raw(
     footprint_factor = cfg.compact_footprint_factor,
     spill_headroom = cfg.spill_headroom,
     max_open_spill_files = cfg.max_open_spill_files,
+    incomplete,
 )
 
 # Where the spill copy goes. abspath(_, "..") rather than dirname: it
@@ -637,6 +731,7 @@ function _compact_spill(
     spill_headroom::Real = SPILL_HEADROOM,
     max_open_spill_files::Integer = 256,
     compression::Symbol = :none,
+    incomplete = _no_day,
 )
     bytes = sum(filesize, raw_paths; init = 0)
     mkpath(out_dir)
@@ -678,7 +773,18 @@ function _compact_spill(
             sym, date = key
             trades = read_raw(_spill_path(pool, key))
             dedup && (trades = _deduplicate_group(trades, key))
-            push!(written, _write_group(trades, out_dir, sym, date, format, compression))
+            push!(
+                written,
+                _write_group(
+                    trades,
+                    out_dir,
+                    sym,
+                    date,
+                    format,
+                    compression;
+                    incomplete = incomplete(sym, date),
+                ),
+            )
             n += length(trades)
             max_live_heap_mb === nothing ||
                 check_live_heap(max_live_heap_mb; context = "compaction $sym $date")

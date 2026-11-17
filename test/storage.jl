@@ -140,6 +140,71 @@ end
     end
 end
 
+@testset "compaction: a day known to be incomplete is not filed under its canonical name" begin
+    mktempdir() do dir
+        raw, out = joinpath(dir, "raw"), joinpath(dir, "processed")
+        mkpath(raw)
+        day1 = Date(2025, 7, 30)                     # sample_trade's UTC date
+        one(i; sym = "AAPL") = sample_trade(i; sym)
+        later(i; sym = "AAPL") = (
+            t = one(i; sym);
+            Trade(
+                t.symbol,
+                t.time_ns + 86_400_000_000_000,
+                t.recv_ns + 86_400_000_000_000,
+                t.price,
+                t.size,
+                t.exchange,
+                t.conditions,
+                t.tape,
+                t.id,
+            )
+        )
+        part(name, trades) = (
+            p = joinpath(raw, name);
+            write(p, join(trade_to_json.(trades), "\n") * "\n");
+            p
+        )
+        sidecar(status) =
+            write(joinpath(raw, "sess.meta.toml"), "[session]\nstatus = \"$status\"\n")
+        # A running session: day 1 in its first part, day 2 in its newest.
+        p1 = part("sess_part001.jsonl", [one(i) for i in 1:3])
+        sleep(0.05)
+        p2 = part("sess_part002.jsonl", [later(i) for i in 1:2])
+        @test mtime(p2) > mtime(p1)
+        sidecar("running")
+        files = compact_raw([p1, p2], out; format = :csv, tz = tz"UTC")
+        @test basename.(files) == ["2025-07-30.csv", "2025-07-31.incomplete.csv"]
+        @test basename.(processed_files(out, "AAPL")) == ["2025-07-30.csv"]
+        listed = processed_files(out, "AAPL"; incomplete = true)
+        @test basename.(listed) == ["2025-07-30.csv", "2025-07-31.incomplete.csv"]
+        @test length(read_processed(listed)) == 5   # explicit paths may name it
+        # Once the session has ended, the whole day takes the canonical name;
+        # the incomplete file stays and is no longer listed.
+        sidecar("completed")
+        files = compact_raw([p1, p2], out; format = :csv, tz = tz"UTC")
+        @test basename.(files) == ["2025-07-30.csv", "2025-07-31.csv"]
+        @test isfile(joinpath(out, "AAPL", "2025-07-31.incomplete.csv"))
+        @test basename.(processed_files(out, "AAPL"; incomplete = true)) ==
+              ["2025-07-30.csv", "2025-07-31.csv"]
+        # Asked for: every day is incomplete, whatever the sidecar says.
+        out2 = joinpath(dir, "asked")
+        files = compact_raw([p1, p2], out2; format = :csv, tz = tz"UTC", incomplete = true)
+        @test all(endswith(".incomplete.csv"), files) && length(files) == 2
+        @test isempty(processed_files(out2, "AAPL"))
+        # Parts without a sidecar give no grounds to mark anything.
+        lone = joinpath(dir, "lone")
+        mkpath(lone)
+        cp(p2, joinpath(lone, "other_part001.jsonl"))
+        files = compact_raw(
+            [joinpath(lone, "other_part001.jsonl")],
+            joinpath(dir, "o3");
+            tz = tz"UTC",
+        )
+        @test basename.(files) == ["2025-07-31.csv"]
+    end
+end
+
 @testset "safesave: newest canonical, backups numbered, failed write harmless" begin
     safesave = MarketTickStreamer._safesave
     mktempdir() do dir

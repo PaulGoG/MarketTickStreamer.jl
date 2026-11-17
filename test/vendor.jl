@@ -761,6 +761,26 @@ end
         @test src["file"] == basename(file) && src["format"] == "itch50"
         @test src["bytes"] == filesize(file) && length(src["sha256"]) == 64
         @test src["messages"] == 11 && src["prints"] == 5 && src["truncated"] == false
+        # The same day without its End of Messages event, in a tree of its
+        # own: the file ends early, so its days are filed as incomplete.
+        cut_file = joinpath(dir, "cut", "12302019.NASDAQ_ITCH50.gz")
+        mkpath(dirname(cut_file))
+        open(GzipCompressorStream, cut_file, "w") do io
+            write(io, stream[1:(end-14)])           # the last message is S('C')
+        end
+        pc = joinpath(dirname(cut_file), "c.toml")
+        write(
+            pc,
+            "[stream]\nsymbols = [\"AAPL\", \"MSFT\"]\n[storage]\ndata_dir = \"data\"\nprocessed_format = \"csv\"\n[logging]\nlog_to_file = false\n",
+        )
+        cfg_cut = load_config(pc)
+        # (the import logs through its session's logger, so the warning is
+        # not captured here; the names are the record)
+        cut_files = run_import(cfg_cut, cut_file; format = :itch50)
+        @test length(cut_files) == 2 &&
+              all(endswith("2019-12-30.incomplete.csv"), cut_files)
+        @test isempty(processed_files(cfg_cut.processed_dir, "AAPL"))
+        @test length(processed_files(cfg_cut.processed_dir, "AAPL"; incomplete = true)) == 1
         @test length(meta["session"]["raw_files"]) == 1
         # a second import of one symbol without the raw copy: processed again
         # (safesave keeps the first), raw parts gone, the sidecar lists none.

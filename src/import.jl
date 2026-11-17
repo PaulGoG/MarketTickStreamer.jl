@@ -28,8 +28,9 @@ deleted once the day is under `processed/`, the checksummed vendor file being
 the record, as `backfill.keep_raw` does for a bulk day.
 
 A file that ends early, as a partial download does, is imported
-to that point and logged as incomplete; the sidecar's `source.truncated`
-says so. The configured provider contributes its calendar and timestamp
+to that point and logged as incomplete: its days are written as
+`YYYY-MM-DD.incomplete.csv|.arrow`, which the readers skip unless asked (see
+[`processed_files`](@ref)), and the sidecar's `source.truncated` says so. The configured provider contributes its calendar and timestamp
 unit only; `"alpaca"` is the host for both US-equity formats.
 
 The processed tree is keyed by symbol and day with no source dimension, so
@@ -148,13 +149,19 @@ function _run_import(
         if summary.ticks == 0
             @warn "no prints read from the file" file = basename(path)
         else
-            c = _compact_raw(cfg, files)
+            # A file that ends early holds part of its day only.
+            c = _compact_raw(
+                cfg,
+                files;
+                incomplete = stats.truncated ? _every_day : _no_day,
+            )
             append!(processed, c.files)
             summary.ticks_processed = c.rows
             keep_raw || foreach(f -> rm(f; force = true), files)
         end
         stats.truncated &&
-            @warn "the file ends early; the day is incomplete" file = basename(path)
+            @warn "the file ends early; the day is filed as incomplete" file =
+                basename(path)
         @info "imported" format file = basename(path) messages = stats.messages prints =
             summary.ticks stored = summary.ticks_processed broken = stats.broken
         @info "import finished" status = summary.status files = length(processed) prints =

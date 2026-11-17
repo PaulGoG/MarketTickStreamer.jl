@@ -12,6 +12,14 @@ Notable changes to MarketTickStreamer. The format follows
   gets the session's side of a connection: the stop handshake, the
   watchdog, the bound on the upgrade and on the closing handshake, and the
   record of the connection as opened.
+- A day known to be incomplete when it is compacted is written as
+  `YYYY-MM-DD.incomplete.csv|.arrow`: a day a session is still writing (its
+  sidecar says `running` and the day is in its newest part), or every day
+  with `compact_raw(...; incomplete = true)`. `processed_files(...;
+  incomplete = true)` lists such a day where it has no canonical file, and
+  the readers that take explicit paths accept the name. The default
+  listings are unchanged, and the canonical file of a day supersedes its
+  incomplete one.
 
 ### Changed
 - An upgrade request the server leaves unanswered for
@@ -33,6 +41,11 @@ Notable changes to MarketTickStreamer. The format follows
   loaded before, left no timer that could be armed.
 
 ### Fixed
+- A day under its canonical name is complete, as the file contract states:
+  `compact_raw` over the parts of a session still writing that day, and
+  `run_import` of a vendor file that ends early (`source.truncated`), now
+  file it as `YYYY-MM-DD.incomplete.<ext>`. Both gave it the canonical
+  name, where a stationary consumer read it as a whole day.
 - The CTA lists of `NON_PRICE_CONDITIONS` (tapes `A` and `B`) and of the
   shipped configuration hold `8`, which the CTS sale-condition matrix
   reserves and bars from the consolidated last; the lists follow that rule
