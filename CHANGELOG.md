@@ -6,6 +6,15 @@ Notable changes to MarketTickStreamer. The format follows
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-11-17
+
+Both adapters run on one WebSocket loop, public as `stream_websocket!`, whose
+upgrade and closing handshake are bounded and which a stop reaches at every
+stage after the connection is made; a day file known to hold a partial day is
+marked by a file beside it; the CTA sale-condition lists gain the reserved
+`8`. The file contract gains that marker and states what a canonical file
+holds; the configuration bounds `stream.stale_timeout_s` at a day.
+
 ### Added
 - `stream_websocket!`, the WebSocket loop of both adapters, is part of the
   provider interface. An adapter built on it hands it a frame handler and
@@ -42,6 +51,10 @@ Notable changes to MarketTickStreamer. The format follows
   drain.
 - `stream.stale_timeout_s` must be at most 86 400 s (a day); `inf`, which
   loaded before, left no timer that could be armed.
+- New dependencies: the standard library `Sockets`, and `ExceptionUnwrapping`,
+  already in the dependency tree through HTTP.jl.
+- `compact_raw` reads the session sidecars beside the raw parts to mark
+  days, and raises when such a directory exists but cannot be listed.
 
 ### Fixed
 - The file contract stated that a day file under its canonical name is
@@ -1026,7 +1039,8 @@ against the historical SIP tape.
 - An offline test suite driven by an in-process mock of the Alpaca REST and
   WebSocket APIs, with Aqua static quality assurance.
 
-[Unreleased]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v2.0.3...v2.1.0
 [2.0.3]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v2.0.2...v2.0.3
 [2.0.2]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v2.0.1...v2.0.2
