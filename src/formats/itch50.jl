@@ -224,10 +224,14 @@ Trade (`P`) and the Cross Trade with shares (`Q`); non-printable `C` and
 zero-share `Q` are not prints, by Nasdaq's own rule. Each print carries
 `exchange = "Q"`, `tape` from the Stock Directory's market category, `id` =
 match number, and `conditions` = a kind token (`displayed`, `improved`,
-`hidden`, `cross_open`, `cross_close`, `cross_halt`, `cross_intraday`), the
+`hidden`, `cross_open`, `cross_close`, `cross_halt`, `cross_intraday`,
+`cross`), the
 aggressor side (`buy`/`sell`) for `E` and `C`, and `"I"` when the size is
 below the symbol's round lot — the sale condition the SIP gives the same
-execution, so `price_forming` treats both alike.
+execution, so `price_forming` treats both alike. The cross kinds follow
+the Cross Type byte: the specification defines `O`, `C` and `H`, the only
+ones in the files checked (2019-12-30, 2025-12-09); `I`, the intraday cross
+of earlier revisions, is `cross_intraday`, and any other value `cross`.
 
 `symbols` restricts the output (and the order map) to those symbols;
 `nothing` reads every symbol in the file. `broken` decides what a Broken
@@ -242,7 +246,9 @@ returned `trades` is then empty; without it the prints are accumulated in
 `prints` the emitted prints, `broken` the prints voided by a Broken Trade
 message (under `:keep`, the Broken Trade messages seen for the selected
 symbols), `unresolved` the `E` messages whose order was unknown (a file cut
-before its Add Order), `symbols` the selected symbols found in the directory,
+before its Add Order, or an order added before its symbol's Stock Directory
+message, which only a file without its start has), `symbols` the selected
+symbols found in the directory,
 and `truncated` whether the file ends before the System Event "End of
 Messages", which closes every trading day, as a partial download does
 whether it is cut inside a message or between two.

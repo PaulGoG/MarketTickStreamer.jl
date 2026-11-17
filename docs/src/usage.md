@@ -162,7 +162,9 @@ disqualify a print from a price path. Tapes `"A"` and `"B"` are
 CTA-processed, `"C"` is UTP-processed, `"O"` is the OTC tape; the same
 character means different things across them, which is why the lists are
 separate. The shipped defaults are derived from the tape plans'
-sale-condition matrices.
+sale-condition matrices. A table given here replaces the defaults as a
+whole: a tape it leaves out has no list, and every print on that tape is
+then kept, so a change to one tape copies the others from the defaults.
 
 This is used only by [`price_forming`](@ref), [`filter_price_forming`](@ref)
 and the `n_price_forming` column of [`session_report`](@ref). Capture is
@@ -241,7 +243,8 @@ hidden-order trades and the crosses. Each print is filed with
 `exchange = "Q"`, the match number as `id`, the tape from the stock
 directory, and conditions that name the kind of execution (`displayed`,
 `improved`, `hidden`, `cross_open`, `cross_close`, `cross_halt`,
-`cross_intraday`), the aggressor side for displayed executions, and `"I"`
+`cross_intraday`, and `cross` for a cross type the specification does not
+define), the aggressor side for displayed executions, and `"I"`
 for an odd lot against the symbol's round lot. `"I"` is the condition the
 SIP gives the same execution, so `price_forming` treats both alike. The
 session date comes from the file name.

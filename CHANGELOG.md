@@ -34,6 +34,13 @@ Notable changes to MarketTickStreamer. The format follows
 - `stream.stale_timeout_s` must be at most 86 400 s (a day); `inf`, which
   loaded before, left no timer that could be armed.
 
+### Fixed
+- The CTA lists of `NON_PRICE_CONDITIONS` (tapes `A` and `B`) and of the
+  shipped configuration hold `8`, which the CTS sale-condition matrix
+  reserves and bars from the consolidated last; the lists follow that rule
+  for every other code. No print carries it today. The lists are now tested
+  against both plans' matrices, transcribed into the suite.
+
 ## [2.1.0] - 2026-11-16
 
 A Binance bulk backfill counts breaks in the trade-id sequence; corrections

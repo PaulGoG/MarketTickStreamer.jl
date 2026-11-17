@@ -22,7 +22,7 @@ green suite, and new behavior comes with a test. Floating-point
 comparisons use `isapprox` with explicit tolerances.
 
 CI runs the suite on the latest Julia release, on the `[compat]` floor and,
-without blocking, on the current pre-release. Two of its tools trail new
+without blocking, on the current pre-release, each with two worker threads. Two of its tools trail new
 Julia versions: AllocCheck depends on LLVM bindings built per release, and
 JET loads as empty stubs on versions it does not support yet. The
 pre-release leg therefore runs without AllocCheck and skips the analyses

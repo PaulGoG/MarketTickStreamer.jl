@@ -76,8 +76,8 @@ download_connections = 1         # concurrent Range requests per vendor file; 1 
 # Sale-condition codes excluded from the price-forming population, by tape
 # ("A"/"B": CTA, "C": UTP, "O": OTC).
 [quality.non_price_conditions]
-A = ["B", "C", "H", "I", "M", "N", "P", "Q", "R", "U", "V", "Z", "4", "7", "9"]
-B = ["B", "C", "H", "I", "M", "N", "P", "Q", "R", "U", "V", "Z", "4", "7", "9"]
+A = ["B", "C", "H", "I", "M", "N", "P", "Q", "R", "U", "V", "Z", "4", "7", "8", "9"]
+B = ["B", "C", "H", "I", "M", "N", "P", "Q", "R", "U", "V", "Z", "4", "7", "8", "9"]
 C = ["C", "G", "H", "I", "M", "N", "P", "Q", "R", "U", "V", "W", "Z", "4", "7", "9"]
 O = ["C", "I", "N", "R", "U", "V"]
 

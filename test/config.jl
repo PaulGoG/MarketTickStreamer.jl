@@ -1,5 +1,7 @@
 @testset "config" begin
-    cfg = load_config()   # the repo's own config must always be valid
+    # The shipped configuration must always be valid. Its path is given:
+    # an installed copy refuses the no-argument form.
+    cfg = load_config(MarketTickStreamer.DEFAULT_CONFIG)
     @test cfg.provider == "alpaca"
     @test !isempty(cfg.symbols)
     @test cfg.feed in ("iex", "delayed_sip", "sip")
@@ -242,10 +244,13 @@ end
     # The shipped configuration is the working one in a clone, where its
     # relative paths land in the repository, and a template elsewhere.
     root = pkgdir(MarketTickStreamer)
-    @test !MarketTickStreamer._installed_in_depot()
     @test MarketTickStreamer.DEFAULT_CONFIG == joinpath(root, "config", "config.toml")
-    shipped = load_config()
-    @test shipped.data_dir == joinpath(root, "data")
-    @test shipped.log_dir == joinpath(root, "logs")
-    @test shipped.env_file == joinpath(root, ".env")
+    if MarketTickStreamer._installed_in_depot()
+        @test_throws ArgumentError load_config()
+    else
+        shipped = load_config()
+        @test shipped.data_dir == joinpath(root, "data")
+        @test shipped.log_dir == joinpath(root, "logs")
+        @test shipped.env_file == joinpath(root, ".env")
+    end
 end

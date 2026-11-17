@@ -45,7 +45,7 @@
     # rather than returning, so the provider type stays narrow: a fallback
     # with a value widens every caller's inference and leaves each
     # downstream provider call with a no-matching-method branch.
-    cfg_now = load_config()
+    cfg_now = load_config(MarketTickStreamer.DEFAULT_CONFIG)
     @test_throws ArgumentError MarketTickStreamer.make_provider(Val(:kraken), cfg_now)
     @test Base.infer_return_type(MarketTickStreamer._provider_from_config, (Config,)) ==
           Union{AlpacaProvider,BinanceProvider}

@@ -103,9 +103,6 @@ end
         price_forming(mk(tape, [c])) for tape in ("A", "C") for
         c in ("O", "5", "6", "X", "L")
     )
-    @test NON_PRICE_CONDITIONS["A"] == NON_PRICE_CONDITIONS["B"]
-    @test setdiff(NON_PRICE_CONDITIONS["C"], NON_PRICE_CONDITIONS["A"]) == ["G", "W"]
-    @test setdiff(NON_PRICE_CONDITIONS["A"], NON_PRICE_CONDITIONS["C"]) == ["B"]
     # A tape with no list gives no basis to exclude, so the print is kept.
     @test price_forming(mk("Z", ["I"]))
 
@@ -127,7 +124,8 @@ end
     end
 
     # Config-driven, so the set used lands in the session sidecar.
-    @test load_config().non_price_conditions == NON_PRICE_CONDITIONS
+    @test load_config(MarketTickStreamer.DEFAULT_CONFIG).non_price_conditions ==
+          NON_PRICE_CONDITIONS
     mktempdir() do dir
         p = joinpath(dir, "q.toml")
         base = "[stream]\nsymbols = [\"A\"]\n"
@@ -138,6 +136,86 @@ end
         write(p, base * "[quality.non_price_conditions]\nA = [7]\n")
         @test_throws ArgumentError load_config(p)
     end
+end
+
+@testset "quality: the lists follow the tape plans' sale-condition matrices" begin
+    # The consolidated "update last" column of each matrix, transcribed from
+    # CTS Pillar Output Specification 2.11b (29 January 2026), p. 82, and
+    # UTP Data Feed Services Specification 4.1 (September 2026), 3.14.2.
+    # :first is "no, unless it is the only (CTS note 2) or first (UTP
+    # footnote 1) qualifying trade"; :late is CTS note 3 and UTP footnote 2,
+    # a late report that may still update it; :tbd a placeholder.
+    cts = Dict(
+        " " => :yes,
+        "B" => :no,
+        "C" => :no,
+        "E" => :yes,
+        "F" => :yes,
+        "H" => :no,
+        "I" => :no,
+        "K" => :yes,
+        "L" => :late,
+        "M" => :no,
+        "N" => :no,
+        "O" => :yes,
+        "P" => :first,
+        "Q" => :no,
+        "R" => :no,
+        "T" => :no,
+        "U" => :no,
+        "V" => :no,
+        "X" => :yes,
+        "Z" => :first,
+        "4" => :first,
+        "5" => :yes,
+        "6" => :yes,
+        "7" => :no,
+        "8" => :no,
+        "9" => :yes,
+    )
+    utp = Dict(
+        "@" => :yes,
+        "A" => :yes,
+        "B" => :yes,
+        "C" => :no,
+        "D" => :yes,
+        "E" => :tbd,
+        "F" => :yes,
+        "G" => :first,
+        "H" => :no,
+        "I" => :no,
+        "K" => :yes,
+        "L" => :late,
+        "M" => :no,
+        "N" => :no,
+        "O" => :yes,
+        "P" => :first,
+        "Q" => :no,
+        "R" => :no,
+        "S" => :yes,
+        "T" => :no,
+        "U" => :no,
+        "V" => :no,
+        "W" => :no,
+        "X" => :yes,
+        "Y" => :yes,
+        "Z" => :first,
+        "1" => :yes,
+        "4" => :first,
+        "5" => :yes,
+        "6" => :yes,
+        "7" => :no,
+        "8" => :tbd,
+        "9" => :yes,
+    )
+    # The rule the docstring states, then its two departures: T is kept,
+    # 9 is listed.
+    listed(matrix) = Set(c for (c, v) in matrix if v in (:no, :first))
+    expected(matrix) = union(setdiff(listed(matrix), ["T"]), ["9"])
+    @test Set(NON_PRICE_CONDITIONS["A"]) == expected(cts)
+    @test Set(NON_PRICE_CONDITIONS["B"]) == expected(cts)
+    @test Set(NON_PRICE_CONDITIONS["C"]) == expected(utp)
+    @test allunique(NON_PRICE_CONDITIONS["A"]) && allunique(NON_PRICE_CONDITIONS["C"])
 end
 
 @testset "quality: the round lot is read off the tape" begin

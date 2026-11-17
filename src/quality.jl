@@ -27,7 +27,8 @@ averages (`B`, `W`), prices fixed earlier or elsewhere (`P`, `4`), late
 reports (`Z`, `G`, `U`), non-regular settlement (`C`, `R`, and `N`, the
 next-day trade, which both plans hold in reserve since settlement moved to
 T+1 in 2024), contingent trades (`V`, `7`), price variation (`H`),
-market-center official open and close (`Q`, `M`). On 40 symbol-days captured
+market-center official open and close (`Q`, `M`), and the CTA's reserved
+`8`, which its matrix bars from the last although no print carries it. On 40 symbol-days captured
 with this package the stale-price classes among them (`W`, `4`, `P`, `Z`) sit
 one to two orders of magnitude further from the last regular print than
 regular prints do; odd lots do not, and are listed because the plans bar them. The provider delivers the plans'
@@ -44,13 +45,17 @@ precisely the official close.
 The `O` list is the provider's published one and has not been checked against
 a specification.
 
+A configuration that sets `[quality.non_price_conditions]` replaces this
+table as a whole: a tape it leaves out has no list, and its prints are all
+kept (see [`price_forming`](@ref)).
+
 This is not a per-field eligibility table: the plans track high/low,
 open, last and volume eligibility separately, and a print may update some and
 not others. It answers only whether a print may set a price.
 """
 const NON_PRICE_CONDITIONS = Dict{String,Vector{String}}(
-    "A" => ["B", "C", "H", "I", "M", "N", "P", "Q", "R", "U", "V", "Z", "4", "7", "9"],
-    "B" => ["B", "C", "H", "I", "M", "N", "P", "Q", "R", "U", "V", "Z", "4", "7", "9"],
+    "A" => ["B", "C", "H", "I", "M", "N", "P", "Q", "R", "U", "V", "Z", "4", "7", "8", "9"],
+    "B" => ["B", "C", "H", "I", "M", "N", "P", "Q", "R", "U", "V", "Z", "4", "7", "8", "9"],
     "C" => ["C", "G", "H", "I", "M", "N", "P", "Q", "R", "U", "V", "W", "Z", "4", "7", "9"],
     "O" => ["C", "I", "N", "R", "U", "V"],
 )

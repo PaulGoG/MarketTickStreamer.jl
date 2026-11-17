@@ -57,7 +57,11 @@ jobs:
           delete!(project["compat"], "AllocCheck")
           open(io -> TOML.print(io, project), path, "w")
       - uses: julia-actions/julia-buildpkg@v1
+      # Two worker threads and the interactive one: the producer, watchdog,
+      # sinks and guards then run in parallel, as they do in a session.
       - uses: julia-actions/julia-runtest@v1
+        env:
+          JULIA_NUM_THREADS: "2,1"
         with:
           coverage: ${{ matrix.coverage }}
       - uses: julia-actions/julia-processcoverage@v1
