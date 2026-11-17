@@ -530,7 +530,7 @@ _no_day(_, _) = nothing
 _caller_marked(_, _) = "marked by the caller"
 
 # For each raw part whose session has not completed, or read a vendor file
-# that ends early, the reason; a session is found by its sidecar, the longest
+# that ends early or a capture with sequence gaps, the reason; a session is found by its sidecar, the longest
 # sidecar id in the part's directory that prefixes the part's name. Sidecar
 # ids are listed once per directory and each sidecar is read once.
 function _part_reasons(raw_paths::AbstractVector{<:AbstractString})
@@ -551,16 +551,10 @@ function _part_reasons(raw_paths::AbstractVector{<:AbstractString})
     return out
 end
 
-# A directory that is missing or cannot be listed has no sidecar to consult;
-# the read that follows reports the part as it always has.
-function _listed_sidecar_ids(dir::AbstractString)
-    return try
-        _sidecar_ids(dir)
-    catch e
-        e isa InterruptException && rethrow()
-        String[]
-    end
-end
+# A missing directory has no sidecar to consult, and the read that follows
+# reports its part as it always has; one that exists but cannot be listed
+# raises, rather than pass a running session's part off as unmarked.
+_listed_sidecar_ids(dir::AbstractString) = isdir(dir) ? _sidecar_ids(dir) : String[]
 
 # Why the session of `sidecar` leaves its days incomplete, or `nothing`.
 function _incomplete_reason(sidecar::AbstractString, id::AbstractString)

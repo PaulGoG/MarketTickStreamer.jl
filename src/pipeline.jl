@@ -685,7 +685,17 @@ function _run_stream(
     return _with_session(cfg, sid) do summary, start_meta
         # What an interrupt returns before the sink exists.
         summary.result = (; ticks = 0, raw_files = String[], status = "interrupted")
-        session = live_source(provider, cfg; stop)
+        # The sidecar first, so a compaction that finds a part also finds its
+        # running session; both before the producer, so neither can fail
+        # with a connection already open and nothing to stop it.
+        meta_path = start_meta()
+        sink = open_raw_sink(cfg.raw_dir, sid; max_mb = cfg.max_raw_file_mb)
+        session = try
+            live_source(provider, cfg; stop)
+        catch
+            close_sink!(sink)
+            rethrow()
+        end
         # Delayed feeds keep transmitting the tape tail past the bell; allow an
         # extra minute for late-reported closing prints on top of the delay.
         cfg.stop_at_market_close &&
@@ -696,10 +706,6 @@ function _run_stream(
                 delay +
                 (delay > 0 ? 60 * NS_PER_SEC : Int64(0)),
             )
-        # The sidecar first: a compaction that finds a part also finds the
-        # session it belongs to, running.
-        meta_path = start_meta()
-        sink = open_raw_sink(cfg.raw_dir, sid; max_mb = cfg.max_raw_file_mb)
         @info "session started" id = sid raw = sink.path symbols = cfg.symbols
 
         on_flush = function (n, tot)

@@ -267,7 +267,7 @@ end
         )
         @test occursin("has no status", reason("[session]\nid = \"sess\"\n"))
         @test occursin("without a session table", reason("id = \"sess\"\n"))
-        # A part in a directory that cannot be listed is reported as before.
+        # A part in a missing directory is reported as before.
         @test_throws ArgumentError compact_raw(
             [joinpath(dir, "absent", "s_part001.jsonl")],
             joinpath(dir, "x");
@@ -277,7 +277,7 @@ end
         cfg = load_config(MarketTickStreamer.DEFAULT_CONFIG)
         today = trading_date(now_ns(); tz = cfg.exchange_tz)
         @test MarketTickStreamer._day_not_over(cfg, today)
-        @test !MarketTickStreamer._day_not_over(cfg, today - Day(2))
+        @test !MarketTickStreamer._day_not_over(cfg, today - Day(1))
     end
 end
 
