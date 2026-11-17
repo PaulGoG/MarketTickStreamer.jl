@@ -219,15 +219,17 @@ closed connection is retryable (`live_source` reconnects, and the attempt
 counter resets after any connection that delivered data), so without a
 terminating condition the client would replay these frames until the session
 deadline; the error frame ends the session, as `MockPlan` does for Alpaca.
+An `MbedTLS.SSLConfig` as `sslconfig` serves `wss://`.
 """
 function start_mock_binance_ws(
     port::Integer;
     frames::Vector,
     linger_s::Real = 0.0,
     fatal_after::Integer = 1,
+    sslconfig = nothing,
 )
     conns = Threads.Atomic{Int}(0)          # handlers may run on several threads
-    return HTTP.WebSockets.listen!("127.0.0.1", port; verbose = false) do ws
+    return HTTP.WebSockets.listen!("127.0.0.1", port; verbose = false, sslconfig) do ws
         if Threads.atomic_add!(conns, 1) + 1 > fatal_after
             HTTP.WebSockets.send(
                 ws,
@@ -269,7 +271,7 @@ end
 
 Config TOML pointing the Binance adapter at the mock servers, with all
 storage under `dir`. `source` and `backfill_feed` set `backfill.source` and
-`backfill.feed`.
+`backfill.feed`; `ws_scheme = "wss"` points the stream at a TLS server.
 """
 function mock_binance_config_toml(
     dir::AbstractString;
@@ -289,6 +291,7 @@ function mock_binance_config_toml(
     reconnect_max_retries::Integer = 1,
     stale_timeout_s::Real = 30.0,
     max_session_hours::Real = 0.02,
+    ws_scheme = "ws",
 )
     path = joinpath(dir, "binance.toml")
     write(
@@ -336,7 +339,7 @@ log_dir = "$(joinpath(dir, "logs"))"
 
 [binance]
 rest_base = "http://127.0.0.1:$rest_port"
-ws_base = "ws://127.0.0.1:$ws_port"
+ws_base = "$ws_scheme://127.0.0.1:$ws_port"
 bulk_base = "http://127.0.0.1:$rest_port"
 """,
     )

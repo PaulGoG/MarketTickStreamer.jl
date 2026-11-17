@@ -6,6 +6,26 @@ Notable changes to MarketTickStreamer. The format follows
 
 ## [Unreleased]
 
+### Added
+- `stream_websocket!`, the WebSocket loop of both adapters, is part of the
+  provider interface. An adapter built on it hands it a frame handler and
+  gets the session's side of a connection: the stop handshake, the
+  watchdog, the bound on the upgrade and on the closing handshake, and the
+  record of the connection as opened.
+
+### Changed
+- An upgrade request the server leaves unanswered for
+  `stream.stale_timeout_s` is cut and retried as an attempt that never
+  opened; before, the producer waited for the answer until the session's
+  deadline. The connection is registered with the session as soon as the
+  request is sent, so `stop!` also severs one that has not been answered.
+- A connection that ends other than by `stop!` or the watchdog sends a
+  CLOSE and waits two seconds for the answer, then severs the transport;
+  HTTP.jl's own handshake waited on a silent peer until TCP gave up.
+- A session stopped during its first upgrade, before any print, ends
+  `failed`, as one whose upgrades were never answered does; it ended
+  `completed` when the server answered after the stop.
+
 ## [2.1.0] - 2026-11-16
 
 A Binance bulk backfill counts breaks in the trade-id sequence; corrections

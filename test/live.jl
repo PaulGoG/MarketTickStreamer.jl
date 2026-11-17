@@ -169,14 +169,15 @@ end
         Ref((; ticks = 0, frames = 0, reconnects = 0)),
     )
     # Registered first: stop! finds the socket and severs it.
-    ws1 = (; io = IOBuffer())
-    @test !MarketTickStreamer._register_ws!(s, ws1) && isopen(ws1.io)
+    io1 = IOBuffer()
+    @test !MarketTickStreamer._register_ws!(s, io1) && isopen(io1)
     stop!(s)
-    @test !isopen(ws1.io)
-    # Registered after the stop: the provider severs it, and counts it.
-    ws2 = (; io = IOBuffer())
-    @test MarketTickStreamer._register_ws!(s, ws2) && !isopen(ws2.io)
-    @test s.opens[] == 1
+    @test !isopen(io1)
+    # Registered after the stop: the provider severs it. It is registered
+    # before the upgrade is answered, so it does not count as opened.
+    io2 = IOBuffer()
+    @test MarketTickStreamer._register_ws!(s, io2) && !isopen(io2)
+    @test s.opens[] == 0
     close(s.channel)       # no producer here to close it
 end
 
@@ -192,7 +193,7 @@ end
         kwargs...,
     )
         ws = (; io = IOBuffer())
-        MarketTickStreamer._register_ws!(s, ws) && return nothing
+        MarketTickStreamer._register_ws!(s, ws.io) && return nothing
         last_frame = Threads.Atomic{Float64}(time())
         alive = Threads.Atomic{Bool}(true)
         watchdog =
@@ -219,12 +220,20 @@ end
     end
 end
 
-@testset "live: a close does not wait on a peer that stops reading" begin
+@testset "live: a close waits on a peer that stops reading for a bounded time" begin
     port = freeport(9881)
     server = HTTP.WebSockets.listen!("127.0.0.1", port; verbose = false) do ws
         HTTP.WebSockets.send(ws, "x")
         sleep(6)                 # never reads: the CLOSE frame goes unanswered
     end
+    # A peer that reads answers the CLOSE at once.
+    port2 = freeport(9891)
+    server2 = HTTP.WebSockets.listen!("127.0.0.1", port2; verbose = false) do ws
+        HTTP.WebSockets.send(ws, "x")
+        for _ in ws
+        end
+    end
+    grace = MarketTickStreamer.CLOSE_GRACE_S
     try
         HTTP.WebSockets.open("ws://127.0.0.1:$port") do ws
             first(ws)
@@ -232,8 +241,20 @@ end
             elapsed = @elapsed MarketTickStreamer._close_ws(ws)
             @test elapsed < 4
         end
+        HTTP.WebSockets.open("ws://127.0.0.1:$port") do ws
+            first(ws)
+            # The CLOSE goes unanswered: severed once the grace runs out.
+            elapsed = @elapsed MarketTickStreamer._close_bounded(ws)
+            @test grace <= elapsed < grace + 2
+        end
+        HTTP.WebSockets.open("ws://127.0.0.1:$port2") do ws
+            first(ws)
+            elapsed = @elapsed MarketTickStreamer._close_bounded(ws)
+            @test elapsed < grace
+        end
     finally
         close(server)
+        close(server2)
     end
 end
 
@@ -443,9 +464,10 @@ end
 @testset "live E2E: a session ends when an upgrade is never answered" begin
     mktempdir() do dir
         ws_port, rest_port = freeport(9071), freeport(9076)
-        # Accepts TCP and never answers the upgrade: the producer blocks
-        # before any socket is registered, out of reach of stop!. The
-        # deadline's stop still ends the session, by closing the channel.
+        # Accepts TCP and never answers the upgrade. The connection is
+        # registered before the answer is read, so the deadline's stop
+        # severs it and the session ends without waiting out the grace
+        # period stop! allows a producer it cannot reach.
         listener = HTTP.Sockets.listen(HTTP.Sockets.ip"127.0.0.1", ws_port)
         held = Any[]
         acceptor = @async while isopen(listener)
@@ -464,14 +486,123 @@ end
             p = AlpacaProvider(cfg, MOCK_KEY, MOCK_SECRET)
             t0 = time()
             result = run_stream(cfg; provider = p)
-            # 3.6 s to the deadline, then the stop grace
-            @test time() - t0 < 3.6 + MarketTickStreamer.STOP_GRACE_S + 5
+            # 3.6 s to the deadline; the grace period would add 5 s more
+            @test time() - t0 < 3.6 + MarketTickStreamer.STOP_GRACE_S
             @test result.ticks == 0
             @test result.status == "failed"          # it never connected
         finally
             foreach(close, held)
             close(listener)
             close(rest)
+        end
+    end
+end
+
+@testset "live E2E: an unanswered upgrade is cut and retried" begin
+    mktempdir() do dir
+        ws_port, rest_port = freeport(9081), freeport(9086)
+        # Accepts TCP and never answers the upgrade. Each attempt is cut
+        # after stale_timeout_s, so the attempts run out long before the
+        # deadline, which is all that would end a wait on the answer.
+        listener = HTTP.Sockets.listen(HTTP.Sockets.ip"127.0.0.1", ws_port)
+        held = Any[]
+        acceptor = @async while isopen(listener)
+            sock = try
+                HTTP.Sockets.accept(listener)
+            catch
+                break
+            end
+            push!(held, sock)
+        end
+        rest = start_mock_rest(; port = rest_port)
+        try
+            cfg = load_config(
+                mock_config_toml(
+                    dir;
+                    ws_port,
+                    rest_port,
+                    max_retries = 1,
+                    stale_timeout_s = 1.0,
+                    max_session_hours = 0.01,          # 36 s
+                ),
+            )
+            p = AlpacaProvider(cfg, MOCK_KEY, MOCK_SECRET)
+            t0 = time()
+            result = run_stream(cfg; provider = p)
+            @test time() - t0 < 20
+            @test result.status == "failed"
+            @test length(held) == 2
+        finally
+            foreach(close, held)
+            close(listener)
+            close(rest)
+        end
+    end
+end
+
+@testset "live E2E: a stop severs a wss:// connection read on another thread" begin
+    # Every other mock speaks plain TCP. Here the server speaks TLS with a
+    # self-signed certificate, which the client is told not to verify, and
+    # the session is stopped from this task while the producer reads on a
+    # worker thread, once through each TLS stack HTTP.jl offers.
+    mktempdir() do dir
+        key = OpenSSL.EvpPKey(OpenSSL.rsa_generate_key())
+        cert = OpenSSL.X509Certificate()
+        name = OpenSSL.X509Name()
+        OpenSSL.add_entry(name, "CN", "127.0.0.1")
+        cert.subject_name = name
+        cert.issuer_name = name
+        Dates.adjust(cert.time_not_before, Second(0))
+        Dates.adjust(cert.time_not_after, Day(1))
+        cert.public_key = key
+        OpenSSL.sign_certificate(cert, key)
+        certfile, keyfile = joinpath(dir, "cert.pem"), joinpath(dir, "key.pem")
+        write(certfile, sprint(write, cert))
+        write(keyfile, sprint(write, key))
+        sslconfig = MbedTLS.SSLConfig(certfile, keyfile)
+        ws_port = freeport(9091)
+        frames = [mock_binance_frame("BTCUSDT", k) for k in 1:3]
+        server = start_mock_binance_ws(
+            ws_port;
+            frames,
+            linger_s = 30.0,
+            fatal_after = 10,
+            sslconfig,
+        )
+        cfg = load_config(
+            mock_binance_config_toml(
+                dir;
+                ws_port,
+                rest_port = 9999,
+                ws_scheme = "wss",
+                max_session_hours = 0.05,
+            ),
+        )
+        default_tls = HTTP.SOCKET_TYPE_TLS[]
+        try
+            for tls in (OpenSSL.SSLStream, MbedTLS.SSLContext)
+                HTTP.SOCKET_TYPE_TLS[] = tls
+                withenv("JULIA_SSL_NO_VERIFY_HOSTS" => "127.0.0.1") do
+                    s = live_source(BinanceProvider(cfg), cfg)
+                    got = Trade[]
+                    for _ in 1:3
+                        push!(got, take!(s.channel))
+                    end
+                    @test length(got) == 3
+                    @test s.ws[].io isa tls
+                    t0 = time()
+                    stop!(s)
+                    @test timedwait(() -> !isopen(s.channel), 10.0) === :ok
+                    # Ended by the sever, not by the channel close stop!
+                    # falls back on after STOP_GRACE_S.
+                    @test time() - t0 < MarketTickStreamer.STOP_GRACE_S
+                    @test timedwait(() -> s.outcome[] !== :running, 5.0) === :ok
+                    @test s.outcome[] === :completed && s.opens[] == 1
+                end
+            end
+        finally
+            HTTP.SOCKET_TYPE_TLS[] = default_tls
+            close(server)
         end
     end
 end

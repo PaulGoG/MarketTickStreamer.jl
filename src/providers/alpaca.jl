@@ -337,10 +337,10 @@ const FATAL_WS_CODES = (401, 402, 403, 404, 405, 406, 409, 410, 411)
 # server opens with {"T":"success","msg":"connected"}, we reply with auth,
 # then subscribe on {"T":"success","msg":"authenticated"}.
 #
-# Fatal protocol errors are carried out via a Ref and thrown after
-# HTTP.WebSockets.open returns: exceptions thrown inside the handler cross
-# HTTP.jl's internal task boundary and may arrive wrapped (TaskFailedException
-# etc.), which would defeat the caller's `isa FatalStreamError` dispatch.
+# A fatal protocol error is returned from the frame handler, and
+# `stream_websocket!` throws it once the connection has ended: thrown inside
+# the handler it would cross HTTP.jl's internal task boundary and arrive
+# wrapped, which would defeat the caller's `isa FatalStreamError` dispatch.
 function stream_protocol!(
     ch::Channel{Trade},
     p::AlpacaProvider,
@@ -349,58 +349,43 @@ function stream_protocol!(
     on_quote = nothing,
     on_bar = nothing,
 )
-    fatal = Ref{Union{Nothing,FatalStreamError}}(nothing)
-    HTTP.WebSockets.open(ws_url(p)) do ws
-        _register_ws!(s, ws) && return nothing      # stopped while it opened
-        last_frame = Threads.Atomic{Float64}(time())
-        alive = Threads.Atomic{Bool}(true)
-        watchdog = spawn_watchdog(ws, s, last_frame, alive, cfg.stale_timeout_s)
-        try
-            for raw in ws
-                s.stop[] && break
-                last_frame[] = time()
-                bump!(s; frames = 1)
-                for msg in JSON.parse(raw)::AbstractVector
-                    frame_type = String(get(msg, :T, ""))
-                    if frame_type == "t"
-                        put!(ch, parse_alpaca_trade(msg, now_ns()))
-                        bump!(s; ticks = 1)
-                    elseif frame_type == "success"
-                        m = String(get(msg, :msg, ""))
-                        if m == "connected"
-                            HTTP.WebSockets.send(ws, auth_payload(p))
-                        elseif m == "authenticated"
-                            @info "authenticated; subscribing" cfg.symbols cfg.channels
-                            HTTP.WebSockets.send(
-                                ws,
-                                subscribe_payload(p, cfg.symbols, cfg.channels),
-                            )
-                        end
-                    elseif frame_type == "subscription"
-                        @info "subscription confirmed" trades = get(msg, :trades, [])
-                    elseif frame_type == "error"
-                        code = Int(get(msg, :code, 0))
-                        m = String(get(msg, :msg, "unknown"))
-                        # A connection limit (406) met after an earlier
-                        # connection of this session opened is most likely that
-                        # connection, which the server has not yet seen close;
-                        # it is retried. Otherwise it is another client's.
-                        code in FATAL_WS_CODES &&
-                            !(code == 406 && s.opens[] > 1) &&
-                            (fatal[] = FatalStreamError("Alpaca error $code: $m"))
-                        fatal[] === nothing && error("Alpaca stream error $code: $m")   # retryable
-                    elseif frame_type == "q"
-                        on_quote === nothing || on_quote(parse_alpaca_quote(msg, now_ns()))
-                    elseif frame_type == "b"
-                        on_bar === nothing || on_bar(parse_alpaca_bar(msg, now_ns()))
-                    end
+    stream_websocket!(s, ws_url(p), cfg.stale_timeout_s) do ws, raw
+        fatal = nothing
+        for msg in JSON.parse(raw)::AbstractVector
+            frame_type = String(get(msg, :T, ""))
+            if frame_type == "t"
+                put!(ch, parse_alpaca_trade(msg, now_ns()))
+                bump!(s; ticks = 1)
+            elseif frame_type == "success"
+                m = String(get(msg, :msg, ""))
+                if m == "connected"
+                    HTTP.WebSockets.send(ws, auth_payload(p))
+                elseif m == "authenticated"
+                    @info "authenticated; subscribing" cfg.symbols cfg.channels
+                    HTTP.WebSockets.send(
+                        ws,
+                        subscribe_payload(p, cfg.symbols, cfg.channels),
+                    )
                 end
-                fatal[] === nothing || break
+            elseif frame_type == "subscription"
+                @info "subscription confirmed" trades = get(msg, :trades, [])
+            elseif frame_type == "error"
+                code = Int(get(msg, :code, 0))
+                m = String(get(msg, :msg, "unknown"))
+                # A connection limit (406) met after an earlier connection of
+                # this session opened is most likely that connection, which the
+                # server has not yet seen close; it is retried. Otherwise it is
+                # another client's.
+                code in FATAL_WS_CODES &&
+                    !(code == 406 && s.opens[] > 1) &&
+                    (fatal = FatalStreamError("Alpaca error $code: $m"))
+                fatal === nothing && error("Alpaca stream error $code: $m")   # retryable
+            elseif frame_type == "q"
+                on_quote === nothing || on_quote(parse_alpaca_quote(msg, now_ns()))
+            elseif frame_type == "b"
+                on_bar === nothing || on_bar(parse_alpaca_bar(msg, now_ns()))
             end
-        finally
-            alive[] = false
-            wait(watchdog)
         end
+        return fatal
     end
-    fatal[] === nothing || throw(fatal[])
 end

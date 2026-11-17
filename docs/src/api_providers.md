@@ -32,6 +32,7 @@ construct it through `make_provider`.
 using MarketTickStreamer
 import MarketTickStreamer: provider_spec, make_provider, exchange_tz, market_clock,
     historical_trades, stream_protocol!
+using MarketTickStreamer: stream_websocket!
 using TimeZones: @tz_str
 
 struct VenueProvider <: AbstractProvider
@@ -60,7 +61,8 @@ make_provider(::Val{:venue}, cfg::Config) = VenueProvider(
 exchange_tz(::VenueProvider) = tz"UTC"
 # market_clock, historical_trades and stream_protocol! complete the adapter;
 # always_open, session_days and feed_delay_ns where the venue departs from
-# the defaults.
+# the defaults. On a WebSocket feed, stream_protocol! parses the messages
+# that stream_websocket! hands it.
 ```
 
 The shipped adapters, `src/providers/alpaca.jl` (credentialed, market

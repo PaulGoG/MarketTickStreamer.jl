@@ -541,42 +541,21 @@ function stream_protocol!(
     all(==(:trades), cfg.channels) ||
         @warn "the Binance adapter streams trades only; other stream.channels are ignored" channels =
             cfg.channels maxlog = 1
-    fatal = Ref{Union{Nothing,FatalStreamError}}(nothing)
-    HTTP.WebSockets.open(ws_url(p, cfg.symbols)) do ws
-        _register_ws!(s, ws) && return nothing      # stopped while it opened
-        last_frame = Threads.Atomic{Float64}(time())
-        alive = Threads.Atomic{Bool}(true)
-        watchdog = spawn_watchdog(ws, s, last_frame, alive, cfg.stale_timeout_s)
-        try
-            for raw in ws
-                s.stop[] && break
-                last_frame[] = time()
-                bump!(s; frames = 1)
-                frame = JSON.parse(raw)::AbstractDict
-                msg = get(frame, :data, frame)          # combined or raw stream
-                e = String(get(msg, :e, ""))
-                if e == "trade" || e == "aggTrade"
-                    put!(ch, parse_binance_trade(msg, now_ns()))
-                    bump!(s; ticks = 1)
-                elseif haskey(frame, :error)
-                    # A malformed stream name is permanent: reconnecting with
-                    # the same configuration would loop forever. The error
-                    # leaves the handler by value, as in the Alpaca adapter: an
-                    # exception thrown inside it arrives wrapped and would be
-                    # retried as a disconnect.
-                    err = frame.error
-                    fatal[] = FatalStreamError(
-                        "Binance stream error $(get(err, :code, 0)): " *
-                        "$(get(err, :msg, "unknown"))",
-                    )
-                    break
-                end
-            end
-        finally
-            alive[] = false
-            wait(watchdog)
+    stream_websocket!(s, ws_url(p, cfg.symbols), cfg.stale_timeout_s) do _, raw
+        frame = JSON.parse(raw)::AbstractDict
+        msg = get(frame, :data, frame)          # combined or raw stream
+        e = String(get(msg, :e, ""))
+        if e == "trade" || e == "aggTrade"
+            put!(ch, parse_binance_trade(msg, now_ns()))
+            bump!(s; ticks = 1)
+        elseif haskey(frame, :error)
+            # A malformed stream name is permanent: reconnecting with the same
+            # configuration would loop forever.
+            err = frame.error
+            return FatalStreamError(
+                "Binance stream error $(get(err, :code, 0)): $(get(err, :msg, "unknown"))",
+            )
         end
+        return nothing
     end
-    fatal[] === nothing || throw(fatal[])
-    return nothing
 end

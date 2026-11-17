@@ -20,7 +20,7 @@ stop_at_market_close = true      # stop at the session's close
 reconnect_max_retries = 10       # reconnection attempts per disconnect; >= 0
 reconnect_base_delay_s = 1.0     # backoff base [s]; > 0
 reconnect_max_delay_s = 60.0     # backoff cap [s]; >= reconnect_base_delay_s
-stale_timeout_s = 120.0          # watchdog: reconnect after this frameless interval [s]; > 0
+stale_timeout_s = 120.0          # watchdog: reconnect after this long without a frame or an upgrade answer [s]; > 0
 
 [storage]
 data_dir = "../data"             # data root; relative to this file or absolute

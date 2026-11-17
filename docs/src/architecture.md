@@ -137,13 +137,15 @@ interrupt (tested).
   risks a ban. The exception is a connection limit (406) met after an
   earlier connection of the session opened: the server most likely still
   counts that connection, which the watchdog cut, so it is retried. Both
-  adapters carry the fatal signal out of the WebSocket handler by value and
-  throw it after the connection returns, since an exception thrown inside the
-  handler arrives wrapped and would be retried as a disconnect. Both paths
-  are tested against the mocks.
+  adapters return the fatal signal from their frame handler, and
+  `stream_websocket!` throws it after the connection returns, since an
+  exception thrown inside the handler arrives wrapped and would be retried as
+  a disconnect. Both paths are tested against the mocks.
 - **Stale connections**: HTTP.jl 1.x websockets have no read-idle timeout, so
   a watchdog task force-closes the socket after `stream.stale_timeout_s`
-  without a frame, triggering the normal reconnect path.
+  without a frame, triggering the normal reconnect path. The answer to the
+  upgrade request has the same bound: a server that accepts the TCP
+  connection and never answers costs one attempt, not the session.
 - **Market-hours guards**: `/v2/clock` gates connection
   (`stream.require_market_open`); `stream.wait_for_open` sleeps until the
   next open instead of exiting, before the session takes the data tree's
@@ -161,11 +163,15 @@ interrupt (tested).
   performing the CLOSE handshake: the handshake reads until the peer
   answers, which a silent peer never does, and from another task than the
   protocol loop's it would read the socket concurrently with it. The read
-  loop meets the end of the stream and returns. A producer still waiting
-  for an upgrade the server never answers has no socket to sever yet; five
-  seconds after `stop!` the tick channel is closed regardless, so the sinks
-  finish and the session ends, as `failed` when no connection of the session
-  opened and no print arrived.
+  loop meets the end of the stream and returns. Every other end of a
+  connection sends a CLOSE and waits two seconds for the answer before
+  severing. The connection is registered with the session as soon as the
+  upgrade request is sent, so a stop also reaches one the server has not
+  answered. Before that, while TCP and TLS are set up (HTTP.jl's
+  `connect_timeout`, 30 s), there is no socket to sever; five seconds after
+  `stop!` the tick channel is closed regardless, so the sinks finish and the
+  session ends. A session ends `failed` when no upgrade of it was accepted and
+  no print arrived, a stop during the first upgrade included.
 - **Resource guards**: free-disk check before and during a session
   (`limits.min_free_disk_gb`; a breach mid-session stops the stream through
   `stop!`); compaction reroutes raw inputs whose estimated footprint

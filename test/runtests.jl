@@ -27,6 +27,8 @@ using Random: Xoshiro
 using Base64: base64encode
 using CRC32c: crc32c
 using CodecZlib: GzipCompressorStream
+using MbedTLS: MbedTLS
+using OpenSSL: OpenSSL
 using MarketTickStreamer
 using MarketTickStreamer:
     RawSink,

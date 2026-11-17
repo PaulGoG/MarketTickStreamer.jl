@@ -22,7 +22,7 @@ module MarketTickStreamer
 # Every name entering this namespace is listed: the test suite asserts with
 # ExplicitImports.jl that nothing arrives implicitly, so an import that is no
 # longer used, or a new name used without being imported, fails the suite.
-using Base64: base64decode
+using Base64: base64decode, base64encode
 using CRC32c: crc32c
 using Dates:
     Dates, @dateformat_str, Day, Millisecond, datetime2unix, dayofweek, unix2datetime
@@ -33,7 +33,7 @@ using Logging: Logging, ConsoleLogger
 using Mmap: Mmap
 using Printf: @sprintf
 using Random: RandomDevice, Xoshiro
-using SHA: sha256
+using SHA: sha1, sha256
 using Statistics: Statistics, median
 using TOML: TOML
 
@@ -106,7 +106,12 @@ public RawSink,
 # The provider implementer interface beyond the exported names: what an
 # adapter in another package defines or calls (see `AbstractProvider`).
 public stream_protocol!,
-    feed_delay_ns, exchange_day_start_ns, spawn_watchdog, bump!, registered_providers
+    stream_websocket!,
+    feed_delay_ns,
+    exchange_day_start_ns,
+    spawn_watchdog,
+    bump!,
+    registered_providers
 
 include("errors.jl")
 include("schema.jl")

@@ -20,10 +20,10 @@ parsing. It overrides [`always_open`](@ref), [`session_days`](@ref) and
 [`feed_delay_ns`](@ref) where the venue departs from the defaults.
 
 Beyond the exported names, the implementer interface is `public`:
-[`stream_protocol!`](@ref), [`feed_delay_ns`](@ref),
-[`exchange_day_start_ns`](@ref), [`spawn_watchdog`](@ref) and
-[`bump!`](@ref) are documented, versioned with the package and reached
-qualified.
+[`stream_protocol!`](@ref), [`stream_websocket!`](@ref),
+[`feed_delay_ns`](@ref), [`exchange_day_start_ns`](@ref),
+[`spawn_watchdog`](@ref) and [`bump!`](@ref) are documented, versioned with
+the package and reached qualified.
 
 The adapters that ship are `providers/alpaca.jl` (US equities, New York
 calendar, credentialed, closes overnight and on weekends) and
@@ -309,10 +309,13 @@ until the peer's CLOSE frame arrives, which on a silent peer lasts until TCP
 gives up, and it would read the socket concurrently with the protocol loop,
 which can leave one of the two readers waiting forever.
 
-A producer blocked before its connection is registered (an upgrade request
-the server never answers) cannot be reached through a socket; if the channel
-is still open `STOP_GRACE_S` seconds after the first request, it is closed
-here, so the consumers end whatever state the producer is in.
+A protocol loop built on [`stream_websocket!`](@ref) registers its
+connection before the upgrade request is answered, so the stop reaches it from
+then on. Before that, while TCP and TLS are set up (bounded by HTTP.jl's
+`connect_timeout`, 30 s), and in an adapter with a loop of its own, there is
+no socket to sever; if the channel is still open `STOP_GRACE_S` seconds after
+the first request, it is closed here, so the consumers end whatever state the
+producer is in.
 """
 function stop!(s::LiveSession)
     # Under the lock the provider registers a connection with
@@ -321,7 +324,7 @@ function stop!(s::LiveSession)
         s.stop[] = true
         s.ws[]
     end
-    ws === nothing || _close_ws(ws)
+    ws === nothing || _sever(ws)
     Threads.atomic_xchg!(s.grace, true) || Threads.@spawn begin
         sleep(STOP_GRACE_S)
         if isopen(s.channel)
@@ -336,34 +339,51 @@ function stop!(s::LiveSession)
     return nothing
 end
 
-# Provider side of the stop handshake: register `ws` and test the stop flag
-# under the session's lock. Returns `true` when the session is stopping, the
-# connection then severed.
-function _register_ws!(s::LiveSession, ws)
+# Provider side of the stop handshake: register `conn`, an `HTTP.Connection`,
+# and test the stop flag under the session's lock. Returns `true` when the
+# session is stopping, the connection then severed. `stream_websocket!` calls
+# it once the upgrade request is on the wire, before the answer is read.
+function _register_ws!(s::LiveSession, conn)
     stopping = lock(s.wslock) do
-        s.ws[] = ws
+        s.ws[] = conn
         s.stop[]
     end
-    if stopping
-        # It did open, though it ends before its watchdog would record it.
-        Threads.atomic_add!(s.opens, 1)
-        _close_ws(ws)
-    end
+    stopping && _sever(conn)
     return stopping
 end
 
 # Seconds `stop!` waits for the producer to close the channel itself.
 const STOP_GRACE_S = 5.0
 
-# Close `ws` from a task other than the one reading it: sever the transport.
-# The reading task then meets the end of the stream, and HTTP.jl's own close,
-# which runs in that task when the handler returns, finishes at once.
-function _close_ws(ws)
+# Seconds a closing handshake may take before the transport is severed: a
+# healthy peer answers a CLOSE within one round trip.
+const CLOSE_GRACE_S = 2.0
+
+# Sever `conn` (an `HTTP.Connection`) from a task other than the one reading
+# it. The reading task then meets the end of the stream, and a closing
+# handshake still running in it finishes at once.
+function _sever(conn)
     try
-        close(ws.io)
+        close(conn)
     catch e
         e isa InterruptException && rethrow()
     end
+    return nothing
+end
+
+_close_ws(ws) = _sever(ws.io)
+
+# Close `ws` with a CLOSE frame and wait up to `CLOSE_GRACE_S` for the peer's
+# answer, then sever the transport. HTTP.jl's `close(ws)` alone reads until
+# the answer arrives, which on a silent peer lasts until TCP gives up.
+function _close_bounded(ws)
+    closing = Threads.@spawn try
+        close(ws)
+    catch e
+        e isa InterruptException && rethrow()
+    end
+    timedwait(() -> istaskdone(closing), CLOSE_GRACE_S; pollint = 0.05) === :ok ||
+        _close_ws(ws)
     return nothing
 end
 
@@ -408,9 +428,12 @@ Provider interface: run one connect→auth→subscribe→stream cycle, pushing
 normalized `Trade`s into `ch`. Must return on orderly close, throw
 [`FatalStreamError`](@ref) on non-retryable protocol errors, and any other
 exception on retryable transport failures. Implemented by each provider
-(`providers/alpaca.jl`, `providers/binance.jl`). Once connected it calls
-[`spawn_watchdog`](@ref), which also records the connection as opened: the
-reconnect counter and the session's status read that record.
+(`providers/alpaca.jl`, `providers/binance.jl`), both on
+[`stream_websocket!`](@ref), which takes care of the session's side of a
+connection: the stop handshake, the watchdog, the bound on the upgrade, and
+the record of the connection as opened, which the reconnect counter and the
+session's status read. An adapter with a loop of its own calls
+[`spawn_watchdog`](@ref) once connected, which makes that record.
 
 `on_quote` and `on_bar`, when given, receive normalized [`Quote`](@ref) and
 [`Bar`](@ref) values for the corresponding frames. Neither channel is
@@ -427,7 +450,8 @@ Provider interface: force-close `ws` once `last_frame[]` is older than
 so a silently dead TCP connection would otherwise block the read loop
 forever. A protocol loop spawns it on connect, writes `time()` into
 `last_frame` (an atomic `Float64`) per frame, and before returning sets
-`alive[] = false` and `wait`s the task. Both atomics are written by the
+`alive[] = false` and `wait`s the task; [`stream_websocket!`](@ref) does all
+of this for the loops built on it. Both atomics are written by the
 protocol loop and read by this task on another thread.
 
 The call also records the connection as opened (`s.opens`, `s.opened_at`)
@@ -455,6 +479,124 @@ function spawn_watchdog(
             sleep(0.25)   # fine-grained so connection teardown isn't held up
         end
     end
+end
+
+"""
+    stream_websocket!(on_frame, s::LiveSession, url, stale_timeout_s;
+                      headers = Pair{String,String}[]) -> Nothing
+
+Provider interface: open a WebSocket to `url` and call `on_frame(ws, message)`
+for every message received, until the session stops, the connection ends, or
+`on_frame` returns a [`FatalStreamError`](@ref), which is then thrown here;
+any other return value continues the stream. `ws` is the
+`HTTP.WebSockets.WebSocket`, for the messages the venue expects in reply
+(authentication, subscription). An exception thrown by `on_frame` ends the
+connection as a retryable failure. HTTP.jl wraps it on the way out, which is
+why a non-retryable condition is returned and not thrown.
+
+The function performs the session's side of a connection, which an adapter's
+[`stream_protocol!`](@ref) then need not:
+
+- the connection is registered with the session as soon as the upgrade
+  request is sent, so [`stop!`](@ref) severs it whether or not the server
+  has answered;
+- an upgrade not answered within `stale_timeout_s` seconds severs the
+  connection, which the reconnect loop counts as an attempt that never
+  opened;
+- once the upgrade is accepted, [`spawn_watchdog`](@ref) records the
+  connection as opened and severs it when no message arrives for
+  `stale_timeout_s` seconds; every message counts as a frame (`bump!`);
+- the connection ends with a closing handshake bounded at a few seconds.
+
+`headers` are added to the upgrade request.
+
+```julia
+function stream_protocol!(ch, p::VenueProvider, cfg, s::LiveSession; kw...)
+    MarketTickStreamer.stream_websocket!(s, p.ws_url, cfg.stale_timeout_s) do ws, msg
+        frame = JSON.parse(msg)
+        haskey(frame, :error) && return FatalStreamError("venue error: \$(frame.error)")
+        put!(ch, parse_venue_trade(frame, now_ns()))
+        MarketTickStreamer.bump!(s; ticks = 1)
+        return nothing
+    end
+end
+```
+"""
+function stream_websocket!(
+    on_frame,
+    s::LiveSession,
+    url::AbstractString,
+    stale_timeout_s::Float64;
+    headers = Pair{String,String}[],
+)
+    key = base64encode(rand(RandomDevice(), UInt8, 16))
+    request_headers = [
+        "Upgrade" => "websocket",
+        "Connection" => "Upgrade",
+        "Sec-WebSocket-Key" => key,
+        "Sec-WebSocket-Version" => "13",
+        headers...,
+    ]
+    fatal = Ref{Union{Nothing,FatalStreamError}}(nothing)
+    # The client half of `HTTP.WebSockets.open`, taken here so that the
+    # connection is in hand before the answer to the upgrade is read.
+    HTTP.open("GET", url, request_headers) do http
+        conn = http.stream
+        _register_ws!(s, conn) && return nothing      # stopped before the answer
+        _await_upgrade(http, key, stale_timeout_s)
+        http.ntoread = 0                     # the stream holds no HTTP body
+        ws = HTTP.WebSockets.WebSocket(conn, http.message.request, http.message)
+        last_frame = Threads.Atomic{Float64}(time())
+        alive = Threads.Atomic{Bool}(true)
+        watchdog = spawn_watchdog(ws, s, last_frame, alive, stale_timeout_s)
+        try
+            for msg in ws
+                s.stop[] && break
+                last_frame[] = time()
+                bump!(s; frames = 1)
+                r = on_frame(ws, msg)
+                if r isa FatalStreamError
+                    fatal[] = r
+                    break
+                end
+            end
+        finally
+            alive[] = false
+            wait(watchdog)
+            _close_bounded(ws)
+        end
+    end
+    fatal[] === nothing || throw(fatal[])
+    return nothing
+end
+
+# Read the answer to the upgrade request on `http`, severing the connection
+# if it has not arrived after `timeout_s`, and check it (RFC 6455, 4.1): status
+# 101, `Upgrade: websocket`, `Connection: Upgrade` and the accept key derived
+# from `key` (4.2.2). Throws on a refused or unanswered upgrade.
+function _await_upgrade(http, key::AbstractString, timeout_s::Float64)
+    answered = Threads.Atomic{Bool}(false)
+    timer = Timer(timeout_s) do _
+        if !answered[]
+            @warn "upgrade not answered; closing the connection" timeout_s
+            _sever(http.stream)
+        end
+    end
+    try
+        HTTP.startread(http)
+    finally
+        answered[] = true
+        close(timer)
+    end
+    r = http.message
+    accept = base64encode(sha1(key * "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
+    ok =
+        r.status == 101 &&
+        lowercase(HTTP.header(r, "Upgrade")) == "websocket" &&
+        occursin("upgrade", lowercase(HTTP.header(r, "Connection"))) &&
+        HTTP.header(r, "Sec-WebSocket-Accept") == accept
+    ok || error("WebSocket upgrade refused: HTTP $(r.status)")
+    return nothing
 end
 
 """

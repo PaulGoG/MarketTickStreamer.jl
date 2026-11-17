@@ -82,7 +82,7 @@ where that file is a read-only template to copy
 | `reconnect_max_retries` | Reconnection attempts per disconnect before giving up. The counter resets after any connection that delivered prints, or that opened and stayed open for `stale_timeout_s`. |
 | `reconnect_base_delay_s` | Backoff base; the delay is `base * 2^attempt`, jittered. |
 | `reconnect_max_delay_s` | Backoff cap. |
-| `stale_timeout_s` | Watchdog interval: a connection that delivers no frame for this long is severed and retried. |
+| `stale_timeout_s` | Watchdog interval: a connection that delivers no frame for this long is severed and retried, and so is an upgrade request the server leaves unanswered for this long. |
 
 The watchdog exists because HTTP.jl 1.x WebSockets have no read idle
 timeout, so a silently dead TCP connection would otherwise block the read
