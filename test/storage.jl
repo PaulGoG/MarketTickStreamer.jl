@@ -1,0 +1,408 @@
+@testset "sinks: NDJSON round-trip, rolling, recovery" begin
+    t = sample_trade(1)
+    @test json_to_trade(trade_to_json(t)) == t
+    mktempdir() do dir
+        sink = open_raw_sink(dir, "sess"; max_mb = 1)
+        write_batch!(sink, [sample_trade(i) for i in 1:100])
+        close_sink!(sink)
+        # never reopen: a second sink with the same prefix gets a new part
+        sink2 = open_raw_sink(dir, "sess"; max_mb = 1)
+        @test sink2.path != sink.path
+        close_sink!(sink2)
+        @test !isfile(sink2.path)          # never written: removed at close
+        trades = read_raw(sink.path)
+        @test length(trades) == 100
+        @test trades[7] == sample_trade(7)
+        # corrupt-line recovery: truncate mid-line, append garbage
+        open(sink.path, "a") do io
+            print(io, "{\"symbol\":\"AAPL\",\"time_ns\":123")   # no newline, cut off
+        end
+        @test length(read_raw(sink.path)) == 100
+    end
+end
+
+@testset "sinks: run_sink! batching via channel close" begin
+    mktempdir() do dir
+        sink = open_raw_sink(dir, "batch")
+        ch = Channel{Trade}(1000)
+        task = Threads.@spawn run_sink!(
+            ch,
+            sink;
+            flush_interval_s = 10.0,
+            flush_max_ticks = 25,
+        )
+        for i in 1:60
+            put!(ch, sample_trade(i))
+        end
+        close(ch)                       # shutdown signal → final flush
+        @test fetch(task) == 60
+        close_sink!(sink)
+        @test length(read_raw(sink.path)) == 60
+    end
+    # Closed while a put! waits on the full channel (stop!'s bound on a
+    # stuck producer): the print already in it is written, no error.
+    mktempdir() do dir
+        sink = open_raw_sink(dir, "pending")
+        ch = Channel{Trade}(1)
+        put!(ch, sample_trade(1))
+        pending = @async try
+            put!(ch, sample_trade(2))
+        catch
+        end
+        yield()
+        close(ch)
+        @test run_sink!(ch, sink; flush_interval_s = 0.01) == 1
+        wait(pending)
+        close_sink!(sink)
+        @test read_raw(sink.path) == [sample_trade(1)]
+    end
+end
+
+@testset "compaction" begin
+    mktempdir() do dir
+        sink = open_raw_sink(dir, "c")
+        write_batch!(
+            sink,
+            [sample_trade(i; sym = iseven(i) ? "MSFT" : "AAPL") for i in 1:20],
+        )
+        close_sink!(sink)
+        out = joinpath(dir, "processed")
+        files = compact_raw([sink.path], out; format = :csv)
+        @test length(files) == 2                       # one per symbol, same day
+        @test all(isfile, files)
+        # safesave: a recompaction of the same input leaves the files as
+        # they are; one with other content takes the canonical names, and
+        # the files it displaces survive as numbered backups.
+        before = Dict(f => read(f) for f in files)
+        @test compact_raw([sink.path], out; format = :csv) == files
+        @test !any(occursin("_#", f) for (_, _, fs) in walkdir(out) for f in fs)
+        extra = open_raw_sink(dir, "c2")
+        write_batch!(
+            extra,
+            [sample_trade(21; sym = "AAPL"), sample_trade(22; sym = "MSFT")],
+        )
+        close_sink!(extra)
+        files2 = compact_raw([sink.path, extra.path], out; format = :csv)
+        @test files2 == files
+        for f in files
+            base, ext = splitext(f)
+            @test isfile(f)
+            @test read(base * "_#1" * ext) == before[f]
+        end
+        @test !any(occursin(".partial", f) for (_, _, fs) in walkdir(out) for f in fs)
+        arrow_files =
+            compact_raw([sink.path, extra.path], joinpath(dir, "arrow"); format = :arrow)
+        @test length(arrow_files) == 2
+        # Arrow stores the low-cardinality columns dictionary-encoded and
+        # reads back the same table the CSV holds, compressed or not.
+        zstd_files = compact_raw(
+            [sink.path, extra.path],
+            joinpath(dir, "zstd");
+            format = :arrow,
+            compression = :zstd,
+        )
+        for (c, a, z) in zip(files, arrow_files, zstd_files)
+            csv = CSV.read(c, DataFrame; types = Dict(:conditions => String))
+            tbl = MarketTickStreamer.Arrow.Table(a)
+            @test tbl.conditions isa MarketTickStreamer.Arrow.DictEncoded
+            @test tbl.symbol isa MarketTickStreamer.Arrow.DictEncoded
+            @test !(tbl.price isa MarketTickStreamer.Arrow.DictEncoded)
+            for f in (a, z)
+                df = MarketTickStreamer._read_processed(f)
+                @test df.time_ns == csv.time_ns && df.price == csv.price
+                @test df.symbol == csv.symbol && df.conditions == csv.conditions
+            end
+        end
+        @test_throws ArgumentError compact_raw(
+            [sink.path],
+            joinpath(dir, "x");
+            compression = :zstd,
+        )
+        @test_throws ArgumentError compact_raw(
+            [sink.path],
+            joinpath(dir, "x");
+            format = :arrow,
+            compression = :gzip,
+        )
+        # Empty text reads back as "", whether the file quotes it or leaves
+        # it unquoted, which CSV.jl reads as `missing`.
+        t1 = Trade("AAPL", 1_753_886_600_000_000_000, 0, 100.0, 1.0, "V", String[], "C", 1)
+        t2 = Trade("AAPL", 1_753_886_600_001_000_000, 0, 100.5, 2.0, "", ["@"], "", 2)
+        p = MarketTickStreamer._write_group([t1, t2], dir, "EMPTY", Date(2025, 7, 30), :csv)
+        @test MarketTickStreamer._trades_from_processed(p) == [t1, t2]
+        write(
+            p,
+            "symbol,time_ns,recv_ns,price,size,exchange,conditions,tape,id\n" *
+            "AAPL,1753886600000000000,0,100.0,1.0,V,,C,1\n" *
+            "AAPL,1753886600001000000,0,100.5,2.0,,@,,2\n",
+        )
+        @test MarketTickStreamer._trades_from_processed(p) == [t1, t2]
+    end
+end
+
+@testset "safesave: newest canonical, backups numbered, failed write harmless" begin
+    safesave = MarketTickStreamer._safesave
+    mktempdir() do dir
+        p = joinpath(dir, "x.csv")
+        @test safesave(tmp -> write(tmp, "one"), p) == p
+        @test read(p, String) == "one"
+        @test readdir(dir) == ["x.csv"]                # first write leaves no backup
+        safesave(tmp -> write(tmp, "two"), p)
+        safesave(tmp -> write(tmp, "three"), p)
+        @test read(p, String) == "three"
+        @test read(joinpath(dir, "x_#1.csv"), String) == "one"   # oldest first
+        @test read(joinpath(dir, "x_#2.csv"), String) == "two"
+        # A writer that dies leaves the canonical file as it was, and no debris.
+        @test_throws ErrorException safesave(p) do tmp
+            write(tmp, "half")
+            error("writer died")
+        end
+        @test read(p, String) == "three"
+        @test sort(readdir(dir)) == ["x.csv", "x_#1.csv", "x_#2.csv"]
+        # The temporary name keeps the extension last: FileIO infers the
+        # format of a figure from it.
+        seen = Ref("")
+        safesave(tmp -> (seen[] = tmp; write(tmp, "four")), p)
+        @test endswith(seen[], ".partial.csv")
+        @test dirname(seen[]) == dir
+        # Each write has a temporary name of its own.
+        other = Ref("")
+        safesave(tmp -> (other[] = tmp; write(tmp, "five")), p)
+        @test other[] != seen[]
+        # The same bytes again leave the file and its backups as they are.
+        n_files = length(readdir(dir))
+        safesave(tmp -> write(tmp, "five"), p)
+        @test length(readdir(dir)) == n_files && read(p, String) == "five"
+    end
+    # Two writers of one path: no error, no temporary file left, every
+    # file complete. Of overlapping writes the earlier result may be
+    # lost; the backups claim distinct names.
+    mktempdir() do dir
+        p = joinpath(dir, "c.csv")
+        body(w, i) = "writer $w, write $i\n"^50
+        tasks = [Threads.@spawn(for i in 1:100
+            safesave(tmp -> write(tmp, body(w, i)), p)
+        end) for w in 1:2]
+        foreach(wait, tasks)
+        files = readdir(dir)
+        @test !any(occursin(".partial", f) for f in files)
+        writes = Set(body(w, i) for w in 1:2 for i in 1:100)
+        @test all(f -> read(joinpath(dir, f), String) in writes, files)
+        @test read(p, String) in (body(1, 100), body(2, 100))
+    end
+    # Without hard links the backup is a copy into a name created
+    # exclusively: two writers never share a slot.
+    mktempdir() do dir
+        p = joinpath(dir, "n.csv")
+        write(p, "kept\n")
+        nolink(src, dst) = throw(Base.IOError("hardlink: operation not supported", -95))
+        tasks = [
+            Threads.@spawn([MarketTickStreamer._backup!(p; link = nolink) for _ in 1:50]) for _ in 1:2
+        ]
+        slots = reduce(vcat, fetch.(tasks))
+        @test allunique(slots) && length(slots) == 100
+        @test all(f -> read(f, String) == "kept\n", slots)
+        @test !MarketTickStreamer._copy_exclusive(p, first(slots))   # taken
+        @test read(first(slots), String) == "kept\n"
+        # A copy that fails gives its slot up.
+        dst = joinpath(dir, "orphan.csv")
+        @test_throws SystemError MarketTickStreamer._copy_exclusive(
+            joinpath(dir, "absent.csv"),
+            dst,
+        )
+        @test !ispath(dst)
+    end
+end
+
+@testset "reconcile, lock, RAM guard, spill compaction, lossy tee" begin
+    mktempdir() do dir
+        # crash-only reconciliation: a "running" sidecar from a dead process
+        write(
+            joinpath(dir, "dead.meta.toml"),
+            """
+[session]
+id = "dead"
+status = "running"
+pid = 99999999
+[provenance]
+hostname = "$(gethostname())"
+""",
+        )
+        write(joinpath(dir, "dead_part001.jsonl"), "")
+        @test reconcile_sessions!(dir) == 1
+        meta = TOML.parsefile(joinpath(dir, "dead.meta.toml"))
+        @test meta["session"]["status"] == "aborted"
+        @test haskey(meta["session"], "reconciled_utc")
+        @test reconcile_sessions!(dir) == 0              # idempotent
+        # single-instance lock
+        l1 = acquire_session_lock(dir)
+        @test_throws SessionError acquire_session_lock(dir)
+        close(l1)
+        l2 = acquire_session_lock(dir)                   # released → reacquirable
+        close(l2)
+        # Identifiers are stamped to the second: one an earlier session's
+        # sidecar, raw part or log holds is not taken again; the next
+        # second's is.
+        write(
+            joinpath(dir, "ids.toml"),
+            "[stream]\nsymbols = [\"A\"]\n[storage]\ndata_dir = \"tree\"\n" *
+            "[logging]\nlog_dir = \"tree/logs\"\n",
+        )
+        idcfg = load_config(joinpath(dir, "ids.toml"))
+        mkpath(idcfg.raw_dir)
+        mkpath(idcfg.log_dir)
+        calls = Ref(0)
+        ids(seq) = (calls[] = 0; () -> seq[calls[]+=1])
+        @test MarketTickStreamer._fresh_session_id(ids(["free"]), idcfg) == "free"
+        @test calls[] == 1
+        for (held, mark) in (
+            ("a", joinpath(idcfg.raw_dir, "a.meta.toml")),
+            ("b", joinpath(idcfg.raw_dir, "b_part001.jsonl")),
+            ("c", joinpath(idcfg.log_dir, "c.log")),
+        )
+            write(mark, "")
+            t = @elapsed sid =
+                MarketTickStreamer._fresh_session_id(ids([held, held * "2"]), idcfg)
+            @test sid == held * "2" && calls[] == 2 && t < 1.5
+        end
+        # RAM ceiling fails loudly
+        @test_throws ResourceError check_live_heap(0; context = "test")
+        @test check_live_heap(1e9) === nothing
+    end
+    # spill compaction produces the same result as in-memory compaction
+    mktempdir() do dir
+        sink = open_raw_sink(dir, "sp")
+        write_batch!(
+            sink,
+            [sample_trade(i; sym = iseven(i) ? "MSFT" : "AAPL") for i in 1:40],
+        )
+        write_batch!(sink, [sample_trade(i) for i in 1:5])   # duplicates
+        close_sink!(sink)
+        mem = compact_raw([sink.path], joinpath(dir, "mem"); format = :csv)
+        spill = compact_raw(
+            [sink.path],
+            joinpath(dir, "spill");
+            format = :csv,
+            mem_fraction = 1e-12,
+        )            # force the spill path
+        @test length(mem) == length(spill) == 2
+        for (m, s) in zip(mem, spill)
+            @test CSV.read(m, DataFrame) == CSV.read(s, DataFrame)
+        end
+    end
+    # The spill copy is the size of the input, so it goes beside out_dir,
+    # never to tempdir() (a RAM-backed tmpfs on systemd distributions), and
+    # is refused without room.
+    @test MarketTickStreamer._spill_parent("/data/processed", nothing) == "/data/"
+    @test MarketTickStreamer._spill_parent("/data/processed/", nothing) == "/data/"
+    @test MarketTickStreamer._spill_parent("/data/processed", "/mnt/scratch") ==
+          "/mnt/scratch"
+    @test_throws ResourceError MarketTickStreamer._ensure_spill_space(
+        "/mnt/small",
+        10 * 2^30,
+        2 * 2^30,
+    )
+    @test MarketTickStreamer._ensure_spill_space("/mnt/big", 10 * 2^30, 40 * 2^30) ===
+          nothing
+    # the message names the offending filesystem and the shortfall
+    let e = try
+            MarketTickStreamer._ensure_spill_space("/mnt/small", 10 * 2^30, 2 * 2^30)
+        catch err
+            sprint(showerror, err)
+        end
+        @test contains(e, "/mnt/small") && contains(e, "scratch_dir")
+    end
+    # scratch_dir is honored end to end: the directory is created where
+    # asked, and only the temporary subdirectory inside it is removed.
+    mktempdir() do dir
+        sink = open_raw_sink(dir, "sc")
+        write_batch!(sink, [sample_trade(i) for i in 1:20])
+        close_sink!(sink)
+        scratch = joinpath(dir, "nested", "scratch")
+        files = compact_raw(
+            [sink.path],
+            joinpath(dir, "out");
+            format = :csv,
+            mem_fraction = 1e-12,
+            scratch_dir = scratch,
+        )
+        @test length(files) == 1
+        @test isdir(scratch)
+        @test isempty(filter(startswith("compact_spill_"), readdir(scratch)))
+    end
+    # lossy tee: persistence output receives everything, saturated lossy
+    # output drops instead of stalling the fan-out
+    src = Channel{Trade}(100)
+    outs = tee(src, 2; capacity = 5, lossy = [false, true])
+    keeper = Threads.@spawn collect(outs[1])
+    foreach(i -> put!(src, sample_trade(i)), 1:50)
+    close(src)
+    @test length(fetch(keeper)) == 50
+    @test length(collect(outs[2])) <= 5                  # never consumed → capped
+end
+
+@testset "spill compaction within a file-handle budget" begin
+    day_ns = 86_400 * 1_000_000_000
+    mk(i, sym, day) = Trade(
+        sym,
+        1_753_886_600_000_000_000 + day * day_ns + i * 1_000_000,
+        0,
+        100.0 + i,
+        1.0 * i,
+        "V",
+        ["@"],
+        "C",
+        i,
+    )
+    # Three symbols over two days, interleaved so that with two handles
+    # every group is evicted and reopened many times.
+    trades = [mk(i, sym, day) for i in 1:40 for day in 0:1 for sym in ("A", "B", "C")]
+    mktempdir() do dir
+        sink = open_raw_sink(dir, "lru")
+        write_batch!(sink, trades)
+        close_sink!(sink)
+        mem = compact_raw([sink.path], joinpath(dir, "mem"); format = :csv)
+        spill = compact_raw(
+            [sink.path],
+            joinpath(dir, "spill");
+            format = :csv,
+            mem_fraction = 1e-12,
+            max_open_spill_files = 2,
+        )
+        @test length(mem) == length(spill) == 6
+        @test all(read(a) == read(b) for (a, b) in zip(mem, spill))
+        @test !any(startswith("compact_spill_"), readdir(dir))   # scratch removed
+        pool = MarketTickStreamer.SpillPool(mktempdir(dir), 2)
+        for key in
+            (("A", Date(2026, 1, 1)), ("B", Date(2026, 1, 1)), ("C", Date(2026, 1, 1)))
+            println(MarketTickStreamer._spill_handle!(pool, key), "x")
+            @test length(pool.handles) <= 2
+        end
+        @test length(pool.seen) == 3
+        @test !haskey(pool.handles, ("A", Date(2026, 1, 1)))      # least recently written
+        MarketTickStreamer._close_all!(pool)
+        @test isempty(pool.handles)
+        for bad in (
+            (; mem_fraction = 0.0),
+            (; mem_fraction = 1.5),
+            (; footprint_factor = 0.0),
+            (; spill_headroom = 0.5),
+            (; max_open_spill_files = 0),
+        )
+            @test_throws ArgumentError compact_raw([sink.path], joinpath(dir, "x"); bad...)
+        end
+        # The configuration-driven form files under the provider's calendar.
+        p = joinpath(dir, "c.toml")
+        write(
+            p,
+            "[provider]\nname = \"binance\"\nfeed = \"aggTrade\"\n[stream]\nsymbols = [\"A\"]\n" *
+            "[storage]\ndata_dir = \"out\"\n[backfill]\nfeed = \"aggTrade\"\npage_limit = 1000\n" *
+            "[limits]\nmax_open_spill_files = 2\n",
+        )
+        cfg = load_config(p)
+        written = compact_raw(cfg, [sink.path])
+        @test all(startswith(cfg.processed_dir), written)
+        # 2025-07-30 14:43 UTC: one UTC date per day offset, as under New York here
+        @test length(written) == 6
+    end
+end

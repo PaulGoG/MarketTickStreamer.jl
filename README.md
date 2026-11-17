@@ -160,8 +160,9 @@ julia docs/make.jl
 julia docs/make_readme_assets.jl data/raw/<session>_part001.jsonl
 ```
 
-For interactive work on individual test sets, `julia -i test/activate.jl`
-opens the test environment.
+`Pkg.test(; test_args = ["live", "vendor"])` runs only the named test files
+(`test/<name>.jl`). For interactive work on individual test sets,
+`julia -i test/activate.jl` opens the test environment.
 
 From the REPL, the same entry points are `run_stream(cfg)`,
 `run_backfill(cfg)`, `compact_raw(files, out)`,
@@ -386,7 +387,9 @@ Citation metadata is in [`CITATION.cff`](CITATION.cff). BibTeX:
 ├── test/
 │   ├── Project.toml        # test environment; consumes the package by path
 │   ├── activate.jl         # silent activation of the test environment
-│   ├── runtests.jl         # unit + end-to-end tests
+│   ├── runtests.jl         # shared setup; includes one file per subsystem
+│   ├── qa.jl … vendor.jl   # unit + end-to-end tests: qa, schema, config, storage, sources, quality,
+│   │                       #   analysis, examples, sessions, live, providers, vendor, extensions
 │   ├── mock_alpaca.jl      # in-process mock of Alpaca REST + WebSocket APIs
 │   └── mock_binance.jl     # in-process mock of Binance REST + WebSocket APIs and bulk files
 ├── examples/
