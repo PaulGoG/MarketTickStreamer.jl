@@ -183,7 +183,7 @@ The second column records verification beyond that.
 | Live trade streaming (Alpaca IEX/SIP) |  |
 | Binance spot adapter (public, 24/7, UTC calendar, `trade` + `aggTrade`, microsecond timestamps) | validated against the live API |
 | Provider-agnostic config, calendar and trading-day dispatch |  |
-| Reconnection, stale-connection watchdog, orderly shutdown |  |
+| Reconnection, stale-connection watchdog, bounded upgrade and closing handshake, orderly shutdown (`ws://` and `wss://`, both TLS stacks) |  |
 | Market-hours guards (wait-for-open, auto-stop at close, incl. half-day early close) |  |
 | Unattended operation (systemd user service + timer; SIGINT stop, wait-for-open, stop-at-close) | units verified with systemd-analyze on systemd 259 |
 | Delayed-feed handling (market-hours guards shifted by feed delay; tape tail captured) |  |
