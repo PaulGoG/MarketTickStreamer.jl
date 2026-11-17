@@ -391,7 +391,8 @@ Citation metadata is in [`CITATION.cff`](CITATION.cff). BibTeX:
 │   ├── qa.jl … vendor.jl   # unit + end-to-end tests: qa, schema, config, storage, sources, quality,
 │   │                       #   analysis, examples, sessions, live, providers, vendor, extensions
 │   ├── mock_alpaca.jl      # in-process mock of Alpaca REST + WebSocket APIs
-│   └── mock_binance.jl     # in-process mock of Binance REST + WebSocket APIs and bulk files
+│   ├── mock_binance.jl     # in-process mock of Binance REST + WebSocket APIs and bulk files
+│   └── vendor_bytes.jl     # byte writers for ITCH 5.0 and IEX HIST, shared with bench/
 ├── examples/
 │   ├── Project.toml        # examples environment (package consumed by path)
 │   ├── activate.jl         # silent environment activation
@@ -401,7 +402,7 @@ Citation metadata is in [`CITATION.cff`](CITATION.cff). BibTeX:
 ├── bench/
 │   ├── Project.toml        # benchmark environment (package consumed by path)
 │   ├── activate.jl         # silent environment activation
-│   └── benchmarks.jl       # BenchmarkTools suite over the hot paths
+│   └── benchmarks.jl       # BenchmarkTools suite over the hot paths and the vendor readers
 ├── docs/
 │   ├── Project.toml        # documentation environment (package consumed by path)
 │   ├── activate.jl         # silent environment activation

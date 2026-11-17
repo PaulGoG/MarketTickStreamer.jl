@@ -49,6 +49,7 @@ using MarketTickStreamer:
 
 include("mock_alpaca.jl")
 include("mock_binance.jl")
+include("vendor_bytes.jl")
 
 # Ports unlikely to collide; the next free one within 200 of `start`.
 function freeport(start)

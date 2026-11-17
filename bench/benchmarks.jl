@@ -1,6 +1,6 @@
 # Benchmarks for the acquisition hot paths: timestamp parsing, per-line
 # serialization, sink throughput, compaction, replay, the corpus read
-# (`read_processed`) and the quality report.
+# (`read_processed`), the quality report and the vendor day-file readers.
 # These live outside the test suite so the suite stays fast.
 #
 #     julia bench/benchmarks.jl
@@ -10,6 +10,8 @@ using BenchmarkTools
 using Logging: NullLogger, with_logger
 using MarketTickStreamer
 using MarketTickStreamer: open_raw_sink, write_batch!, close_sink!
+# The byte writers of the reader tests build the vendor files below.
+include(joinpath(@__DIR__, "..", "test", "vendor_bytes.jl"))
 
 const suite = BenchmarkGroup()
 
@@ -46,6 +48,56 @@ end
 # One processed Arrow day of the synthetic tape: the file every query reads.
 const PROCESSED_FILE = with_logger(NullLogger()) do
     first(compact_raw([RAW_FILE], joinpath(BENCH_DIR, "processed"); format = :arrow))
+end
+
+# One synthetic ITCH 5.0 day: two symbols, 25 000 orders, each added, then
+# executed at its display price (E), at another price (C) and beside a hidden
+# trade (P): 100 004 messages, 75 000 prints. Uncompressed, so the reader's
+# decoding is measured and not gzip.
+const ITCH_FILE = let I = ITCHBytes
+    T0 = 34_200_000_000_000                    # 09:30 New York, ns since midnight
+    io = IOBuffer()
+    write(io, I.S('O'), I.R(1, "AAPL", 'Q', 100), I.R(2, "MSFT", 'Q', 100))
+    for k in 1:25_000
+        loc, stock = isodd(k) ? (1, "AAPL") : (2, "MSFT")
+        px = 1_000_000 + 100 * (k % 50)
+        ts = T0 + 1_000 * k
+        write(
+            io,
+            I.A(loc, ts, k, 'B', 300, stock, px),
+            I.E(loc, ts + 1, k, 100, 3k),
+            I.C(loc, ts + 2, k, 100, 3k + 1, 'Y', px + 100),
+            I.P(loc, ts + 3, 100, stock, px, 3k + 2),
+        )
+    end
+    write(io, I.S('C'))
+    path = joinpath(BENCH_DIR, "12302019.NASDAQ_ITCH50")
+    write(path, take!(io))
+    path
+end
+const ITCH_DATE = itch50_date(ITCH_FILE)
+# One synthetic IEX HIST capture: pcapng, TOPS 1.6, 5 000 segments of ten
+# Trade Reports each, 50 000 prints.
+const IEX_FILE = let I = IEXBytes
+    t0 = 1_577_975_400_000_000_000             # 2020-01-02 14:30 UTC
+    io = IOBuffer()
+    write(io, I.shb(), I.idb())
+    for s in 1:5_000
+        msgs = [
+            I.T(
+                isodd(j) ? "AAPL" : "MSFT",
+                0x00,
+                t0 + 10s + j,
+                100,
+                1_500_000 + j,
+                10s + j,
+            ) for j in 0:9
+        ]
+        write(io, I.epb(I.frame(I.segment(0x8003, 7, 10 * (s - 1) + 1, msgs))))
+    end
+    path = joinpath(BENCH_DIR, "day.pcapng")
+    write(path, take!(io))
+    path
 end
 
 suite["schema"] = BenchmarkGroup()
@@ -95,6 +147,12 @@ suite["corpus"]["read_processed_arrow_5k"] =
 suite["quality"] = BenchmarkGroup()
 suite["quality"]["session_report_10k"] =
     @benchmarkable(session_report([$RAW_FILE]), samples = 10, evals = 1,)
+
+suite["vendor"] = BenchmarkGroup()
+suite["vendor"]["itch50_100k_messages"] =
+    @benchmarkable(itch50_trades($ITCH_FILE, $ITCH_DATE), samples = 10, evals = 1)
+suite["vendor"]["iex_hist_50k_prints"] =
+    @benchmarkable(iex_hist_trades($IEX_FILE), samples = 10, evals = 1)
 
 # Run only when invoked as a script. Logging is muted: the benchmarked
 # functions log, and their records would drown the progress output.
