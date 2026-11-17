@@ -103,7 +103,7 @@ const DEFAULT_CONFIG = joinpath(PROJECT_ROOT, "config", "config.toml")
 # Whether this copy of the package sits in a depot's `packages` tree, i.e. was
 # installed by Pkg rather than cloned or developed by path.
 _installed_in_depot() =
-    any(d -> startswith(PROJECT_ROOT, joinpath(d, "packages")), DEPOT_PATH)
+    any(d -> startswith(PROJECT_ROOT, joinpath(d, "packages", "")), DEPOT_PATH)
 
 # Keys accepted in each configuration table. A table named after a registered
 # provider holds string values under the keys of its spec's `endpoint_keys`.

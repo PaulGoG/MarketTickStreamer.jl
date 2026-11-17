@@ -6,6 +6,12 @@
     # exchanges B (as the SIP itself stamps them), unknown categories "".
     @test [MarketTickStreamer._itch50_tape(UInt8(c)) for c in "QGSNAPZVMX "] == ["C", "C", "C", "A", "B", "B", "B", "B", "B", "", ""]
     T0 = 34_200_000_000_000                                        # 09:30 ET in ns
+    # The day starts at New York midnight: UTC-5 in winter, UTC-4 in summer.
+    utc(dt) = Dates.value(dt - DateTime(1970)) * 1_000_000
+    @test MarketTickStreamer._itch50_day_start_ns(Date(2025, 12, 9)) ==
+          utc(DateTime(2025, 12, 9, 5))
+    @test MarketTickStreamer._itch50_day_start_ns(Date(2025, 7, 1)) ==
+          utc(DateTime(2025, 7, 1, 4))
     day0 = 1_577_682_000_000_000_000                               # 2019-12-30 05:00 UTC
     stream = vcat(
         S('O'),

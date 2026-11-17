@@ -21,7 +21,10 @@ trade), so the lists are not shared.
 The lists for `A`, `B` and `C` are derived from the plans' own sale-condition
 matrices (CTS Pillar output specification 2.11b, UTP data feed services
 specification 4.1): a code is listed when its *consolidated update-last* entry
-is "no", or "no unless it is the only qualifying trade of the day". That
+is "no", or "no unless it is the only qualifying trade of the day" (CTS note 2)
+or "the first or only one of the business day" (UTP footnote 1). Not listed:
+the conditional entries that let a late report update the last (CTS note 3,
+UTP footnote 2, both on `L`) and the UTP placeholders (`E`, `8`). That
 covers odd lots (`I`) and prints that carry no current price by construction:
 averages (`B`, `W`), prices fixed earlier or elsewhere (`P`, `4`), late
 reports (`Z`, `G`, `U`), non-regular settlement (`C`, `R`, and `N`, the

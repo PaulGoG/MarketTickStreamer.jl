@@ -245,6 +245,8 @@ end
     # relative paths land in the repository, and a template elsewhere.
     root = pkgdir(MarketTickStreamer)
     @test MarketTickStreamer.DEFAULT_CONFIG == joinpath(root, "config", "config.toml")
+    # A clone is never taken for an installed copy, whatever its path.
+    ispath(joinpath(root, ".git")) && @test !MarketTickStreamer._installed_in_depot()
     if MarketTickStreamer._installed_in_depot()
         @test_throws ArgumentError load_config()
     else
