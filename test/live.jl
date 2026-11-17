@@ -244,19 +244,27 @@ end
                 ("wss://127.0.0.1:$wss_port", TLS_STACKS[2]),
             )
                 with_tls(something(tls, HTTP.SOCKET_TYPE_TLS[])) do
-                    HTTP.WebSockets.open(url; suppress_close_error = true) do ws
-                        first(ws)
-                        filler = Threads.@spawn try
-                            for _ in 1:1000
-                                HTTP.WebSockets.send(ws, repeat("y", 1 << 16))
+                    # A writer blocked on the full buffer, then each way out.
+                    for way in (:sever, :close)
+                        HTTP.WebSockets.open(url; suppress_close_error = true) do ws
+                            first(ws)
+                            filler = Threads.@spawn try
+                                for _ in 1:1000
+                                    HTTP.WebSockets.send(ws, repeat("y", 1 << 16))
+                                end
+                            catch
                             end
-                        catch
+                            sleep(0.5)
+                            if way === :sever
+                                @test (@elapsed MarketTickStreamer._close_ws(ws)) < 0.5
+                            else
+                                elapsed =
+                                    @elapsed closing = MarketTickStreamer._close_bounded(ws)
+                                @test grace <= elapsed < grace + 1
+                                @test istaskdone(closing)
+                            end
+                            @test timedwait(() -> istaskdone(filler), 5.0) === :ok
                         end
-                        sleep(0.5)
-                        elapsed = @elapsed closing = MarketTickStreamer._close_bounded(ws)
-                        @test grace <= elapsed < grace + 2
-                        @test istaskdone(closing)
-                        @test timedwait(() -> istaskdone(filler), 5.0) === :ok
                     end
                 end
             end
@@ -302,9 +310,20 @@ end
 end
 
 @testset "live: stream_websocket! is not retried by HTTP.jl, and is bounded" begin
+    # The upgrade answer's Connection header is a token list, possibly split
+    # across fields.
+    upgrade(fields...) = MarketTickStreamer._has_token(
+        HTTP.Response(101, ["Connection" => f for f in fields]),
+        "Connection",
+        "upgrade",
+    )
+    @test upgrade("Upgrade") && upgrade("keep-alive, Upgrade") && upgrade(" upgrade ")
+    @test upgrade("keep-alive", "Upgrade")
+    @test !upgrade("upgraded") && !upgrade("noupgrade") && !upgrade("keep-alive")
+    @test !upgrade()
     mktempdir() do dir
-        # A listener that accepts and drops at once. HTTP.jl would retry the
-        # request on its own; the session's reconnect loop owns the attempts.
+        # A listener that accepts and drops at once: one call is one attempt,
+        # the session's reconnect loop owns the retries.
         port = freeport(9921)
         listener = HTTP.Sockets.listen(HTTP.Sockets.ip"127.0.0.1", port)
         accepted = Threads.Atomic{Int}(0)
@@ -347,7 +366,9 @@ end
                 ("wss://127.0.0.1:$wss_port", TLS_STACKS[2]),
             )
                 with_tls(something(tls, HTTP.SOCKET_TYPE_TLS[])) do
-                    # Stopped already: returns at once, without an error.
+                    # Stopped already: returns without an error, and without
+                    # waiting for the 30 s the upgrade is allowed (the bound
+                    # leaves room for the first call's compilation).
                     s = bare_session()
                     stop!(s)
                     @test (@elapsed MarketTickStreamer.stream_websocket!(
@@ -355,7 +376,7 @@ end
                         s,
                         url,
                         30.0,
-                    )) < 2
+                    )) < 5
                     close(s.channel)
                     # Unanswered: cut after the timeout, a retryable error.
                     s = bare_session()

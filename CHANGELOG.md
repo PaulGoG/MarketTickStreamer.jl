@@ -29,8 +29,6 @@ Notable changes to MarketTickStreamer. The format follows
   reading and the client's send buffer is full: the socket is shut down
   before it is closed, since Julia's close first waits for queued writes to
   drain.
-- HTTP.jl no longer retries a WebSocket request on its own; the reconnect
-  loop and its seeded backoff own every attempt.
 - `stream.stale_timeout_s` must be at most 86 400 s (a day); `inf`, which
   loaded before, left no timer that could be armed.
 

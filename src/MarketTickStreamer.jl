@@ -43,6 +43,7 @@ using CSV: CSV
 using CodecZlib: GzipDecompressorStream, ZlibError
 using DataFrames: DataFrames, DataFrame
 using DotEnv: DotEnv
+using ExceptionUnwrapping: has_wrapped_exception
 using HTTP: HTTP
 using JSON: JSON
 using LoggingExtras:

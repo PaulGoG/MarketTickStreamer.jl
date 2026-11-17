@@ -370,10 +370,16 @@ const CLOSE_GRACE_S = 2.0
 function _sever(conn)
     tcp = _tcp_socket(conn)
     if tcp !== nothing && Sys.isunix()
+        # Under the I/O lock, which libuv's close of the socket also runs
+        # under: the descriptor cannot be closed and handed to another socket
+        # between the lookup and the call. A closed handle yields -1 (EBADF).
+        Base.iolock_begin()
         try
             isopen(tcp) && ccall(:shutdown, Cint, (Cint, Cint), Base._fd(tcp), 2)   # SHUT_RDWR
         catch e
             e isa InterruptException && rethrow()
+        finally
+            Base.iolock_end()
         end
     end
     try
@@ -524,7 +530,9 @@ any other return value continues the stream. `ws` is the
 `HTTP.WebSockets.WebSocket`, for the messages the venue expects in reply
 (authentication, subscription). An exception thrown by `on_frame` ends the
 connection as a retryable failure. HTTP.jl wraps it on the way out, which is
-why a non-retryable condition is returned and not thrown.
+why a non-retryable condition is returned and not thrown. Once the session
+is stopping, an error out of the connection is the sever's doing and the
+function returns `nothing`; an interrupt is rethrown.
 
 The function performs the session's side of a connection, which an adapter's
 [`stream_protocol!`](@ref) then need not:
@@ -571,15 +579,15 @@ function stream_websocket!(
     ]
     fatal = Ref{Union{Nothing,FatalStreamError}}(nothing)
     # The client half of `HTTP.WebSockets.open`, taken here so that the
-    # connection is in hand before the answer to the upgrade is read. HTTP.jl's
-    # own retries are off: the session's reconnect loop owns the attempts and
-    # their backoff.
+    # connection is in hand before the answer to the upgrade is read. HTTP.jl
+    # does not retry a request with a stream handler; `retry = false` says so
+    # explicitly, since the session's reconnect loop owns the attempts.
     try
         _websocket_request(on_frame, s, url, request_headers, key, stale_timeout_s, fatal)
     catch e
         # A stop severs the transport, and whatever was reading it fails:
         # that is the orderly end the stop asked for.
-        (s.stop[] && !(e isa InterruptException)) || rethrow()
+        (s.stop[] && !has_wrapped_exception(e, InterruptException)) || rethrow()
     end
     fatal[] === nothing || throw(fatal[])
     return nothing
@@ -638,14 +646,19 @@ function _await_upgrade(http, key::AbstractString, timeout_s::Float64)
     ok =
         r.status == 101 &&
         lowercase(HTTP.header(r, "Upgrade")) == "websocket" &&
-        any(
-            t -> strip(t) == "upgrade",
-            split(lowercase(HTTP.header(r, "Connection")), ','),
-        ) &&
+        _has_token(r, "Connection", "upgrade") &&
         HTTP.header(r, "Sec-WebSocket-Accept") == accept
     ok || error("WebSocket upgrade refused: HTTP $(r.status)")
     return nothing
 end
+
+# Whether the header `name` of message `m` lists `token` (case-insensitive),
+# over every field of that name: a list may be split across several (RFC 9110,
+# 5.3).
+_has_token(m, name::AbstractString, token::AbstractString) = any(
+    t -> lowercase(strip(t)) == token,
+    Iterators.flatten(split(v, ',') for v in HTTP.headers(m, name)),
+)
 
 """
     bump!(s::LiveSession; ticks = 0, frames = 0, reconnects = 0)
