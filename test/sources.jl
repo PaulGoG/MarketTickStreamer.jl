@@ -604,6 +604,10 @@ end
     # a calendar without transitions
     @test MarketTickStreamer._window_ns(fall, (1.5, 3.0), tz"UTC") ==
           (utc(fall, 1) + 30 * 60 * 10^9, utc(fall, 3))
+    # A calendar that sets its clock forward at midnight (Cuba, 2019-03-10):
+    # the date starts at 01:00, and a day start is asked for every date.
+    @test MarketTickStreamer._zoned(DateTime(2019, 3, 10), tz"America/Havana") ==
+          ZonedDateTime(2019, 3, 10, 1, tz"America/Havana")
 end
 
 @testset "tee: a consumer that fails while the fan-out waits on it" begin

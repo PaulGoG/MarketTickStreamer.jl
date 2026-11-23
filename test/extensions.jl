@@ -105,6 +105,19 @@ using UnicodePlots: UnicodePlots
         early.price[1] = 500.0
         ax = first(overview_figure("AAPL", [(Date(2026, 7, 30), early)]).content)
         @test ax.limits[][2][2] < 200
+        # A day with no print inside the session draws nothing and keeps its
+        # slot on the axis: two days of 6.5 h, 0.25 h apart, and a 2 % margin.
+        before_open = copy(df)
+        before_open.time_ns .-= 5 * 3600 * 10^9          # 05:43 New York onward
+        @test overview_figure("AAPL", [(Date(2026, 7, 29), before_open)]) isa
+              CairoMakie.Figure
+        ax = first(
+            overview_figure(
+                "AAPL",
+                [(Date(2026, 7, 29), before_open), (Date(2026, 7, 30), df)],
+            ).content,
+        )
+        @test collect(ax.limits[][1]) ≈ [-0.27, 13.25 + 0.27]
         @test_throws ArgumentError overview_figure("AAPL", days; session = (16.0, 9.5))
         @test_throws ArgumentError overview_figure("AAPL", days; session = (0.0, 25.0))
         @test provider_spec("alpaca").regular_session == (9.5, 16.0)

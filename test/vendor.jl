@@ -814,6 +814,90 @@ end
             finally
                 close(drop_server)
             end
+            # A connection that breaks after a chunk's last byte (a chunked answer
+            # without its end): the retry has nothing left to ask for, and no
+            # second request goes out.
+            tail_hits = Threads.Atomic{Int}(0)
+            tail_port = freeport(8995)
+            tail_server = HTTP.serve!(
+                "127.0.0.1",
+                tail_port;
+                stream = true,
+                verbose = false,
+            ) do http::HTTP.Stream
+                Threads.atomic_add!(tail_hits, 1)
+                lo, hi =
+                    split(split(HTTP.header(http.message, "Range", ""), '=')[2], '-')
+                from, to = parse(Int, lo), parse(Int, hi)
+                HTTP.setstatus(http, 206)
+                HTTP.setheader(
+                    http,
+                    "Content-Range" => "bytes $from-$to/$(length(payload))",
+                )
+                HTTP.startwrite(http)
+                write(http, payload[(from+1):(to+1)])
+                close(http.stream)
+            end
+            try
+                chunk = MarketTickStreamer._fetch_range(
+                    "http://127.0.0.1:$tail_port/f/tail.gz",
+                    Int64(0),
+                    Int64(999),
+                    MarketTickStreamer.RestPolicy(10, 5, 2),
+                    Inf,
+                )
+                @test chunk == payload[1:1000] && tail_hits[] == 1
+            finally
+                close(tail_server)
+            end
+            # A 404 whose connection breaks before the answer ends is retried,
+            # and the retry's answer decides: the file is there after all.
+            flaky_hits = Threads.Atomic{Int}(0)
+            flaky_port = freeport(8997)
+            flaky_server = HTTP.serve!(
+                "127.0.0.1",
+                flaky_port;
+                stream = true,
+                verbose = false,
+            ) do http::HTTP.Stream
+                if Threads.atomic_add!(flaky_hits, 1) == 0
+                    HTTP.setstatus(http, 404)
+                    HTTP.startwrite(http)
+                    write(http, "not yet")
+                    close(http.stream)
+                    return nothing
+                end
+                lo, hi =
+                    split(split(HTTP.header(http.message, "Range", ""), '=')[2], '-')
+                from, to = parse(Int, lo), min(parse(Int, hi), length(payload) - 1)
+                if from >= length(payload)
+                    HTTP.setstatus(http, 416)
+                    HTTP.startwrite(http)
+                    return nothing
+                end
+                body = payload[(from+1):(to+1)]
+                HTTP.setstatus(http, 206)
+                HTTP.setheader(
+                    http,
+                    "Content-Range" => "bytes $from-$to/$(length(payload))",
+                )
+                HTTP.setheader(http, "Content-Length" => string(length(body)))
+                HTTP.startwrite(http)
+                write(http, body)
+                return nothing
+            end
+            try
+                pf2 = joinpath(dir, "flaky.bin")
+                r = MarketTickStreamer._download_resumable(
+                    "http://127.0.0.1:$flaky_port/f/flaky.gz",
+                    pf2,
+                    MarketTickStreamer.RestPolicy(10, 5, 2);
+                    chunk_bytes = 1 << 20,
+                )
+                @test r.found && read(pf2) == payload
+            finally
+                close(flaky_server)
+            end
             slow = MarketTickStreamer.RestPolicy(10, 5, 1; max_download_rate = 10_000)
             # 8 MiB at the 10 kB/s cap is 838.9 s: 10 + ceil(1.25 × 838.9)
             @test MarketTickStreamer._chunk_timeout(slow, 8 << 20) == 10 + 1049
@@ -921,6 +1005,16 @@ end
             format = :itch50,
             symbols = ["aapl"],
         )
+        # Arguments are checked before the session exists: nothing is left behind.
+        raw_before = readdir(cfg.raw_dir)
+        @test_throws "broken must be" run_import(
+            cfg,
+            file;
+            format = :itch50,
+            broken = :discard,
+        )
+        @test_throws "tape must be" run_import(cfg, file; format = :iex, tape = 1)
+        @test readdir(cfg.raw_dir) == raw_before
         # An import files prints on the New York calendar and refuses another one.
         utc_dir = joinpath(dir, "utc")
         mkpath(utc_dir)

@@ -41,9 +41,14 @@ object exists: which feed names it accepts, the calendar its tape is filed
 under, the credentials and endpoint keys it reads, the largest REST page the
 venue serves, and the venue's regular session.
 
-`bulk_feeds` names the feeds the venue also publishes as daily bulk files,
-which [`bulk_trades`](@ref) downloads; it is empty for a venue without such
-a service, and the configuration refuses `backfill.source = "bulk"` for it.
+`backfill_feeds` names the feeds of the venue's historical REST endpoint; it
+is empty for an adapter that only streams, whose configuration then names no
+`backfill.feed` and whose backfill is refused. `bulk_feeds` names the feeds
+the venue also publishes as daily bulk files, which [`bulk_trades`](@ref)
+downloads; it is empty for a venue without such a service, and the
+configuration refuses `backfill.source = "bulk"` for it. Without the key,
+`backfill.feed` is the last REST feed that the chosen source carries, else the
+source's first feed.
 
 `credential_keys` names the environment variables the adapter needs, which
 [`load_credentials!`](@ref) reads from the configured environment file or
@@ -157,15 +162,16 @@ the epoch.
 
 A request window and the date its rows are filed under must come from the
 same clock: windows on UTC days and rows on exchange dates agree only while
-the exchange sits at UTC-4, and lose an hour a day otherwise.
-`ZonedDateTime` resolves the offset per date, including across the 23- and
-25-hour transition days.
+the exchange sits at UTC-4, and lose an hour a day otherwise. The offset is
+resolved per date, including across the 23- and 25-hour transition days; on
+a calendar whose clock is set forward at midnight, the date starts at the
+instant of the jump.
 """
 function exchange_day_start_ns(p::AbstractProvider, d::Date)
     tz = exchange_tz(p)
     return round(
         Int64,
-        datetime2unix(DateTime(astimezone(ZonedDateTime(DateTime(d), tz), tz"UTC"))),
+        datetime2unix(DateTime(astimezone(_zoned(DateTime(d), tz), tz"UTC"))),
     ) * NS_PER_SEC
 end
 
@@ -258,8 +264,9 @@ logging layer reads the same flag to mute transport-teardown noise, so each
 session has its own flag.
 
 `outcome` records how the producer ended: `:running` while it streams,
-`:completed` when it stopped on request or at the deadline, `:failed` after a
-fatal stream error, exhausted reconnection attempts or an unexpected error.
+`:completed` when it stopped on request or at the deadline, `:interrupted`
+when an interrupt landed in the producer task, `:failed` after a fatal stream
+error, exhausted reconnection attempts or an unexpected error.
 
 `opens` counts the connections that opened (a protocol loop's
 [`spawn_watchdog`](@ref) call records each) and `opened_at` holds the
@@ -779,16 +786,21 @@ function live_source(
                     end
                 end
             catch e
-                # An unexpected error marks the session failed and is logged where
-                # the session logs. An interrupt that landed in this task ends the
-                # producer: it is rethrown, the outcome below reads `:completed`,
-                # and the channel closes, which ends the session in order.
-                e isa InterruptException && rethrow()
-                session.outcome[] = :failed
-                if e isa FatalStreamError
-                    @error "fatal stream error; aborting" e.msg
+                # An interrupt that landed in this task ends the session as an
+                # interrupt anywhere else does: the outcome says so and the
+                # channel closes below, so the sinks drain and the session is
+                # recorded as cut short. Any other error marks it failed and is
+                # logged where the session logs.
+                if e isa InterruptException
+                    session.outcome[] = :interrupted
+                    @info "interrupt in the producer; ending the session"
                 else
-                    @error "live producer failed" exception = (e, catch_backtrace())
+                    session.outcome[] = :failed
+                    if e isa FatalStreamError
+                        @error "fatal stream error; aborting" e.msg
+                    else
+                        @error "live producer failed" exception = (e, catch_backtrace())
+                    end
                 end
             finally
                 session.outcome[] === :running && (session.outcome[] = :completed)

@@ -280,12 +280,14 @@ end
 
 # A day has one file. Written in the other format than the one on disk (the
 # configured format changed between two compactions), it supersedes that
-# file, which goes to its own format's backups with its marker. Left in
-# place, the day would be read twice.
+# file, which goes to its own format's backups; its marker, which described
+# it as the day's file, is removed. Left in place, the day would be read
+# twice. The backup slot is claimed as for any displaced file.
 function _retire_other_format!(dir::AbstractString, date::Date, format::Symbol)
     other = joinpath(dir, "$(date).$(format === :csv ? "arrow" : "csv")")
     isfile(other) || return nothing
-    mv(other, _backup_path(other))
+    _backup!(other)
+    rm(other)
     rm(_marker_path(other); force = true)
     return nothing
 end
@@ -383,6 +385,11 @@ const PROCESSED_FILE = r"^(\d{4}-\d{2}-\d{2})\.(csv|arrow)$"
 # incomplete day (see `compact_raw`).
 _marker_path(file::AbstractString) = file * ".incomplete.toml"
 
+# Which of a day's two files was modified last, for the message that refuses
+# the pair.
+_newer_format(dir::AbstractString, d::Date) =
+    mtime(joinpath(dir, "$d.arrow")) >= mtime(joinpath(dir, "$d.csv")) ? ".arrow" : ".csv"
+
 # Names the temporary file of one write: unique to the process and the write,
 # so two writers of one path never share it.
 _partial_tag() =
@@ -443,7 +450,8 @@ function processed_files(
             IntegrityError(
                 dir,
                 "$dir holds $d as .arrow and as .csv; a day has one file, and a " *
-                "reader of both would count its prints twice. Move one of them away",
+                "reader of both would count its prints twice. Move one of them away " *
+                "(the $(_newer_format(dir, d)) file is the newer)",
             ),
         )
         previous = d
@@ -899,7 +907,9 @@ function _compact_spill(
             spill_file = _spill_path(pool, key)
             trades = read_raw(spill_file)
             # The group is in memory: its scratch copy goes before its day file
-            # is written, so the two together never exceed the input's size.
+            # is written, so the two together stay within the input's size (but
+            # for the fixed few kilobytes of an Arrow file, on a group of a few
+            # prints).
             rm(spill_file)
             dedup && (trades = _deduplicate_group(trades, key))
             max_live_heap_mb === nothing ||

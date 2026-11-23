@@ -91,6 +91,11 @@ end
 
 const PROJECT_ROOT = normpath(joinpath(@__DIR__, ".."))
 
+# The longest interval [s] a setting that is slept or drawn may hold, about 32
+# years: past 1.8e16 s a timer's millisecond count overflows, and `inf` has
+# none.
+const MAX_INTERVAL_S = 1.0e9
+
 """
     DEFAULT_CONFIG
 
@@ -518,11 +523,10 @@ function load_config(path::AbstractString = _default_config_path())
         ),
     )
     rate_sleep = _cfg_value(bf, "backfill", "rate_limit_sleep_s", Float64, 0.35)
-    # `sleep(Inf)` throws, in the middle of the run.
-    (isfinite(rate_sleep) && rate_sleep >= 0) || throw(
-        ArgumentError(
-            "backfill.rate_limit_sleep_s must be finite and >= 0, got $rate_sleep",
-        ),
+    # `sleep` throws on an interval it cannot count in milliseconds, `inf`
+    # included, in the middle of the run.
+    0 <= rate_sleep <= MAX_INTERVAL_S || throw(
+        ArgumentError("backfill.rate_limit_sleep_s must be in [0, 1e9], got $rate_sleep"),
     )
     keep_raw = _cfg_value(bf, "backfill", "keep_raw", Bool, true)
     keep_raw ||
@@ -564,14 +568,14 @@ function load_config(path::AbstractString = _default_config_path())
 
     mon = tbl("monitor")
     mon_refresh = _cfg_value(mon, "monitor", "refresh_s", Float64, 2.0)
-    (isfinite(mon_refresh) && mon_refresh > 0) ||
-        throw(ArgumentError("monitor.refresh_s must be finite and > 0, got $mon_refresh"))
+    0 < mon_refresh <= MAX_INTERVAL_S ||
+        throw(ArgumentError("monitor.refresh_s must be in (0, 1e9], got $mon_refresh"))
     mon_top = _cfg_value(mon, "monitor", "top_symbols", Int, 10)
     mon_top >= 1 || throw(ArgumentError("monitor.top_symbols must be >= 1, got $mon_top"))
     mon_window = _cfg_value(mon, "monitor", "rate_window_s", Float64, 300.0)
-    (isfinite(mon_window) && mon_window >= mon_refresh) || throw(
+    mon_refresh <= mon_window <= MAX_INTERVAL_S || throw(
         ArgumentError(
-            "monitor.rate_window_s must be finite and >= monitor.refresh_s, got $mon_window",
+            "monitor.rate_window_s must be >= monitor.refresh_s and <= 1e9, got $mon_window",
         ),
     )
 
@@ -726,7 +730,9 @@ a window may resolve onto a weekend or holiday and yield no prints. Throws
 `ArgumentError` naming `key` on any other value.
 """
 function _resolve_config_date(spec::AbstractString, key::AbstractString, reference::Date)
-    m = match(r"^today(?:-(\d+)d)?$", spec)
+    # `\z` and `[0-9]`: `$` also matches before a final newline, and `\d` any
+    # Unicode digit.
+    m = match(r"^today(?:-([0-9]+)d)?\z", spec)
     if m !== nothing
         back = m[1]
         n = back === nothing ? 0 : tryparse(Int, back)
@@ -734,9 +740,13 @@ function _resolve_config_date(spec::AbstractString, key::AbstractString, referen
             throw(ArgumentError("$key counts more days back than an Int holds: \"$spec\""))
         return reference - Day(n)
     end
-    # The form is checked first: `tryparse(Date, _)` alone also takes "2026" and
-    # "2026-08", as the first of the year or month, and "20260812" as a year.
-    d = occursin(r"^\d{4}-\d{2}-\d{2}$", spec) ? tryparse(Date, spec) : nothing
+    # Year, month and day must all be there: `tryparse(Date, _)` alone also
+    # takes "2026" and "2026-08", as the first of the year or month, and
+    # "20260812" as a year. Month and day may lack their leading zero, which
+    # always loaded as the date meant.
+    d =
+        occursin(r"^[0-9]{4}-[0-9]{1,2}-[0-9]{1,2}\z", spec) ? tryparse(Date, spec) :
+        nothing
     d === nothing && throw(
         ArgumentError(
             "$key must be an ISO date \"YYYY-MM-DD\" or a sentinel " *

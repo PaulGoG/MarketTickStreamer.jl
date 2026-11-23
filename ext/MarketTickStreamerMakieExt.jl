@@ -28,6 +28,7 @@ using CairoMakie:
     theme_latexfonts,
     vlines!,
     with_theme,
+    xlims!,
     ylims!
 using DataFrames: DataFrame, nrow
 using Dates: Dates, @dateformat_str
@@ -328,21 +329,23 @@ function MarketTickStreamer.overview_figure(
     ntotal = 0
     nforming = 0
     plo, phi = Inf, -Inf
+    # Exchange-local hour of every print, once per day for both panels.
+    hours = [[_local_hour(ns; tz) for ns in df.time_ns] for (_, df) in days]
     for (i, (_, df)) in enumerate(days)
         forming = [
             _row_price_forming(tape, conds, non_price) for
             (tape, conds) in zip(df.tape, df.conditions)
         ]
         nforming += count(forming)
-        # a day without a price-forming print is drawn from every print
-        shown = any(forming) ? forming : trues(nrow(df))
-        h = [_local_hour(ns; tz) for ns in df.time_ns[shown]]
         # The session only, as in the activity panel: prints outside it have
-        # no place on an axis that joins one session to the next.
-        inside = findall(x -> session_open <= x <= session_close, h)
-        if !isempty(inside)
-            px = Float64.(df.price[shown][inside])
-            x = (i - 1) * slot .+ (h[inside] .- session_open)
+        # no place on an axis that joins one session to the next. A session
+        # without a price-forming print is drawn from all of its prints.
+        h = hours[i]
+        inside = [session_open <= x <= session_close for x in h]
+        drawn = any(forming .& inside) ? forming .& inside : inside
+        if any(drawn)
+            px = Float64.(df.price[drawn])
+            x = (i - 1) * slot .+ (h[drawn] .- session_open)
             lines!(ax1, _decimate_minmax(x, px)...; color)
             plo, phi = min(plo, minimum(px)), max(phi, maximum(px))
         end
@@ -358,6 +361,10 @@ function MarketTickStreamer.overview_figure(
             )
         ntotal += nrow(df)
     end
+    # Every day keeps its slot, also one without a print inside the session;
+    # a margin keeps the first open and the last close off the frame.
+    pad = 0.02 * nd * slot
+    xlims!(ax1, -pad, nd * slot - 0.25 + pad)
     if isfinite(plo)                    # some print fell inside the session
         span = max(phi - plo, 1e-9 * max(abs(phi), 1.0))
         ylims!(ax1, plo - 0.05 * span, phi + 0.22 * span)  # annotation headroom
@@ -378,11 +385,9 @@ function MarketTickStreamer.overview_figure(
     # Panel 2: day × minute activity heatmap
     nmin = round(Int, 60 * session_len)
     act = zeros(Float64, nmin + 1, nd)
-    for (i, (_, df)) in enumerate(days)
-        for ns in df.time_ns
-            m = round(Int, 60 * (_local_hour(ns; tz) - session_open))
-            0 <= m <= nmin && (act[m+1, i] += 1)
-        end
+    for i in 1:nd, h in hours[i]
+        m = round(Int, 60 * (h - session_open))
+        0 <= m <= nmin && (act[m+1, i] += 1)
     end
     hm_hours = session_open .+ (0:nmin) ./ 60
     ax2 = Axis(

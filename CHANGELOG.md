@@ -11,8 +11,10 @@ Notable changes to MarketTickStreamer.jl. The format follows
   WebSocket read came out of HTTP.jl wrapped as a transport error and was
   retried: a backfill sent the request again, and a capture reconnected until
   its attempts ran out and ended `failed`. The retry schedule and
-  `stream_websocket!` now rethrow it as an `InterruptException`, and a session
-  recognizes an interrupt that ended a task it waited on.
+  `stream_websocket!` now rethrow it as an `InterruptException`; an interrupt
+  that lands in the producer task ends the capture as `interrupted`
+  (`LiveSession.outcome` reads `:interrupted`), and a session recognizes one
+  that ended a task it waited on.
 - Paced replay with a finite `max_gap_s`: a print stamped behind the latest
   one moved the schedule back, the next gap was then measured too long, and
   every later print came early by up to that step. It arises on the receive
@@ -27,20 +29,24 @@ Notable changes to MarketTickStreamer.jl. The format follows
   channel bound to a consumer task that failed) ended the fan-out, the
   persistence output included. It is now dropped like any closed output. A
   `lossy` vector of the wrong length is a `DimensionMismatch` at the call.
-- Two producers started within a millisecond of each other on a data tree
-  whose lock was stale could both take it, because a stale lock is broken by
-  unlinking its name. A producer that found a lock file now waits half a
-  second after taking the tree and gives way if the file names another
-  process.
+- Two producers started within about a second of each other on a data tree
+  whose lock was stale could both take it: a stale lock is broken by
+  unlinking its name, after a warning that takes a fresh process about a
+  second to compile. The warning is made after the lock is taken, and a
+  producer that found a lock file waits a second and gives way if the name
+  then holds another file than its own.
 - `load_config` accepted for `backfill.start_date` and `end_date` any string
-  Julia's date parser takes: `"2026"` loaded as 1 January and `"20260812"` as
-  a year. Only `YYYY-MM-DD` and the sentinels load. `inf` is refused for
+  Julia's date parser takes: `"2026"` loaded as 1 January, `"2026-08"` as the
+  first of the month and `"20260812"` as a year. A date must now name its
+  year, month and day; these three forms are refused.
   `backfill.rate_limit_sleep_s`, `monitor.refresh_s` and
-  `monitor.rate_window_s`, where it failed at the first sleep or render; a
+  `monitor.rate_window_s` are bounded at 10⁹ s: `inf`, and any interval a
+  timer cannot count, loaded and failed at the first sleep or render. A
   channel named twice in `stream.channels` is subscribed once; an unknown
   `provider.name` is reported under that key.
 - A provider whose spec declares no historical feed, as a streaming-only
-  adapter in another package would, could not load a configuration. Under
+  adapter in another package would, could not load a configuration; it loads
+  now, and `run_backfill` refuses it before it takes the data tree. Under
   `backfill.source = "bulk"` the default feed is the provider's first bulk
   feed when its REST feed is not published in bulk.
 - A window of `eachday` or `read_processed` with a bound inside the hour a
@@ -60,7 +66,8 @@ Notable changes to MarketTickStreamer.jl. The format follows
   file.
 - A spilling compaction removes each group's scratch copy once the group is
   loaded, so the copy and the day files beside it stay within the input's
-  size, which the free-space check assumed; the heap ceiling is tested on
+  size, which the free-space check assumed (an Arrow file of a few prints
+  exceeds its lines by a fixed few kilobytes); the heap ceiling is tested on
   the loaded group, before it is sorted and written.
 - Vendor downloads: a `206` without a `Content-Range` is refused like a range
   that starts elsewhere; a retry after a chunk's last byte no longer asks for
@@ -78,7 +85,7 @@ Notable changes to MarketTickStreamer.jl. The format follows
   `examples/follow_session.jl`.
 
 ### Changed
-- `monitor_raw` requires a finite `refresh_s` and `rate_window_s`.
+- `monitor_raw` bounds `refresh_s` and `rate_window_s` at 10⁹ s.
 - An import logs one closing line.
 - The Documenter site is named `MarketTickStreamer.jl`.
 

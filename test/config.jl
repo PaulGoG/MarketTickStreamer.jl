@@ -263,21 +263,35 @@ end
         p = joinpath(dir, "c.toml")
         rejected(body) = (write(p, body); @test_throws ArgumentError load_config(p))
         loaded(body) = (write(p, body); load_config(p))
-        # A date is "YYYY-MM-DD" and nothing shorter: Julia's parser alone reads
+        # A date names its year, month and day: Julia's parser alone reads
         # "2026" as 1 January, "2026-08" as the first of the month and
         # "20260812" as a year.
-        for s in ("2026", "2026-08", "20260812", "2026-8-2", "2026-13-01")
+        for s in ("2026", "2026-08", "20260812", "2026-13-01", "2026-08-02T00:00")
             rejected(base * "[backfill]\nstart_date = \"$s\"\nend_date = \"$s\"\n")
         end
+        unpadded = loaded(
+            base * "[backfill]\nstart_date = \"2026-8-2\"\nend_date = \"2026-8-2\"\n",
+        )
+        @test unpadded.backfill_start == Date(2026, 8, 2)
         rejected(base * "[backfill]\nstart_date = \"today-99999999999999999999d\"\n")
+        rejected(base * "[backfill]\nstart_date = \"today\\n\"\n")      # a trailing newline
         cfg = loaded(
             base * "[backfill]\nstart_date = \"2026-08-02\"\nend_date = \"2026-08-03\"\n",
         )
         @test (cfg.backfill_start, cfg.backfill_end) == (Date(2026, 8, 2), Date(2026, 8, 3))
-        # `inf` where the value is slept or rounded to an integer
+        # an interval that is slept or drawn: `inf`, and what no timer counts
         rejected(base * "[backfill]\nrate_limit_sleep_s = inf\n")
+        rejected(base * "[backfill]\nrate_limit_sleep_s = 1e17\n")
         rejected(base * "[monitor]\nrefresh_s = inf\nrate_window_s = inf\n")
         rejected(base * "[monitor]\nrate_window_s = inf\n")
+        @test loaded(base * "[backfill]\nrate_limit_sleep_s = 1e9\n").backfill_rate_sleep_s ==
+              1e9
+        # the default feed of each shipped provider and source
+        binance = "[provider]\nname = \"binance\"\n"
+        @test loaded(base).backfill_feed == "sip"
+        @test loaded(binance * base).backfill_feed == "aggTrade"
+        @test loaded(binance * base * "[backfill]\nsource = \"bulk\"\n").backfill_feed ==
+              "aggTrade"
         @test loaded(base * "[replay]\nmax_gap_s = inf\n").replay_max_gap_s == Inf
         # a channel named twice is subscribed to once
         cfg = loaded(
@@ -290,8 +304,8 @@ end
         write(p, "[stream]\nsymbols = [" * join(("\"S$i\"" for i in 1:31), ", ") * "]\n")
         @test_throws "stream.symbols" load_config(p)
     end
-    @test_throws "refresh_s must be finite" monitor_raw(mktempdir(); refresh_s = Inf)
-    @test_throws "rate_window_s must be finite" monitor_raw(
+    @test_throws "refresh_s must be in" monitor_raw(mktempdir(); refresh_s = Inf)
+    @test_throws "rate_window_s must be at most" monitor_raw(
         mktempdir();
         rate_window_s = Inf,
     )

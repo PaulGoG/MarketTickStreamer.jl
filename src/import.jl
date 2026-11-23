@@ -73,7 +73,7 @@ function run_import(
     # tree and hashes the file.
     broken in (:drop, :mark, :keep) ||
         throw(ArgumentError("broken must be :drop, :mark or :keep, got $(repr(broken))"))
-    tape isa Union{AbstractString,AbstractDict} || throw(
+    (format !== :iex || tape isa Union{AbstractString,AbstractDict}) || throw(
         ArgumentError(
             "tape must be a string or a Dict from symbol to tape, got $(typeof(tape))",
         ),

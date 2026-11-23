@@ -131,7 +131,11 @@ end
         p = joinpath(dir, "c.toml")
         base(name) = "[provider]\nname = \"$name\"\n[stream]\nsymbols = [\"X\"]\n"
         write(p, base("streamonly"))
-        @test Base.invokelatest(load_config, p).backfill_feed == ""
+        streaming = Base.invokelatest(load_config, p)
+        @test streaming.backfill_feed == ""
+        # and a backfill is refused before it takes the tree
+        @test_throws "no historical feed" run_backfill(streaming)
+        @test !isdir(streaming.data_dir)
         write(p, base("streamonly") * "[backfill]\nfeed = \"ticks\"\n")
         @test_throws ArgumentError Base.invokelatest(load_config, p)
         write(p, base("dumps"))

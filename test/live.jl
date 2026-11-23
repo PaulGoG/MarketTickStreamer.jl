@@ -879,7 +879,31 @@ end
             s = live_source(InterruptedProvider(url), cfg)
             @test isempty(collect(s.channel))            # the channel closes
             @test nconn[] == before + 1                  # one connection
-            @test s.stats[].reconnects == 0 && s.outcome[] === :completed
+            @test s.stats[].reconnects == 0 && s.outcome[] === :interrupted
+            # Through a whole session the sidecar says so, which is what marks
+            # the days of the capture incomplete when they are compacted.
+            toml = mock_config_toml(
+                mkpath(joinpath(dir, "run"));
+                ws_port = 9999,
+                rest_port = 9998,
+                require_market_open = false,
+            )
+            write(
+                toml,
+                replace(
+                    read(toml, String),
+                    "wait_for_open = false" => "wait_for_open = false\nstop_at_market_close = false",
+                ),
+            )
+            result = run_stream(load_config(toml); provider = InterruptedProvider(url))
+            @test result.status == "interrupted" && result.ticks == 0
+            sidecar = only(
+                filter(
+                    endswith(".meta.toml"),
+                    readdir(joinpath(dirname(toml), "data", "raw"); join = true),
+                ),
+            )
+            @test TOML.parsefile(sidecar)["session"]["status"] == "interrupted"
         end
     finally
         close(server)

@@ -569,6 +569,20 @@ end
         @test_throws IntegrityError processed_files(out, "AAPL")
         @test_throws IntegrityError read_processed(out, "AAPL")
         @test_throws IntegrityError corpus_inventory(out)
+        # whatever the selection, and naming the newer of the two
+        @test_throws "the .csv file is the newer" processed_files(
+            out,
+            "AAPL";
+            from = Date(day) + Day(1),
+            complete = true,
+        )
+        # Back to CSV and to Arrow again: each superseded file takes the next
+        # free backup of its own format.
+        rm(csv)
+        compact_raw([sink.path], out; format = :csv)
+        compact_raw([sink.path], out; format = :arrow)
+        @test sort(readdir(dirname(csv))) ==
+              ["$(day).arrow", "$(day)_#1.arrow", "$(day)_#1.csv", "$(day)_#2.csv"]
     end
 end
 
@@ -591,8 +605,9 @@ end
         close_sink!(sink)
         scratch = joinpath(dir, "scratch")
         mkpath(scratch)
-        # Seen from the heap check, which runs on each loaded group before it is
-        # written: the scratch directory then holds the groups still to come.
+        # The `incomplete` callback is asked about each group once it is loaded
+        # and before it is written: the scratch directory then holds the groups
+        # still to come.
         left = Int[]
         spill_dir() = joinpath(scratch, only(readdir(scratch)))
         written = MarketTickStreamer._compact_spill(
@@ -613,6 +628,22 @@ end
         @test length(written.files) == 3 && written.rows == 60
         @test left == [2, 1, 0]
         @test isempty(readdir(scratch))
+        # A group over the heap ceiling is refused before its day file exists.
+        @test_throws ResourceError MarketTickStreamer._compact_spill(
+            [sink.path],
+            joinpath(dir, "refused");
+            format = :csv,
+            dedup = true,
+            tz = tz"UTC",
+            max_live_heap_mb = 0,
+            scratch_dir = scratch,
+            spill_headroom = 1.1,
+            max_open_spill_files = 4,
+            compression = :none,
+            incomplete = MarketTickStreamer._no_day,
+            part_reasons = Dict{String,String}(),
+        )
+        @test !isdir(joinpath(dir, "refused", "A"))
     end
 end
 

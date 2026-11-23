@@ -292,10 +292,10 @@ once it is two minutes old, and one whose process still runs only after ten.
 Release with `close(lock)`.
 
 A starter that found a lock file and took the lock all the same waits
-`settle_s` seconds and gives way if the file then names another process.
-Pidfile breaks a stale lock by unlinking the name and creating it anew, and of
-two starters that judged the same lock stale the later one unlinks the lock the
-earlier one has just created, so both would hold the tree.
+`settle_s` seconds and gives way if the name then holds another file than its
+own. Pidfile breaks a stale lock by unlinking the name and creating it anew,
+and of two starters that judged the same lock stale the later one unlinks the
+lock the earlier one has just created, so both would hold the tree.
 """
 function acquire_session_lock(data_dir::AbstractString; settle_s::Real = LOCK_SETTLE_S)
     mkpath(data_dir)
@@ -308,38 +308,48 @@ function acquire_session_lock(data_dir::AbstractString; settle_s::Real = LOCK_SE
         ),
     )
     found = ispath(path)
-    pidlock = Pidfile.trymkpidlock(path; stale_age = 120.0)
+    # Pidfile warns between judging a lock stale and unlinking it. A process's
+    # first warning takes about a second to compile, and for that long a second
+    # starter could interleave; muted here, the two steps are milliseconds
+    # apart, and the takeover is reported below instead.
+    pidlock = Logging.with_logger(Logging.NullLogger()) do
+        Pidfile.trymkpidlock(path; stale_age = 120.0)
+    end
     pidlock === false && refuse()
     # `trymkpidlock` returns `Union{LockMonitor,Bool}`; the guard above settles
     # it, but only an assertion narrows the binding for callers of `close`.
     held = pidlock::Pidfile.LockMonitor
     if found
-        sleep(settle_s)
-        if !_lock_names_this_process(path)
+        mine = try
+            sleep(settle_s)
+            _still_holds(held, path)
+        catch
+            close(held)
+            rethrow()
+        end
+        if !mine
             close(held)             # leaves a file that is not its own in place
             refuse()
         end
+        @warn "took the data tree over from a lock that was stale or just released" path
     end
     return held
 end
 
 # Seconds between taking a lock that replaced an earlier file and checking
-# that it is still this process's: far longer than the stale check, warning
-# and unlink of a concurrent starter take.
-const LOCK_SETTLE_S = 0.5
+# that the name still holds it: far longer than a concurrent starter takes
+# from its stale check to its unlink.
+const LOCK_SETTLE_S = 1.0
 
-# Whether the pid file at `path` holds this process's pid and host, the two
-# fields Pidfile writes.
-function _lock_names_this_process(path::AbstractString)
-    fields = try
-        split(read(path, String))
+# Whether `path` is still the file `held` created, the test Pidfile's own
+# `close` makes before it removes the name.
+function _still_holds(held::Pidfile.LockMonitor, path::AbstractString)
+    return try
+        samefile(stat(held.fd), stat(path))
     catch e
         e isa InterruptException && rethrow()
-        return false
+        false
     end
-    return length(fields) >= 2 &&
-           fields[1] == string(getpid()) &&
-           fields[2] == gethostname()
 end
 
 # State of the package's git checkout: commit, dirty flag, and whether either
@@ -788,6 +798,8 @@ function _run_stream(
                 session.outcome[] === :failed ||
                 (session.opens[] == 0 && summary.ticks == 0)
             ) && (summary.status = "failed")
+            # An interrupt can land in the producer task instead of this one.
+            session.outcome[] === :interrupted && (summary.status = "interrupted")
         catch e
             if has_wrapped_exception(e, InterruptException)
                 summary.status = "interrupted"
@@ -871,6 +883,11 @@ Logging is scoped to the call: the session runs under its own logger and the
 caller's global logger is untouched.
 """
 function run_backfill(cfg::Config; provider::Union{AbstractProvider,Nothing} = nothing)
+    isempty(cfg.backfill_feed) && throw(
+        ArgumentError(
+            "provider \"$(cfg.provider)\" declares no historical feed: nothing to backfill",
+        ),
+    )
     prefix = cfg.backfill_source === :bulk ? "backfill_bulk_" : "backfill_"
     sid = _fresh_session_id(() -> prefix * session_id(cfg; feed = cfg.backfill_feed), cfg)
     logger, log_io = setup_logging(cfg; session_id = sid)

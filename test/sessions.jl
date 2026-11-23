@@ -369,3 +369,25 @@ end
         close(rest)
     end
 end
+
+@testset "session envelope: an interrupt in a task the body waits on; resume by symbol" begin
+    mktempdir() do dir
+        cfg = load_config(mock_config_toml(dir; ws_port = 9999, rest_port = 9998))
+        # The interrupt arrives as the task's failure, and is one all the same.
+        sid = "wrapped_interrupt"
+        out = MarketTickStreamer._with_session(cfg, sid; result = String[]) do _
+            fetch(Threads.@spawn throw(InterruptException()))
+        end
+        @test out == String[]
+        meta = TOML.parsefile(joinpath(cfg.raw_dir, "$sid.meta.toml"))
+        @test meta["session"]["status"] == "interrupted"
+        @test !isfile(joinpath(cfg.data_dir, ".session.lock"))
+        # `resume` finds a day under the symbol as the adapter files it.
+        day = Date(2026, 7, 29)
+        mkpath(joinpath(cfg.processed_dir, "BTCUSDT"))
+        touch(joinpath(cfg.processed_dir, "BTCUSDT", "$day.csv"))
+        @test MarketTickStreamer._processed_exists(cfg, "btcusdt", day)
+        @test MarketTickStreamer._processed_exists(cfg, "BTCUSDT", day)
+        @test !MarketTickStreamer._processed_exists(cfg, "ethusdt", day)
+    end
+end
