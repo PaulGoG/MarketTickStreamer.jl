@@ -184,12 +184,17 @@ function _fixed(v::Real, decimals::Integer)
     return str * "0"^(decimals - (length(str) - i))
 end
 
-# A duration in the SI-prefixed unit that keeps it between 1 and 1000.
+# A duration to three significant digits, in the SI-prefixed unit that keeps
+# the rendered value between 1 and 1000. The unit is chosen after rounding, so
+# 0.99996 s reads "1 s" where `%.3g` of 999.96 would print "1e+03 ms"; from
+# 1000 s on the seconds are printed whole.
 function _si_seconds(x::Real)
+    r = round(Float64(x); sigdigits = 3)
+    r >= 1000 && return string(round(Int, r), " s")
     for (scale, unit) in ((1.0, "s"), (1e-3, "ms"), (1e-6, "μs"))
-        x >= scale && return @sprintf("%.3g %s", x / scale, unit)
+        r >= scale && return @sprintf("%.3g %s", r / scale, unit)
     end
-    return @sprintf("%.3g ns", x / 1e-9)
+    return @sprintf("%.3g ns", r / 1e-9)
 end
 
 # Space-grouped thousands for in-axis count annotations.

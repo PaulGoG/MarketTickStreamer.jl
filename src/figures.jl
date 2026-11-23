@@ -48,10 +48,12 @@ function session_figure end
 Multi-day diagnostic figure for one symbol from per-day processed tables
 (`days` is a vector of `(date, DataFrame)` pairs, sorted internally by date):
 
-- price path on a concatenated *trading-time* axis (overnight gaps removed,
-  session boundaries dashed, days labeled at their centers), drawn from the
-  prints that [`price_forming`](@ref) admits under `non_price`,
-- day × session-minute activity heatmap,
+- price path on a concatenated *trading-time* axis: the sessions one after
+  the other, overnight gaps and the prints outside `session` left out, drawn
+  from the prints that [`price_forming`](@ref) admits under `non_price`.
+  About a dozen days are labeled at their centers, and session boundaries
+  are dashed up to a month of days,
+- day × session-minute activity heatmap, with the same day labels,
 - pooled intra-session inter-arrival survival function `P(Δt ≥ x)` over the
   positive gaps, with the share of zero gaps annotated (overnight gaps
   excluded by construction, since they would contaminate the waiting-time
@@ -104,9 +106,9 @@ tree (`processed_dir/SYMBOL/YYYY-MM-DD.csv|.arrow`; safesave `_#N` backups
 and `.partial` files are ignored: the base file per day is authoritative
 and always the newest). `symbols`, `from`, and `to` restrict the sweep.
 Output: `out_dir/SYMBOL_<from>_<to>.pdf|png` (safesave). Days are loaded one
-symbol at a time, so memory stays bounded by one symbol's span. A symbol with
-fewer than `min_days` day files in the selection is skipped. `session` is
-passed to [`overview_figure`](@ref).
+symbol at a time, and a symbol's whole selection is held in memory together:
+`from` and `to` bound it. A symbol with fewer than `min_days` day files in the
+selection is skipped. `session` is passed to [`overview_figure`](@ref).
 
 `non_price` is the sale-condition table of the price-forming population,
 forwarded to the figure.

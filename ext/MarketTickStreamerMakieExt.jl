@@ -309,6 +309,9 @@ function MarketTickStreamer.overview_figure(
     nd = length(days)
     color = Makie.wong_colors()[1]
     slot = session_len + 0.25                # session length + inter-day spacing
+    # About a dozen day labels on either axis, whatever the span.
+    labeled = 1:cld(nd, 12):nd
+    day_labels = [Dates.format(days[i][1], dateformat"mm-dd") for i in labeled]
 
     # One grid, the colorbar in a column of its own, so the panels of both rows
     # share their edges.
@@ -319,11 +322,8 @@ function MarketTickStreamer.overview_figure(
         fig[1, 1];
         xlabel = "Trading day",
         ylabel = "Price [$price_unit]",
-        xticks = (
-            [(i - 0.5) * slot for i in 1:nd],
-            [Dates.format(d, dateformat"mm-dd") for (d, _) in days],
-        ),
-        xticklabelrotation = nd > 6 ? π / 4 : 0.0,
+        xticks = ([(i - 0.5) * slot for i in labeled], day_labels),
+        xticklabelrotation = length(labeled) > 6 ? π / 4 : 0.0,
     )
     ntotal = 0
     nforming = 0
@@ -337,21 +337,31 @@ function MarketTickStreamer.overview_figure(
         # a day without a price-forming print is drawn from every print
         shown = any(forming) ? forming : trues(nrow(df))
         h = [_local_hour(ns; tz) for ns in df.time_ns[shown]]
-        px = Float64.(df.price[shown])
-        x = (i - 1) * slot .+ clamp.(h .- session_open, -0.1, session_len + 0.2)
-        lines!(ax1, _decimate_minmax(x, px)...; color)
-        plo, phi = min(plo, minimum(px)), max(phi, maximum(px))
-        i > 1 && vlines!(
-            ax1,
-            [(i - 1) * slot - 0.125];
-            color = (:grey, 0.4),
-            linestyle = :dash,
-            linewidth = 1.5,
-        )
+        # The session only, as in the activity panel: prints outside it have
+        # no place on an axis that joins one session to the next.
+        inside = findall(x -> session_open <= x <= session_close, h)
+        if !isempty(inside)
+            px = Float64.(df.price[shown][inside])
+            x = (i - 1) * slot .+ (h[inside] .- session_open)
+            lines!(ax1, _decimate_minmax(x, px)...; color)
+            plo, phi = min(plo, minimum(px)), max(phi, maximum(px))
+        end
+        # Session boundaries are drawn while they can be told apart.
+        i > 1 &&
+            nd <= 31 &&
+            vlines!(
+                ax1,
+                [(i - 1) * slot - 0.125];
+                color = (:grey, 0.4),
+                linestyle = :dash,
+                linewidth = 1.5,
+            )
         ntotal += nrow(df)
     end
-    span = max(phi - plo, 1e-9 * max(abs(phi), 1.0))
-    ylims!(ax1, plo - 0.05 * span, phi + 0.22 * span)  # annotation headroom
+    if isfinite(plo)                    # some print fell inside the session
+        span = max(phi - plo, 1e-9 * max(abs(phi), 1.0))
+        ylims!(ax1, plo - 0.05 * span, phi + 0.22 * span)  # annotation headroom
+    end
     share = round(Int, 100 * nforming / max(ntotal, 1))
     text!(
         ax1,
@@ -380,7 +390,7 @@ function MarketTickStreamer.overview_figure(
         xlabel = "Exchange time [HH:MM]",
         ylabel = "Trading day",
         xticks = _hhmm_ticks(session_open, session_close),
-        yticks = (1:nd, [Dates.format(d, dateformat"mm-dd") for (d, _) in days]),
+        yticks = (collect(labeled), day_labels),
     )
     # Activity spans orders of magnitude between the opening auction and
     # midday, so the color scale is logarithmic; empty minutes are left blank.

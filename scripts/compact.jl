@@ -11,11 +11,8 @@ function main()
     cfg = load_config(config_path(opts))
     files = positional
     # Default: every .jsonl under the configured raw directory, whatever the provider.
-    if isempty(files)
-        files = filter(
-            f -> endswith(f, ".jsonl"),
-            readdir(cfg.raw_dir; join = true, sort = true),
-        )
+    if isempty(files) && isdir(cfg.raw_dir)
+        files = filter(endswith(".jsonl"), readdir(cfg.raw_dir; join = true))
     end
     isempty(files) && (println("No raw files to compact."); return)
     written = compact_raw(cfg, files)

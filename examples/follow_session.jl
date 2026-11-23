@@ -75,6 +75,7 @@ function main(args::Vector{String})
     i = 1
     while i <= length(args)
         if args[i] == "--config"
+            i < length(args) || throw(ArgumentError("--config needs a value"))
             cfg_path = args[i+1]
             i += 2
         else

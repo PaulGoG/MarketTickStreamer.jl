@@ -296,3 +296,25 @@ end
         rate_window_s = Inf,
     )
 end
+
+@testset "scripts: argument parsing" begin
+    cli = Module(:ScriptsCli)
+    Base.include(cli, joinpath(@__DIR__, "..", "scripts", "cli.jl"))
+    parse_cli(args; kw...) = example_call(cli, :parse_cli, args; kw...)
+    config_path(args...) = example_call(cli, :config_path, args...)
+    r = parse_cli(
+        ["a.jsonl", "--config", "c.toml", "--full", "b.jsonl"];
+        valued = ("config",),
+        flags = ("full",),
+    )
+    @test r.opts == Dict("config" => "c.toml") && r.flags == Set(["full"])
+    @test r.positional == ["a.jsonl", "b.jsonl"]
+    @test parse_cli(["--config=c.toml"]; valued = ("config",)).opts["config"] == "c.toml"
+    @test_throws ArgumentError parse_cli(["--config"]; valued = ("config",))
+    @test_throws ArgumentError parse_cli(["--full=1"]; flags = ("full",))
+    @test_throws ArgumentError parse_cli(["--nope"])
+    @test config_path(Dict("config" => "c.toml")) == "c.toml"
+    @test config_path(Dict{String,String}(), ["p.toml"]) == "p.toml"
+    @test_throws ArgumentError config_path(Dict("config" => "c.toml"), ["p.toml"])
+    @test_throws ArgumentError config_path(Dict{String,String}(), ["a.toml", "b.toml"])
+end

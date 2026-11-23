@@ -262,6 +262,13 @@ end
     @test M._value_pm(1.4, 0.2) == ("1.4", "0.2")
     @test M._si_seconds(4.6e-4) == "460 μs"
     @test M._si_seconds(2.5) == "2.5 s"
+    # The unit follows the value as rendered, and no exponent is printed.
+    @test M._si_seconds(0.99996) == "1 s"
+    @test M._si_seconds(9.9996e-7) == "1 μs"
+    @test M._si_seconds(9.994e-4) == "999 μs"
+    @test M._si_seconds(1234.5) == "1230 s"
+    @test M._si_seconds(3.2e-10) == "0.32 ns"
+    @test M._si_seconds(0.0) == "0 ns"
 end
 
 @testset "figures: without CairoMakie the stubs say what to load" begin

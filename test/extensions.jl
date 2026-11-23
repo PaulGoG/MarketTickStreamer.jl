@@ -94,6 +94,17 @@ using UnicodePlots: UnicodePlots
         # A venue that never closes lays its days out on the whole UTC day.
         @test overview_figure("BTCUSDT", days; tz = tz"UTC", session = (0.0, 24.0)) isa
               CairoMakie.Figure
+        # Thirty days carry ten labels on either day axis.
+        month = [(Date(2026, 7, 1) + Day(i), df) for i in 0:29]
+        axes = filter(x -> x isa CairoMakie.Axis, overview_figure("AAPL", month).content)
+        @test length(axes[1].xticks[][1]) == 10 && length(axes[2].yticks[][1]) == 10
+        # A print before the open is not on the price path: the session starts
+        # at 09:30 New York, and 07:43 lies outside it.
+        early = copy(df)
+        early.time_ns[1] -= 3 * 3600 * 10^9
+        early.price[1] = 500.0
+        ax = first(overview_figure("AAPL", [(Date(2026, 7, 30), early)]).content)
+        @test ax.limits[][2][2] < 200
         @test_throws ArgumentError overview_figure("AAPL", days; session = (16.0, 9.5))
         @test_throws ArgumentError overview_figure("AAPL", days; session = (0.0, 25.0))
         @test provider_spec("alpaca").regular_session == (9.5, 16.0)
@@ -115,6 +126,34 @@ using UnicodePlots: UnicodePlots
                 save_session_figures([sink.path], out; formats = ("png",), min_trades = 10)
             @test length(written) == 1 && all(isfile, written)
             @test readdir(out) == basename.(written)
+            # The overview is drawn from the processed tree.
+            two_days = [
+                Trade(
+                    t.symbol,
+                    t.time_ns + d * 86_400_000_000_000,
+                    0,
+                    t.price,
+                    t.size,
+                    t.exchange,
+                    t.conditions,
+                    t.tape,
+                    t.id,
+                ) for d in 0:1 for t in trades
+            ]
+            sink = open_raw_sink(dir, "days")
+            write_batch!(sink, two_days)
+            close_sink!(sink)
+            processed = joinpath(dir, "processed")
+            compact_raw([sink.path], processed; tz = tz"UTC")
+            overview = save_overview_figures(
+                processed,
+                joinpath(dir, "overview");
+                formats = ("png",),
+                tz = tz"UTC",
+                session = (0.0, 24.0),
+            )
+            @test basename.(overview) == ["AAPL_2025-07-30_2025-07-31.png"]
+            @test all(isfile, overview)
         end
     end
 
