@@ -412,9 +412,6 @@ function _parse_bulk_csv(
     return (; kept = pages.kept, prints = pages.prints, id_breaks, last_id)
 end
 
-_parse_bulk_csv(csv::AbstractVector{UInt8}, args...; kwargs...) =
-    _parse_bulk_csv(IOBuffer(csv), args...; kwargs...)
-
 """
     bulk_trades(p::BinanceProvider, symbol, date; feed = "aggTrade", dest_dir,
                 each_page = nothing, page_rows = 100_000, previous_id = nothing)

@@ -13,7 +13,6 @@ const ITCH50_TZ = tz"America/New_York"
 
 # A live displayed order: enough to price and file an execution against it.
 struct ItchOrder
-    locate::UInt16
     side::UInt8        # 'B', 'S', or 0x00 when a replace arrived without its original
     price::UInt32      # Price (4): four implied decimals
     shares::UInt32
@@ -64,7 +63,7 @@ function _itch50_reduce!(
     if left == 0
         delete!(orders, ref)
     else
-        orders[ref] = ItchOrder(o.locate, o.side, o.price, left)
+        orders[ref] = ItchOrder(o.side, o.price, left)
     end
     return nothing
 end
@@ -344,7 +343,7 @@ function itch50_trades(
                 selected[locate+1] || return nothing
                 ref = _be64(buf, m + 11)
                 orders[ref] =
-                    ItchOrder(locate, buf[m+19], _be32(buf, m + 32), _be32(buf, m + 20))
+                    ItchOrder(buf[m+19], _be32(buf, m + 32), _be32(buf, m + 20))
             elseif t == UInt8('E')
                 len >= 31 || _itch50_short(file_name, t, len, 31)
                 locate = _be16(buf, m + 1)
@@ -393,8 +392,7 @@ function itch50_trades(
                 n = _be32(buf, m + 27)
                 price = _be32(buf, m + 31)
                 o = pop!(orders, ref_orig, nothing)
-                orders[ref_new] =
-                    ItchOrder(locate, o === nothing ? 0x00 : o.side, price, n)
+                orders[ref_new] = ItchOrder(o === nothing ? 0x00 : o.side, price, n)
             elseif t == UInt8('P')
                 len >= 44 || _itch50_short(file_name, t, len, 44)
                 locate = _be16(buf, m + 1)

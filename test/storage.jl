@@ -547,3 +547,71 @@ end
         @test length(written) == 6
     end
 end
+
+@testset "compaction: a day rewritten in the other format keeps one file" begin
+    mktempdir() do dir
+        sink = open_raw_sink(dir, "fmt")
+        write_batch!(sink, [sample_trade(i) for i in 1:5])
+        close_sink!(sink)
+        out = joinpath(dir, "processed")
+        csv = only(compact_raw([sink.path], out; format = :csv, incomplete = true))
+        @test isfile(csv * ".incomplete.toml")
+        arrow = only(compact_raw([sink.path], out; format = :arrow))
+        day = first(splitext(basename(csv)))
+        # the CSV went to its own backups, with its marker
+        @test sort(readdir(dirname(csv))) == ["$(day).arrow", "$(day)_#1.csv"]
+        @test processed_files(out, "AAPL") == [arrow]
+        @test length(read_processed(out, "AAPL")) == 5
+        @test only(corpus_inventory(out).n_prints) == 5
+        # A tree that holds a day in both formats is refused by every reader of
+        # the listing: read as it stands, the day would count twice.
+        cp(joinpath(dirname(csv), "$(day)_#1.csv"), csv)
+        @test_throws IntegrityError processed_files(out, "AAPL")
+        @test_throws IntegrityError read_processed(out, "AAPL")
+        @test_throws IntegrityError corpus_inventory(out)
+    end
+end
+
+@testset "spill compaction: a group's scratch copy goes before its day file is written" begin
+    day_ns = 86_400 * 1_000_000_000
+    mk(i, day) = Trade(
+        "A",
+        1_753_886_600_000_000_000 + day * day_ns + i * 1_000_000,
+        0,
+        100.0,
+        1.0,
+        "V",
+        ["@"],
+        "C",
+        i,
+    )
+    mktempdir() do dir
+        sink = open_raw_sink(dir, "scratch")
+        write_batch!(sink, [mk(i, day) for day in 0:2 for i in 1:20])
+        close_sink!(sink)
+        scratch = joinpath(dir, "scratch")
+        mkpath(scratch)
+        # Seen from the heap check, which runs on each loaded group before it is
+        # written: the scratch directory then holds the groups still to come.
+        left = Int[]
+        spill_dir() = joinpath(scratch, only(readdir(scratch)))
+        written = MarketTickStreamer._compact_spill(
+            [sink.path],
+            joinpath(dir, "out");
+            format = :csv,
+            dedup = true,
+            tz = tz"UTC",
+            max_live_heap_mb = nothing,
+            scratch_dir = scratch,
+            spill_headroom = 1.1,
+            max_open_spill_files = 4,
+            compression = :none,
+            incomplete = (sym, date) ->
+                (push!(left, length(readdir(spill_dir()))); nothing),
+            part_reasons = Dict{String,String}(),
+        )
+        @test length(written.files) == 3 && written.rows == 60
+        @test left == [2, 1, 0]
+        @test isempty(readdir(scratch))
+    end
+end

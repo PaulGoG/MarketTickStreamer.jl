@@ -306,7 +306,7 @@ end
     d = Date(2026, 1, 1)
     # The reader's page state: `kept` holds the trades, `prints` counts them.
     parse_pages(text; feed = "aggTrade", kw...) = MarketTickStreamer._parse_bulk_csv(
-        Vector{UInt8}(codeunits(text)),
+        IOBuffer(text),
         "BTCUSDT",
         d,
         feed;

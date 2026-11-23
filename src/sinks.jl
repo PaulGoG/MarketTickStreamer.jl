@@ -53,7 +53,6 @@ mutable struct RawSink
     path::String
     io::IOStream
     bytes::Int64
-    n_written::Int64
 end
 
 # First part number >= `part` whose file does not exist yet, with its path.
@@ -84,7 +83,6 @@ function open_raw_sink(dir::AbstractString, prefix::AbstractString; max_mb::Inte
         path,
         open(path, "a"),
         0,
-        0,
     )
 end
 
@@ -109,7 +107,6 @@ function write_batch!(s::RawSink, trades::AbstractVector{Trade})
         line = trade_to_json(t)
         println(s.io, line)
         s.bytes += sizeof(line) + 1
-        s.n_written += 1
     end
     flush(s.io)
     s.bytes >= s.max_bytes && _roll!(s)
@@ -155,13 +152,6 @@ function run_sink!(
     buf = Trade[]
     last_flush = time()
     total = 0
-    write_buffer = () -> begin
-        write_batch!(sink, buf)
-        total += length(buf)
-        on_flush === nothing || on_flush(length(buf), total)
-        empty!(buf)
-        last_flush = time()
-    end
     while true
         closed = false
         while isready(ch) && length(buf) < flush_max_ticks
@@ -179,7 +169,8 @@ function run_sink!(
         closed && break
         if length(buf) >= flush_max_ticks ||
            (!isempty(buf) && time() - last_flush >= flush_interval_s)
-            write_buffer()
+            total = _flush_buffer!(sink, buf, total, on_flush)
+            last_flush = time()
         end
         if !isready(ch)
             if !isopen(ch)
@@ -190,7 +181,17 @@ function run_sink!(
             sleep(0.05)          # idle poll; granularity ≪ flush interval
         end
     end
-    isempty(buf) || write_buffer()
+    isempty(buf) || (total = _flush_buffer!(sink, buf, total, on_flush))
+    return total
+end
+
+# Write the buffered batch, report it and empty the buffer. Returns the new
+# total: a closure reassigning the caller's counters would box them.
+function _flush_buffer!(sink::RawSink, buf::Vector{Trade}, total::Int, on_flush)
+    write_batch!(sink, buf)
+    total += length(buf)
+    on_flush === nothing || on_flush(length(buf), total)
+    empty!(buf)
     return total
 end
 
@@ -273,7 +274,20 @@ function _write_group(
     incomplete === nothing || _write_marker(marker, incomplete)
     written = _write_day(path, out, format, compression)
     incomplete === nothing && rm(marker; force = true)
+    _retire_other_format!(dir, date, format)
     return written
+end
+
+# A day has one file. Written in the other format than the one on disk (the
+# configured format changed between two compactions), it supersedes that
+# file, which goes to its own format's backups with its marker. Left in
+# place, the day would be read twice.
+function _retire_other_format!(dir::AbstractString, date::Date, format::Symbol)
+    other = joinpath(dir, "$(date).$(format === :csv ? "arrow" : "csv")")
+    isfile(other) || return nothing
+    mv(other, _backup_path(other))
+    rm(_marker_path(other); force = true)
+    return nothing
 end
 
 function _write_day(path::AbstractString, out, format::Symbol, compression::Symbol)
@@ -369,8 +383,13 @@ const PROCESSED_FILE = r"^(\d{4}-\d{2}-\d{2})\.(csv|arrow)$"
 # incomplete day (see `compact_raw`).
 _marker_path(file::AbstractString) = file * ".incomplete.toml"
 
+# Names the temporary file of one write: unique to the process and the write,
+# so two writers of one path never share it.
+_partial_tag() =
+    string(getpid(); base = 36) * string(rand(RandomDevice(), UInt32); base = 36)
+
 function _write_marker(path::AbstractString, reason::AbstractString)
-    tag = string(getpid(); base = 36) * string(rand(RandomDevice(), UInt32); base = 36)
+    tag = _partial_tag()
     tmp = "$(chopsuffix(path, ".toml")).$(tag).partial.toml"
     try
         open(tmp, "w") do io
@@ -395,7 +414,9 @@ The per-day files of `symbol` in a processed tree
 (`processed_dir/SYMBOL/YYYY-MM-DD.csv|.arrow`), in date order, optionally
 restricted to `[from, to]`. Safesave backups (`_#N`) and partial files are not
 listed: the base file of a day is the newest and the only one a reader should
-open. Throws an `ArgumentError` when the symbol has no directory.
+open. Throws an `ArgumentError` when the symbol has no directory, and an
+[`IntegrityError`](@ref) when a day is present both as `.csv` and as `.arrow`,
+which would count its prints twice.
 
 With `complete = true`, a file with the marker `<file>.incomplete.toml`
 beside it, known to hold an incomplete day when it was compacted (see
@@ -413,10 +434,19 @@ function processed_files(
     dir = joinpath(processed_dir, symbol)
     isdir(dir) || throw(ArgumentError("no processed data for $symbol under $processed_dir"))
     files = String[]
-    for f in sort(readdir(dir))
+    previous = nothing
+    for f in readdir(dir)               # sorted, so the two formats of a day are adjacent
         m = match(PROCESSED_FILE, f)
         m === nothing && continue
         d = Date(something(m[1]))
+        d == previous && throw(
+            IntegrityError(
+                dir,
+                "$dir holds $d as .arrow and as .csv; a day has one file, and a " *
+                "reader of both would count its prints twice. Move one of them away",
+            ),
+        )
+        previous = d
         (from === nothing || d >= from) &&
             (to === nothing || d <= to) &&
             !(complete && isfile(_marker_path(joinpath(dir, f)))) &&
@@ -452,7 +482,9 @@ Compact raw NDJSON files into per-symbol, per-trading-day analysis files
 (`out_dir/SYMBOL/YYYY-MM-DD.csv|.arrow`), sorted by `time_ns`. An existing
 output is never destroyed: the new file takes the canonical name and the one
 it displaces is kept as a numbered backup `YYYY-MM-DD_#N.csv|.arrow`
-(safesave semantics, see `_safesave`). Returns the list of files written.
+(safesave semantics, see `_safesave`). A day already on disk in the other
+format is superseded: that file moves to its own format's backups, so the day
+keeps one file. Returns the list of files written.
 
 A day file known to hold an incomplete day gets the marker
 `<file>.incomplete.toml` beside it (`YYYY-MM-DD.csv.incomplete.toml`, keys
@@ -485,16 +517,18 @@ had any. Small inputs are compacted in memory; when the estimated footprint
 exceeds `mem_fraction` of currently free RAM the input is instead streamed
 line by line into per-(symbol, day) spill files and each group is compacted
 independently, so memory stays bounded by the largest single group.
-`max_live_heap_mb` enforces the heap ceiling per group
-([`check_live_heap`](@ref)); the in-memory path is bounded by `mem_fraction`
-alone, since a single (symbol, day), which is all a backfill compacts at a
-time, gains nothing from spilling.
+`max_live_heap_mb` is the heap ceiling of the spill pass, checked on each
+group once it is loaded and before it is sorted and written
+([`check_live_heap`](@ref)). The in-memory path is bounded by `mem_fraction`
+alone: a backfill compacts one (symbol, day) at a time, and a single group
+gains nothing from spilling.
 
 The spill pass writes a verbatim copy of the input, so it needs scratch space
-of the input's own size. `scratch_dir` places it; the default is the directory
-containing `out_dir`, not `tempdir()` (see [`SPILL_HEADROOM`](@ref)). The
-free space is checked up front and compaction refuses to start without it
-([`ResourceError`](@ref)).
+of the input's own size; a group's copy is removed once the group is loaded,
+before its day file is written. `scratch_dir` places the copy; the default is
+the directory containing `out_dir`, not `tempdir()` (see
+[`SPILL_HEADROOM`](@ref)). The free space is checked up front and compaction
+refuses to start without it ([`ResourceError`](@ref)).
 
 `footprint_factor` is the estimated in-memory size of the parsed input per
 input byte, `spill_headroom` the scratch space required as a multiple of the
@@ -812,12 +846,12 @@ function _compact_spill(
     dedup::Bool,
     tz::TimeZone,
     max_live_heap_mb::Union{Nothing,Real},
-    scratch_dir::Union{Nothing,AbstractString} = nothing,
-    spill_headroom::Real = SPILL_HEADROOM,
-    max_open_spill_files::Integer = 256,
-    compression::Symbol = :none,
-    incomplete = _no_day,
-    part_reasons::AbstractDict{<:AbstractString,<:AbstractString} = Dict{String,String}(),
+    scratch_dir::Union{Nothing,AbstractString},
+    spill_headroom::Real,
+    max_open_spill_files::Integer,
+    compression::Symbol,
+    incomplete,
+    part_reasons::AbstractDict{<:AbstractString,<:AbstractString},
 )
     bytes = sum(filesize, raw_paths; init = 0)
     mkpath(out_dir)
@@ -862,8 +896,14 @@ function _compact_spill(
         n = 0
         for key in sort!(collect(pool.seen))
             sym, date = key
-            trades = read_raw(_spill_path(pool, key))
+            spill_file = _spill_path(pool, key)
+            trades = read_raw(spill_file)
+            # The group is in memory: its scratch copy goes before its day file
+            # is written, so the two together never exceed the input's size.
+            rm(spill_file)
             dedup && (trades = _deduplicate_group(trades, key))
+            max_live_heap_mb === nothing ||
+                check_live_heap(max_live_heap_mb; context = "compaction $sym $date")
             push!(
                 written,
                 _write_group(
@@ -881,8 +921,6 @@ function _compact_spill(
                 ),
             )
             n += length(trades)
-            max_live_heap_mb === nothing ||
-                check_live_heap(max_live_heap_mb; context = "compaction $sym $date")
         end
         n
     end
@@ -932,7 +970,7 @@ prior results kept as numbered backups) without the dependency.
 """
 function _safesave(write_fn, path::AbstractString)
     base, ext = splitext(path)
-    tag = string(getpid(); base = 36) * string(rand(RandomDevice(), UInt32); base = 36)
+    tag = _partial_tag()
     partial = "$(base).$(tag).partial$(ext)"
     try
         write_fn(partial)
