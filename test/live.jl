@@ -853,6 +853,14 @@ end
     @eval struct InterruptedProvider <: MarketTickStreamer.AbstractProvider
         url::String
     end
+    @eval struct EarlyInterruptProvider <: MarketTickStreamer.AbstractProvider end
+    @eval MarketTickStreamer.stream_protocol!(
+        ch,
+        ::EarlyInterruptProvider,
+        cfg,
+        s;
+        kwargs...,
+    ) = throw(InterruptException())
     @eval MarketTickStreamer.stream_protocol!(
         ch,
         p::InterruptedProvider,
@@ -882,21 +890,33 @@ end
             @test s.stats[].reconnects == 0 && s.outcome[] === :interrupted
             # Through a whole session the sidecar says so, which is what marks
             # the days of the capture incomplete when they are compacted.
-            toml = mock_config_toml(
-                mkpath(joinpath(dir, "run"));
-                ws_port = 9999,
-                rest_port = 9998,
-                require_market_open = false,
-            )
-            write(
-                toml,
-                replace(
-                    read(toml, String),
-                    "wait_for_open = false" => "wait_for_open = false\nstop_at_market_close = false",
-                ),
-            )
+            # A session that asks nothing of a market clock.
+            function clockless(name)
+                toml = mock_config_toml(
+                    mkpath(joinpath(dir, name));
+                    ws_port = 9999,
+                    rest_port = 9998,
+                    require_market_open = false,
+                )
+                write(
+                    toml,
+                    replace(
+                        read(toml, String),
+                        "wait_for_open = false" => "wait_for_open = false\nstop_at_market_close = false",
+                    ),
+                )
+                return toml
+            end
+            toml = clockless("run")
             result = run_stream(load_config(toml); provider = InterruptedProvider(url))
             @test result.status == "interrupted" && result.ticks == 0
+            # Before any connection opened, too: a session without a connection
+            # and without a print is otherwise `failed`.
+            early = run_stream(
+                load_config(clockless("early"));
+                provider = EarlyInterruptProvider(),
+            )
+            @test early.status == "interrupted"
             sidecar = only(
                 filter(
                     endswith(".meta.toml"),

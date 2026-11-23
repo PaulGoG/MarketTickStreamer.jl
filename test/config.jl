@@ -263,11 +263,17 @@ end
         p = joinpath(dir, "c.toml")
         rejected(body) = (write(p, body); @test_throws ArgumentError load_config(p))
         loaded(body) = (write(p, body); load_config(p))
-        # A date names its year, month and day: Julia's parser alone reads
-        # "2026" as 1 January, "2026-08" as the first of the month and
-        # "20260812" as a year.
-        for s in ("2026", "2026-08", "20260812", "2026-13-01", "2026-08-02T00:00")
+        # Julia's date parser alone reads any run of digits as a year, so
+        # "20260812" loaded as the year 20260812.
+        for s in ("20260812", "2026-13-01", "2026-08-02T00:00", "26-08-02")
             rejected(base * "[backfill]\nstart_date = \"$s\"\nend_date = \"$s\"\n")
+        end
+        # A year alone, or a year and a month, is the first day of the period:
+        # it still loads, as before 2.2.1, with a warning.
+        for (s, d) in (("2026", Date(2026, 1, 1)), ("2026-08", Date(2026, 8, 1)))
+            write(p, base * "[backfill]\nstart_date = \"$s\"\nend_date = \"2026-12-31\"\n")
+            cfg = @test_logs (:warn, r"names no day") load_config(p)
+            @test cfg.backfill_start == d
         end
         unpadded = loaded(
             base * "[backfill]\nstart_date = \"2026-8-2\"\nend_date = \"2026-8-2\"\n",

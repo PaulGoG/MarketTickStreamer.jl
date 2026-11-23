@@ -134,9 +134,9 @@ function monitor_raw(
     io::IO = stdout,
 )
     0 < refresh_s <= MAX_INTERVAL_S ||
-        throw(ArgumentError("refresh_s must be in (0, 1e9], got $refresh_s"))
+        throw(ArgumentError("refresh_s must be in (0, 1e16], got $refresh_s"))
     rate_window_s <= MAX_INTERVAL_S ||
-        throw(ArgumentError("rate_window_s must be at most 1e9, got $rate_window_s"))
+        throw(ArgumentError("rate_window_s must be at most 1e16, got $rate_window_s"))
     prefix = session === nothing ? latest_session_prefix(dir) : String(session)
     st = MonitorState(dir, prefix)
     from_start || _skip_to_end!(st.tail)

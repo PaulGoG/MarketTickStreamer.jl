@@ -282,7 +282,7 @@ function _fresh_session_id(make_id, cfg::Config)
 end
 
 """
-    acquire_session_lock(data_dir) -> lock
+    acquire_session_lock(data_dir; settle_s = 1.0) -> lock
 
 One session per data tree: takes a PID-file lock at `<data_dir>/.session.lock`
 and throws a [`SessionError`](@ref) if another live process already holds it,

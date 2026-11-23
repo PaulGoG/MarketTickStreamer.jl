@@ -685,6 +685,34 @@ end
         end
         @test err isa TaskFailedException && err.task.exception isa SessionError
         @test read(lockfile, String) == "1 $(gethostname())"
+        # The file under the name is told from the starter's own by its inode:
+        # one written by another task of this process carries the same pid.
+        settling(s) = @async Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
+            acquire_session_lock(dir; settle_s = s)
+        end
+        taken() = isfile(lockfile) && startswith(read(lockfile, String), "$(getpid()) ")
+        failure(task) =
+            try
+                fetch(task)
+                nothing
+            catch e
+                e.task.exception
+            end
+        stale()
+        starter = settling(3.0)
+        @test timedwait(taken, 10.0) === :ok
+        rm(lockfile)
+        write(lockfile, "$(getpid()) $(gethostname())")
+        @test failure(starter) isa SessionError
+        @test isfile(lockfile)
+        # An interrupt during the pause closes the monitor, and the tree is free.
+        stale()
+        starter = settling(60.0)
+        @test timedwait(taken, 10.0) === :ok
+        schedule(starter, InterruptException(); error = true)
+        @test failure(starter) isa InterruptException
+        @test !isfile(lockfile)
+        close(acquire_session_lock(dir))
     end
 end
 

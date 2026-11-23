@@ -35,24 +35,23 @@ Notable changes to MarketTickStreamer.jl. The format follows
   second to compile. The warning is made after the lock is taken, and a
   producer that found a lock file waits a second and gives way if the name
   then holds another file than its own.
-- `load_config` accepted for `backfill.start_date` and `end_date` any string
-  Julia's date parser takes: `"2026"` loaded as 1 January, `"2026-08"` as the
-  first of the month and `"20260812"` as a year. A date must now name its
-  year, month and day; these three forms are refused.
-  `backfill.rate_limit_sleep_s`, `monitor.refresh_s` and
-  `monitor.rate_window_s` are bounded at 10⁹ s: `inf`, and any interval a
-  timer cannot count, loaded and failed at the first sleep or render. A
-  channel named twice in `stream.channels` is subscribed once; an unknown
-  `provider.name` is reported under that key.
+- `load_config` took for `backfill.start_date` and `end_date` any string
+  Julia's date parser takes, a run of digits included: `"20260812"` loaded as
+  the year 20260812. It is refused. `backfill.rate_limit_sleep_s`,
+  `monitor.refresh_s` and `monitor.rate_window_s` are bounded at 10¹⁶ s:
+  `inf`, and any interval a timer cannot count, loaded and failed at the
+  first sleep or render. A channel named twice in `stream.channels` is
+  subscribed once; an unknown `provider.name` is reported under that key.
 - A provider whose spec declares no historical feed, as a streaming-only
   adapter in another package would, could not load a configuration; it loads
   now, and `run_backfill` refuses it before it takes the data tree. Under
-  `backfill.source = "bulk"` the default feed is the provider's first bulk
-  feed when its REST feed is not published in bulk.
+  `backfill.source = "bulk"` the default feed is the last of the provider's
+  REST feeds that is also published in bulk, else its first bulk feed.
 - A window of `eachday` or `read_processed` with a bound inside the hour a
   daylight-saving transition skips or repeats threw a time-zone error. The
   bound is the instant of the jump, or the first occurrence of the repeated
-  hour.
+  hour. `exchange_day_start_ns` threw likewise for a calendar that sets its
+  clock forward at midnight; the date then starts at the jump.
 - A copy of the package installed in a depot that lies inside another git
   work tree recorded that repository's commit in its sidecars. An installed
   copy records `git_available = false`.
@@ -69,24 +68,37 @@ Notable changes to MarketTickStreamer.jl. The format follows
   size, which the free-space check assumed (an Arrow file of a few prints
   exceeds its lines by a fixed few kilobytes); the heap ceiling is tested on
   the loaded group, before it is sorted and written.
-- Vendor downloads: a `206` without a `Content-Range` is refused like a range
-  that starts elsewhere; a retry after a chunk's last byte no longer asks for
-  an empty range.
+- Vendor downloads: a `404` or `416` read on a connection that then broke
+  decided the outcome of the retry as well, so a file whose retry succeeded
+  was reported absent and its partial download removed; each attempt now
+  decides for itself. A `206` without a `Content-Range` is refused like a
+  range that starts elsewhere, and a retry after a chunk's last byte no
+  longer asks for an empty range.
 - A market clock whose close does not parse fails the session before its
   producer starts.
 - Figures: a median inter-arrival time that rounds to 1000 of its unit, or
   exceeds 1000 s, was annotated in exponent notation. The price panel of the
   overview figure piled the extended-hours prints of each day onto the
   session's edges, and both day axes labeled every day; the panel now draws
-  the session, and about a dozen days are labeled whatever the span.
+  the session, about a dozen days are labeled whatever the span, a day
+  without a print inside the session keeps its place, and session boundaries
+  are drawn up to 31 days.
 - `follow_source` attached with `from_start = false` while a backfill with
   `keep_raw = false` deleted a part; `scripts/compact.jl` without arguments
   on a tree without a raw directory; a trailing `--config` in
   `examples/follow_session.jl`.
 
 ### Changed
-- `monitor_raw` bounds `refresh_s` and `rate_window_s` at 10⁹ s.
-- An import logs one closing line.
+- `load_config` warns about a `backfill.start_date` or `end_date` given as a
+  year, or a year and a month (`"2026"`, `"2026-08"`): it is read as the
+  first day of that period, as before, which is hardly what was meant.
+- `acquire_session_lock` takes `settle_s`, the pause after a lock file was
+  found; `LiveSession.outcome` can read `:interrupted`.
+- `monitor_raw` bounds `refresh_s` and `rate_window_s` at 10¹⁶ s.
+- An import writes its sidecar before it hashes the vendor file, so one that
+  fails or is interrupted while hashing leaves a `failed` or `interrupted`
+  sidecar where it left none; it logs one closing line.
+- `RawSink` loses the field `n_written`, which nothing read.
 - The Documenter site is named `MarketTickStreamer.jl`.
 
 ## [2.2.0] - 2026-11-17

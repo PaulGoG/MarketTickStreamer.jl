@@ -118,6 +118,22 @@ using UnicodePlots: UnicodePlots
             ).content,
         )
         @test collect(ax.limits[][1]) ≈ [-0.27, 13.25 + 0.27]
+        # One price path per day that has a print inside the session.
+        paths(fig) = count(p -> p isa CairoMakie.Lines, first(fig.content).scene.plots)
+        @test paths(overview_figure("AAPL", [(Date(2026, 7, 29), before_open)])) == 0
+        @test paths(
+            overview_figure(
+                "AAPL",
+                [(Date(2026, 7, 29), before_open), (Date(2026, 7, 30), df)],
+            ),
+        ) == 1
+        # A session whose prints are all odd lots is drawn from them, also when
+        # a price-forming print lies before the open.
+        odd = copy(df)
+        odd.conditions .= "I"
+        odd.conditions[1] = "@"
+        odd.time_ns[1] -= 5 * 3600 * 10^9
+        @test paths(overview_figure("AAPL", [(Date(2026, 7, 30), odd)])) == 1
         @test_throws ArgumentError overview_figure("AAPL", days; session = (16.0, 9.5))
         @test_throws ArgumentError overview_figure("AAPL", days; session = (0.0, 25.0))
         @test provider_spec("alpaca").regular_session == (9.5, 16.0)
