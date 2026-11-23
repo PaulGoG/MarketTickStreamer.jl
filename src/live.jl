@@ -36,14 +36,10 @@ abstract type AbstractProvider end
                  credential_keys = String[], endpoint_keys = String[], max_page_limit,
                  regular_session, price_unit, size_unit, timestamp_unit)
 
-What the configuration layer must know about a provider *before* any provider
+What the configuration layer must know about a provider before any provider
 object exists: which feed names it accepts, the calendar its tape is filed
 under, the credentials and endpoint keys it reads, the largest REST page the
 venue serves, and the venue's regular session.
-
-Without it the config layer would have to hard-code one vendor's vocabulary:
-`provider.feed` would be validated against Alpaca's feed names for every
-provider, and a 24-hour venue would have its days cut at midnight in New York.
 
 `bulk_feeds` names the feeds the venue also publishes as daily bulk files,
 which [`bulk_trades`](@ref) downloads; it is empty for a venue without such
@@ -71,7 +67,7 @@ denominated in, as the figure axes should name them: dollars and shares on a
 US equity tape, quote asset and base asset on a crypto pair.
 
 `timestamp_unit` is the resolution of the venue's exchange timestamps as the
-adapter receives them — `"nanosecond"` on the SIP, `"microsecond"` on
+adapter receives them: `"nanosecond"` on the SIP, `"microsecond"` on
 Binance, which answers in milliseconds unless asked. It is written into
 every session sidecar, so the clock a capture was quantized to is known
 after the fact.
@@ -135,9 +131,9 @@ Construct the provider called `name` from the configuration. An adapter whose
 spec lists `credential_keys` reads them with [`load_credentials!`](@ref) here,
 so a provider that needs none never asks. Implemented per adapter.
 
-The fallback throws rather than returning anything: a fallback with a value
-would widen every caller's inferred provider type to include it, and then
-each provider method downstream would carry a branch with no matching method.
+The fallback throws: a fallback that returned a value would widen every
+caller's inferred provider type, and each provider method downstream would
+carry a branch with no matching method.
 """
 make_provider(::Val{P}, ::Config) where {P} = throw(
     ArgumentError(
@@ -148,8 +144,8 @@ make_provider(::Val{P}, ::Config) where {P} = throw(
 """
     exchange_tz(p::AbstractProvider) -> TimeZone
 
-The calendar the provider's tape is filed under — the clock that decides which
-date a print belongs to. Implemented by each provider.
+The calendar the provider's tape is filed under, which decides the date a
+print belongs to. Implemented by each provider.
 """
 function exchange_tz end
 
@@ -159,11 +155,11 @@ function exchange_tz end
 First instant of exchange date `d` on this provider's calendar, in ns since
 the epoch.
 
-A request window and the key its rows are bucketed by must come from the same
-clock. Building the window on UTC days while filing rows on exchange dates
-agrees only while the exchange sits at UTC-4, and silently loses an hour a day
-otherwise. `ZonedDateTime` resolves the offset per
-date, including across the 23- and 25-hour transition days.
+A request window and the date its rows are filed under must come from the
+same clock: windows on UTC days and rows on exchange dates agree only while
+the exchange sits at UTC-4, and lose an hour a day otherwise.
+`ZonedDateTime` resolves the offset per date, including across the 23- and
+25-hour transition days.
 """
 function exchange_day_start_ns(p::AbstractProvider, d::Date)
     tz = exchange_tz(p)
@@ -178,8 +174,8 @@ end
 
 Whether the venue never closes. `true` suppresses the market-hours guards:
 there is no open to wait for and no close to stop at, and a 24-hour venue
-has no meaningful `next_close`. The session is then
-bounded by `limits.max_session_hours` alone.
+has no meaningful `next_close`. The session is then bounded by
+`limits.max_session_hours` alone.
 """
 always_open(::AbstractProvider) = false
 
@@ -214,8 +210,7 @@ has not published yields no trades and `file = ""`. Backfilled prints carry
 venue's trade ids, `previous_id` being the `last_id` of the day before; a
 venue without ids returns `0` and `nothing`.
 
-The default method throws: a venue without bulk files cannot be asked for
-one.
+The default method throws an `ArgumentError`.
 """
 bulk_trades(p::AbstractProvider, ::AbstractString, ::Date; kwargs...) =
     throw(ArgumentError("provider $(nameof(typeof(p))) publishes no bulk files"))
@@ -259,8 +254,8 @@ Obtain via [`live_source`](@ref); request shutdown with [`stop!`](@ref).
 
 `stop` is atomic: it is written by whoever ends the session and read by the
 producer, the watchdog and the guard tasks, which run on other threads. The
-logging layer reads the same flag to mute transport-teardown noise, so the flag
-belongs to one session and not to the process.
+logging layer reads the same flag to mute transport-teardown noise, so each
+session has its own flag.
 
 `outcome` records how the producer ended: `:running` while it streams,
 `:completed` when it stopped on request or at the deadline, `:failed` after a
@@ -390,8 +385,8 @@ function _sever(conn)
     return nothing
 end
 
-# The TCP socket under `x`: `x` itself, or a field of it, or a field of one
-# of its fields: an `HTTP.Connection` holds the socket or the TLS stream
+# The TCP socket under `x`: `x` itself, a field of it, or a field of one of
+# its fields. An `HTTP.Connection` holds the socket or the TLS stream
 # (OpenSSL.jl, MbedTLS.jl) that wraps it.
 function _tcp_socket(x, depth::Int = 2)
     x isa TCPSocket && return x
@@ -466,11 +461,11 @@ Provider interface: run one connect→auth→subscribe→stream cycle, pushing
 normalized `Trade`s into `ch`. Must return on orderly close, throw
 [`FatalStreamError`](@ref) on non-retryable protocol errors, and any other
 exception on retryable transport failures. Implemented by each provider
-(`providers/alpaca.jl`, `providers/binance.jl`), both on
-[`stream_websocket!`](@ref), which takes care of the session's side of a
+(`providers/alpaca.jl`, `providers/binance.jl`). Both build on
+[`stream_websocket!`](@ref), which handles the session's side of a
 connection: the stop handshake, the watchdog, the bound on the upgrade, and
-the record of the connection as opened, which the reconnect counter and the
-session's status read. An adapter with a loop of its own calls
+the record of the connection as opened that the reconnect counter and the
+session status read. An adapter with a loop of its own calls
 [`spawn_watchdog`](@ref) once connected, which makes that record.
 
 `on_quote` and `on_bar`, when given, receive normalized [`Quote`](@ref) and
@@ -585,8 +580,8 @@ function stream_websocket!(
     try
         _websocket_request(on_frame, s, url, request_headers, key, stale_timeout_s, fatal)
     catch e
-        # A stop severs the transport, and whatever was reading it fails:
-        # that is the orderly end the stop asked for.
+        # A stop severs the transport, so whatever was reading it fails; after
+        # a stop that failure is the orderly end.
         (s.stop[] && !has_wrapped_exception(e, InterruptException)) || rethrow()
     end
     fatal[] === nothing || throw(fatal[])
@@ -683,7 +678,7 @@ end
 
 Start the live producer task. Streams ticks into `session.channel` until the
 session deadline (`limits.max_session_hours`), a [`stop!`](@ref) call, a
-fatal protocol error, or reconnection exhaustion — whichever comes first.
+fatal protocol error, or reconnection exhaustion, whichever comes first.
 The channel is closed on exit, which ends downstream consumers' loops.
 
 `on_quote` and `on_bar` are handed normalized [`Quote`](@ref) and
@@ -725,8 +720,8 @@ function live_source(
         now_ns() + round(Int64, cfg.max_session_hours * 3600 * NS_PER_SEC),
         "session deadline reached; stopping session",
     )
-    # Monitored: an error that escapes the producer is logged, not lost with
-    # an unwaited task.
+    # The producer task is never waited on; `errormonitor` logs an error that
+    # escapes it.
     errormonitor(
         Threads.@spawn begin
             attempt = 0

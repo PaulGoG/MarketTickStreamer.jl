@@ -78,7 +78,7 @@ function overview_figure end
                          non_price = NON_PRICE_CONDITIONS) -> Vector{String}
 
 Render one diagnostic figure per (symbol, trading day) found in the raw
-NDJSON `raw_paths`, saved as `out_dir/SYMBOL_YYYY-MM-DD.pdf|png` (safesave —
+NDJSON `raw_paths`, saved as `out_dir/SYMBOL_YYYY-MM-DD.pdf|png` (safesave:
 the new figure takes the canonical name, a displaced one is kept as `_#N`).
 Groups with fewer than `min_trades` ticks are skipped with an `@info`
 (distribution panels are meaningless). PNG output is written at
@@ -101,7 +101,7 @@ function save_session_figures end
 
 Render one multi-day [`overview_figure`](@ref) per symbol from the processed
 tree (`processed_dir/SYMBOL/YYYY-MM-DD.csv|.arrow`; safesave `_#N` backups
-and `.partial` files are ignored — the base file per day is authoritative
+and `.partial` files are ignored: the base file per day is authoritative
 and always the newest). `symbols`, `from`, and `to` restrict the sweep.
 Output: `out_dir/SYMBOL_<from>_<to>.pdf|png` (safesave). Days are loaded one
 symbol at a time, so memory stays bounded by one symbol's span. A symbol with

@@ -1,5 +1,5 @@
 # Binance spot adapter: public REST (aggregate trades) and the spot market
-# data WebSocket streams. No credentials — spot market data is public.
+# data WebSocket streams. Spot market data is public and needs no credentials.
 #
 # Wire references:
 #   https://developers.binance.com/docs/binance-spot-api-docs/web-socket-streams
@@ -38,7 +38,7 @@ server.
 
 `feed` selects the trade granularity: `"trade"` is every execution,
 `"aggTrade"` aggregates executions that filled at one price from a single
-taker order. They are different populations — see [`historical_trades`](@ref).
+taker order. They are different populations (see [`historical_trades`](@ref)).
 `rest` bounds its REST requests ([`RestPolicy`](@ref)).
 """
 struct BinanceProvider <: AbstractProvider
@@ -74,8 +74,8 @@ function BinanceProvider(cfg::Config)
 end
 
 # Spot trades around the clock, every day, on the UTC calendar. A crypto venue
-# has no local trading day to speak of, and UTC is the convention its own
-# timestamps and daily data dumps use.
+# has no local trading day, and UTC is the convention of its own timestamps
+# and daily data dumps.
 provider_spec(::Val{:binance}) = ProviderSpec(;
     feeds = ["trade", "aggTrade"],
     backfill_feeds = ["aggTrade"],
@@ -193,7 +193,7 @@ unit.
 one price from one taker order into a single row, so an aggregate trade is a
 taker order's fill, not an execution. Counts and inter-arrival times are
 therefore not comparable with a raw `trade` stream, and the choice belongs to
-the analysis — as with odd lots on an equity tape. Only `aggTrade` has a
+the analysis, as with odd lots on an equity tape. Only `aggTrade` has a
 time-seekable public endpoint, which is why it is the backfill feed. The
 venue's daily bulk files carry both feeds, every execution included: see
 [`bulk_trades`](@ref).
@@ -227,8 +227,9 @@ function historical_trades(
     stop_ns = exchange_day_start_ns(p, end_date + Day(1)) - 1
 
     pages = TradePages(each_page, page_limit)
-    # Seed on time; continue on id. Mixing the two in one request is what the
-    # documentation warns against, and what the hour limit applies to.
+    # The first request seeks by time, the following ones by id. Mixing the
+    # two in one request is what the documentation warns against, and what
+    # the hour limit applies to.
     query = Dict{String,String}(
         "symbol" => sym,
         "startTime" => string(fld(start_ns, 1_000_000)),
@@ -360,10 +361,10 @@ end
 # a trace.
 #
 # The ids of both dumps are consecutive per symbol, within a day and from one
-# day to the next, so `id_breaks` counts the rows whose id is not the previous
-# row's plus one, the first row measured against `previous_id` when it is
-# given: zero on a complete span, and a missing or a repeated run of rows
-# counts once. `last_id` is the id of the last row, or `previous_id` when
+# day to the next. `id_breaks` counts the rows whose id is not the previous
+# row's plus one, the first row being measured against `previous_id` when it
+# is given. It is zero on a complete span, and a missing or repeated run of
+# rows counts once. `last_id` is the id of the last row, or `previous_id` when
 # there is no row, so the reference passes over an empty day.
 function _parse_bulk_csv(
     csv::IO,
@@ -432,9 +433,9 @@ prints on the same clock.
 The zip and its `.CHECKSUM` are stored under `dest_dir/binance/SYMBOL/` and
 kept: they are the vendor's own record of the day. A stored file whose
 checksum verifies is reused; a download whose checksum does not match is
-deleted and the day fails with an [`IntegrityError`](@ref). A day the venue has not published (HTTP 404)
-returns no trades and `file = ""`, logged at `@info` — the dump of a day
-appears on the following UTC day.
+deleted and the day fails with an [`IntegrityError`](@ref). A day the venue
+has not published (HTTP 404) returns no trades and `file = ""`, logged at
+`@info`; the dump of a day appears on the following UTC day.
 
 Rows are parsed in pages of `page_rows`; `each_page` receives them and
 `trades` is then empty, otherwise the trades are accumulated in `trades`.
@@ -489,8 +490,8 @@ function bulk_trades(
             join(entries, ", "),
         ),
     )
-    # The entry's own CRC-32 is checked first, as reading it whole did; the
-    # rows are then streamed, a busy day's CSV being a gigabyte or more.
+    # The entry's own CRC-32 is checked first; the rows are then streamed, a
+    # busy day's CSV being a gigabyte or more.
     try
         zip_test_entry(archive, 1)
     catch e

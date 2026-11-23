@@ -1,7 +1,7 @@
 # TOML configuration loading and validation.
 #
-# Credentials come from the environment file the configuration
-# names, or from the process environment, and from nowhere else.
+# Credentials come from the environment file the configuration names or from
+# the process environment.
 
 """
     Config
@@ -329,8 +329,7 @@ function load_config(path::AbstractString = _default_config_path())
 
     tbl(name) = get(() -> Dict{String,Any}(), raw, name)
     provider = _cfg_value(tbl("provider"), "provider", "name", String, "alpaca")
-    # The provider decides its own vocabulary and calendar; validating either
-    # here would bake one vendor into every other.
+    # Feed names and the calendar come from the provider's spec.
     spec = provider_spec(provider)
     feed = _cfg_value(tbl("provider"), "provider", "feed", String, first(spec.feeds))
     feed in spec.feeds || throw(

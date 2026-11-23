@@ -4,15 +4,15 @@
 # day: classic pcap until August 2017, pcapng since. Each UDP payload is one
 # IEX-TP segment (a 40-byte little-endian header and a run of length-prefixed
 # messages), and a Trade Report message (`T`) is one fill with the matching
-# engine's nanosecond timestamp, so no capture clock is ever read: the pcap
-# timestamps run on TAI since November 2024. TOPS 1.5 (protocol 0x8002),
+# engine's nanosecond timestamp. The capture clock is never read (the pcap
+# timestamps have run on TAI since November 2024). TOPS 1.5 (protocol 0x8002),
 # TOPS 1.6 (0x8003) and DEEP 1.0 (0x8004) carry the same `T` layout; the 1.5
 # message trails four reserved bytes, which the framed length absorbs.
 
 const IEX_PROTOCOLS =
     Dict{UInt16,String}(0x8002 => "TOPS1.5", 0x8003 => "TOPS1.6", 0x8004 => "DEEP1.0")
-# Sale-condition flag bits of a Trade Report, named as IEX names them — the
-# same letters the consolidated tape uses for the same conditions.
+# Sale-condition flag bits of a Trade Report, named as IEX names them, with
+# the letters the consolidated tape uses for the same conditions.
 const IEX_FLAGS = ((0x80, "F"), (0x40, "T"), (0x20, "I"), (0x10, "8"), (0x08, "X"))
 # The HIST download index; the files themselves live in a Google Cloud Storage bucket.
 const IEX_HIST_API = "https://iextrading.com/api/1.0"
@@ -257,9 +257,9 @@ end
 The Trade Reports of one IEX HIST capture (`.pcap.gz` as published, or the
 decompressed pcap/pcapng) as [`Trade`](@ref) records, in capture order. The
 feed is read off the IEX-TP protocol id (TOPS 1.5, TOPS 1.6 or DEEP 1.0,
-whose Trade Report is one and the same message), not from the file
-name. Timestamps are the matching engine's, nanoseconds since the epoch;
-the capture clock is not read.
+whose Trade Report is one and the same message), not from the file name.
+Timestamps are the matching engine's, nanoseconds since the epoch; the
+capture clock is not read.
 
 Each print carries `exchange = "V"` (IEX's market-center code on the
 consolidated tape), `id` = IEX trade id (unique within the day), `tape` as
@@ -440,10 +440,10 @@ end
 """
     iex_hist_index(date; api_base = IEX_HIST_API, policy = RestPolicy()) -> Vector{Dict} | Nothing
 
-The files IEX publishes for `date` — one entry per feed with `feed`,
-`version`, `protocol`, `link` and `size` (compressed bytes) — from the HIST
-API, or `nothing` on 404: a weekend, a holiday, a day not yet published
-(files appear on the following morning).
+The files IEX publishes for `date`, from the HIST API: one entry per feed
+with `feed`, `version`, `protocol`, `link` and `size` (compressed bytes).
+Returns `nothing` on 404, which is a weekend, a holiday or a day not yet
+published (files appear on the following morning).
 """
 function iex_hist_index(
     date::Date;
@@ -478,15 +478,15 @@ end
 
 Download the HIST capture of `date` for `feed` (`"TOPS"` or `"DEEP"`,
 case-insensitive; the version is whatever IEX lists for that day) into
-`dir/iex/`, resuming an interrupted transfer, verify it against the CRC-32C
-(`x-goog-hash`) when the file host announces one, and return its path.
-`nothing` when IEX lists no files for the date, a [`VendorError`](@ref) naming
-the feeds listed when the feed is not among them. A file already present is
-reused when its size matches the index entry and, when the file host announces
-one, its CRC-32C matches the host's; otherwise it is fetched again. A fresh
-download is checked against the CRC-32C when the file host announces one; a
-download that fails the check is deleted and the call throws an
-[`IntegrityError`](@ref).
+`dir/iex/`, resuming an interrupted transfer, and return its path. Returns
+`nothing` when IEX lists no files for the date, and throws a
+[`VendorError`](@ref) naming the listed feeds when `feed` is not among them.
+
+The file is checked against the CRC-32C the file host announces
+(`x-goog-hash`), when it announces one. A file already present is reused
+when its size matches the index entry and its CRC-32C the host's; otherwise
+it is fetched again. A download that fails the check is deleted and the call
+throws an [`IntegrityError`](@ref).
 """
 function fetch_iex_hist(
     date::Date,

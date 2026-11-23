@@ -114,8 +114,8 @@ end
             @test length(processed_files(out, "AAPL"; from = Date(2025, 7, 31))) == 2
             @test length(processed_files(out, "AAPL"; to = Date(2025, 7, 30))) == 1
             @test_throws ArgumentError processed_files(out, "NVDA")
-            # One symbol: the days in order, every field intact — including
-            # an empty condition list and an all-numeric one.
+            # One symbol: the days in order, every field intact, an empty
+            # condition list and an all-numeric one included.
             got = collect(replay_source(aapl; pace = :max))
             @test got == filter(t -> t.symbol == "AAPL", expected)
             # Two symbols: merged on the clock within each day.

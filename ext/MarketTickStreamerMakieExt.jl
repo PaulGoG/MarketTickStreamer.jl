@@ -7,7 +7,7 @@
 #                      trading-time axis, day×minute activity heatmap,
 #                      intra-session waiting-time and size CCDFs)
 # Inter-arrival and size distributions are drawn as survival functions on
-# log-log axes — heavy tails are invisible in linear histograms.
+# log-log axes; a linear histogram hides a heavy tail.
 
 module MarketTickStreamerMakieExt
 

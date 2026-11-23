@@ -15,7 +15,7 @@ include(joinpath(@__DIR__, "..", "test", "vendor_bytes.jl"))
 
 const suite = BenchmarkGroup()
 
-# Deterministic synthetic tape — no RNG, so runs compare directly.
+# Deterministic synthetic tape without an RNG, so runs compare directly.
 make_trade(i) = Trade(
     iseven(i) ? "AAPL" : "MSFT",
     1_753_886_600_000_000_000 + i * 1_000_000,

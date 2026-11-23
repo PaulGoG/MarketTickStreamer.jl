@@ -188,7 +188,7 @@ function start_mock_rest(;
             sym = HTTP.getparams(req)["symbol"]
             q = HTTP.queryparams(HTTP.URI(req.target))
             # Echo the requested day back in the timestamps, as the real
-            # endpoint does — compaction files rows by their exchange date, so
+            # endpoint does. Compaction files rows by their exchange date, so
             # a mock that ignored the range would put every day in one file.
             day = first(get(q, "start", "2026-07-29T00:00:00Z"), 10)
             page2 = get(q, "page_token", "") == "page2"

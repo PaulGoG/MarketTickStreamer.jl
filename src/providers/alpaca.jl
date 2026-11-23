@@ -133,9 +133,9 @@ description for one `tape` (`"A"`, `"B"`, `"C"`). `ticktype` is `"trade"` or
 The same character carries different meanings on different tapes, and a
 vendor is free to re-map the raw CTA and UTP codes (this one delivers them
 unchanged), so the glossary is fetched from the provider that produced the
-data rather than transcribed into this package. The package holds only the
-much smaller [`NON_PRICE_CONDITIONS`](@ref) table of the codes that disqualify
-a print from a price path.
+data. The package holds only the much smaller
+[`NON_PRICE_CONDITIONS`](@ref) table of the codes that disqualify a print
+from a price path.
 
 Requires network access; call it once and cache the result.
 """
@@ -270,8 +270,8 @@ end
 Download all trades for `symbol` in `[start_date, end_date]` (inclusive,
 exchange dates) from `/v2/stocks/{symbol}/trades`, following pagination
 tokens until exhausted. `rate_sleep_s` throttles between pages (free tier:
-200 requests/min). Backfilled records get `recv_ns = 0` — they never crossed
-the wire.
+200 requests/min). Backfilled records get `recv_ns = 0`, since they never
+crossed the wire.
 
 `trades` holds the prints and `prints` counts them. With `each_page` set,
 each page is handed to `each_page(::Vector{Trade})` as it arrives and
@@ -308,7 +308,7 @@ end
                            rate_sleep_s = 0.35) -> Int
 
 Count trades on the historical tape for `symbol` over the inclusive
-RFC 3339 window `[start_str, end_str]` without retaining them — the
+RFC 3339 window `[start_str, end_str]` without retaining them. This is the
 reference side of live-capture coverage checks.
 """
 historical_trade_count(

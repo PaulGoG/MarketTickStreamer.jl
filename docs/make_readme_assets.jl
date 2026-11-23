@@ -3,8 +3,7 @@ Render the images the README and the manual show, into `docs/src/assets/`.
 
     julia docs/make_readme_assets.jl <raw .jsonl> ...
 
-Both assets come from the package's own code applied to a real capture, so
-what a reader sees is what the tool produces rather than a mock-up:
+Both assets come from the package's own code applied to a real capture:
 
   * `session_diagnostic.png` — `save_session_figures`, downscaled only.
   * `replay.gif` — a paced replay drawn frame by frame from the same
@@ -12,8 +11,7 @@ what a reader sees is what the tool produces rather than a mock-up:
     show.
 
 The GIF is assembled with the system `ffmpeg`; without it the script skips
-that asset and says so rather than failing. Committed PNG/GIF are kept small:
-they are documentation, not data.
+that asset with a warning. The committed PNG and GIF are kept small.
 
 Runs in the scripts environment, which has CairoMakie; the documentation
 build itself needs no plotting stack.
@@ -75,8 +73,8 @@ function replay_gif(raw_paths; n_frames::Int = 120, fps::Int = 12, hold_s::Real 
     Sys.which("ffmpeg") === nothing &&
         (@warn "ffmpeg not found; skipping replay.gif"; return nothing)
 
-    # Drain once at maximum rate; the animation paces the *drawing*, which is
-    # what a reader can see, rather than the wall-clock of the replay itself.
+    # Drain once at maximum rate: the frames, not the replay, set the pace a
+    # reader sees.
     trades = Trade[]
     for t in replay_source(collect(raw_paths); pace = :max)
         push!(trades, t)

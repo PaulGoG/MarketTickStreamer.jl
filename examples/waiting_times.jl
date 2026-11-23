@@ -7,12 +7,15 @@ This is the shape an external analysis pipeline takes against this package.
 It consumes a `Channel{Trade}`, the same type from the wire as from a recording:
 swap `replay_source` for `live_source` and the consumer is unchanged.
 
-Beyond the arithmetic, it shows `tee` splitting one stream into two
-independent consumers, both lossless, as a waiting-time estimator requires;
-termination by channel close, with no shutdown protocol of its own;
-single-pass accumulation, which bounds memory by the state of the estimator
-rather than by the length of the stream; and the population choice, every
-execution or price-forming prints only, made by the analysis.
+Beyond the arithmetic, it shows:
+
+- `tee` splitting one stream into two independent consumers, both lossless,
+  as a waiting-time estimator requires;
+- termination by channel close, with no shutdown protocol of its own;
+- single-pass accumulation, which bounds memory by the state of the
+  estimator and not by the length of the stream;
+- the population choice (every execution, or price-forming prints only),
+  made by the analysis.
 
 The estimator is minimal; an external pipeline supplies its own.
 """
@@ -50,8 +53,8 @@ function observe!(w::WaitingTimes, t::Trade)
     if w.previous_ns != 0
         Δt = (t.time_ns - w.previous_ns) / 1e9
         # A consolidated tape interleaves venues and reports late prints, so
-        # non-positive gaps are normal rather than corrupt. They are counted
-        # and excluded: a waiting time of zero or less is not a waiting time.
+        # non-positive gaps are normal, not corrupt. They are counted and
+        # left out of the gaps.
         Δt > 0 ? push!(w.gaps, Δt) : (w.n_nonpositive += 1)
     end
     # The reference is the latest timestamp seen. Moving it back to a late
@@ -75,12 +78,11 @@ function consume(paths::Vector{String}; price_forming_only::Bool = false, speed:
         speed > 0 ? replay_source(paths; pace = :recorded, speed = speed) :
         replay_source(paths; pace = :max)
 
-    # Both outputs are lossless. A lossy tap drops ticks when it falls behind, which is the
-    # right trade for a live dashboard and precisely the wrong one for a
-    # waiting-time distribution: dropping prints does not thin the sample
-    # evenly, it removes the bursts, which is where the distribution lives.
+    # Both outputs are lossless. A lossy tap drops ticks when it falls behind,
+    # which suits a live dashboard but not a waiting-time distribution: the
+    # dropped prints come from the bursts, so the sample is not thinned evenly.
     # Measured here at maximum replay rate, a lossy tap lost 85 000 of
-    # 1 225 831 prints — 7 % of the sample, taken from the bursts.
+    # 1 225 831 prints (7 % of the sample), taken from the bursts.
     #
     # Backpressure is free offline: a blocked output just slows the replay. On
     # a live capture the calculus differs, and an estimator that cannot keep
@@ -94,7 +96,7 @@ function consume(paths::Vector{String}; price_forming_only::Bool = false, speed:
 
     w = WaitingTimes()
     # `seen` counts what reached the tap, which is not what the estimator
-    # observed once a population filter is applied — comparing the filtered
+    # observed once a population filter is applied: comparing the filtered
     # count against the lossless output would report every filtered print as a
     # dropped one.
     seen = 0

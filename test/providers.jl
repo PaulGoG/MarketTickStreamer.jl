@@ -163,8 +163,8 @@ end
         start_mock_binance_rest(rest_port; trades_per_day = per_day, seen_units = units)
     try
         p = BinanceProvider("aggTrade", "http://127.0.0.1:$rest_port", "ws://unused")
-        # One UTC date, walked in pages of 3 — the seed request uses
-        # startTime, every later one uses fromId.
+        # One UTC date, walked in pages of 3: the seed request uses
+        # startTime, every later one fromId.
         got = historical_trades(
             p,
             "BTCUSDT",
@@ -240,8 +240,8 @@ end
             @test cfg.provider == "binance"
             @test cfg.exchange_tz == tz"UTC"
             files = run_backfill(cfg)
-            # Three consecutive dates, one file each — including the
-            # weekend, which an equity day loop would have skipped.
+            # Three consecutive dates, one file each, the weekend included;
+            # an equity day loop would have skipped it.
             @test length(files) == 3
             days = sort([basename(f)[1:10] for f in files])
             @test days == [string(MOCK_BINANCE_EPOCH + Day(i)) for i in 0:2]

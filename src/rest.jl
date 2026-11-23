@@ -14,14 +14,14 @@ const MAX_DOWNLOAD_CONNECTIONS = 8
 
 How a provider's REST requests are bounded: the read timeout and the connection
 timeout, both in whole seconds, and the number of retries on a transient
-failure. Without a read timeout a request against a server that accepts the
-connection and then goes silent blocks its task for good, and with it a
-backfill. `max_download_rate` caps the transfer rate of vendor files (Binance
-dumps, ITCH and IEX day files) in bytes per second, so a multi-gigabyte
-download does not take the whole of a shared link; `Inf` leaves it uncapped.
-`download_connections` (1 to 8) is the number of
-Range requests a vendor file is fetched on at once, for hosts whose path
-limits each TCP connection; the cap applies to their sum.
+failure. Without a read timeout, a server that accepts the connection and then
+goes silent blocks the request's task indefinitely, and a backfill with it.
+`max_download_rate` caps the transfer rate of vendor files (Binance dumps, ITCH
+and IEX day files) in bytes per second, so a multi-gigabyte download does not
+take the whole of a shared link; `Inf` leaves it uncapped.
+`download_connections` (1 to 8) is the number of Range requests a vendor file
+is fetched on at once, for hosts whose path limits each TCP connection; the
+cap applies to their sum.
 `rng` draws the jitter of the retry backoff. Two policies are equal when their
 bounds are; the generator is not compared.
 """
@@ -285,9 +285,9 @@ end
 # connections. Each connection claims the next chunk, fetches it into memory
 # (`_fetch_range`) and hands it over; chunks are appended strictly in order, so
 # `tmp` remains a prefix of the remote file and an interrupted transfer
-# resumes as a sequential one would, losing at most the chunks in memory. A
-# connection waits rather than run more than `2n` chunks ahead of the file,
-# which bounds the memory held at about `3n` chunks. The rate cap is shared
+# resumes as a sequential one would, losing at most the chunks in memory. No
+# connection runs more than `2n` chunks ahead of the file, which bounds the
+# memory held at about `3n` chunks. The rate cap is shared
 # out evenly. The first failure (after the policy's retries) ends the
 # transfer and is rethrown; requests in flight finish on their own.
 # `progress` is called with the length of `tmp` after each append.

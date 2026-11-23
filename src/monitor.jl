@@ -8,8 +8,8 @@
 """
     MonitorState
 
-Incremental tail state over one session's raw part files — a
-[`RawTail`](@ref) for the per-file offsets and carries — with cumulative
+Incremental tail state over one session's raw part files: a
+[`RawTail`](@ref) for the per-file offsets and carries, cumulative
 per-symbol counters, a tick-rate history window, the latest exchange
 timestamp seen (the tape head), and the count of lines that did not parse.
 Counters cover data ingested since attach (see `from_start`).
@@ -112,7 +112,7 @@ end
 
 Attach a live in-terminal dashboard to the session whose raw NDJSON files
 live under `dir` (most recently active session unless `session` gives an id
-prefix). Tails the part files read-only — safe to run beside a live capture
+prefix). Tails the part files read-only, so it can run beside a live capture
 or backfill. Renders every `refresh_s`: tick totals and rate, tape-head
 timestamp and lag, and per-symbol counts. With UnicodePlots loaded
 (`using UnicodePlots`) the counts become a bar chart and a rate-history plot

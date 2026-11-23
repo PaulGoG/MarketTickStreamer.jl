@@ -74,17 +74,16 @@ Fan one tick stream out to `n` independent consumers (e.g. persistence plus
 real-time analysis taps). Outputs close when `src` closes.
 
 Per-output overflow policy: a non-`lossy` output blocks the fan-out when
-full (backpressure: nothing is dropped; the setting for
-persistence). A `lossy` output drops the incoming tick instead
-when its buffer is full (use for analysis taps that must never stall the
-capture); drops are counted, reported via `on_drop(output_index, n_dropped)`
-when given, and warned on first occurrence.
+full, which applies backpressure and drops nothing (the setting for
+persistence). A `lossy` output drops the incoming tick when its buffer is
+full (the setting for analysis taps that must never stall the capture). Drops
+are counted, reported via `on_drop(output_index, n_dropped)` when given, and
+warned on first occurrence.
 
 A consumer that closes its output is dropped from the fan-out with a warning
 and the other outputs keep receiving, so an analysis tap that dies cannot end
 the persistence branch. If every output is closed the fan-out stops with an
-error record. A failure of the fan-out task itself is logged (`errormonitor`)
-rather than lost.
+error record. A failure of the fan-out task itself is logged (`errormonitor`).
 """
 function tee(
     src::Channel{Trade},
@@ -278,12 +277,12 @@ end
 """
     acquire_session_lock(data_dir) -> lock
 
-One session per data tree: takes a PID-file lock at
-`<data_dir>/.session.lock` and throws if another
-live process already holds it ([`SessionError`](@ref)): two backfills interleaving on one raw
-directory would corrupt both. The holder refreshes the file every minute; a
-lock whose process is gone is broken once it is two minutes old, and one
-whose process still runs only after ten. Release with `close(lock)`.
+One session per data tree: takes a PID-file lock at `<data_dir>/.session.lock`
+and throws a [`SessionError`](@ref) if another live process already holds it,
+since two backfills interleaving on one raw directory would corrupt both. The
+holder refreshes the file every minute; a lock whose process is gone is broken
+once it is two minutes old, and one whose process still runs only after ten.
+Release with `close(lock)`.
 """
 function acquire_session_lock(data_dir::AbstractString)
     mkpath(data_dir)
@@ -376,17 +375,16 @@ end
                        finished_utc = nothing) -> String
 
 Persist a provenance sidecar `<raw_dir>/<sid>.meta.toml` next to the
-session's raw files: session summary (id, status, pid, span, tick count,
-file list), provenance (git commit, dirty flag and whether the two could be
-read, Julia and package
-versions, hostname, the venue's timestamp unit, and the base name of a copy
-of the resolved `Manifest.toml` written alongside as `<sid>.manifest.toml`),
-a hardware
-fingerprint (CPU model and logical core count, total memory, Julia and
-BLAS thread counts, full `versioninfo` output), and the full effective
-configuration snapshot. The crash-only
-lifecycle is [`start_session_meta`](@ref) → [`finalize_session_meta`](@ref),
-reconciled at startup by [`reconcile_sessions!`](@ref).
+session's raw files. It holds the session summary (id, status, pid, span,
+tick count, file list); provenance (git commit, dirty flag and whether the
+two could be read, Julia and package versions, hostname, the venue's
+timestamp unit, and the base name of a copy of the resolved `Manifest.toml`
+written alongside as `<sid>.manifest.toml`); a hardware fingerprint (CPU
+model and logical core count, total memory, Julia and BLAS thread counts,
+full `versioninfo` output); and the full effective configuration snapshot.
+The crash-only lifecycle is [`start_session_meta`](@ref) →
+[`finalize_session_meta`](@ref), reconciled at startup by
+[`reconcile_sessions!`](@ref).
 """
 function write_session_meta(
     cfg::Config,
@@ -453,14 +451,13 @@ end
                           source = nothing, id_breaks = nothing) -> String
 
 Rewrite the running sidecar with the final status (`"completed"`,
-`"interrupted"` or `"failed"`), tick count, file list, and finish timestamp. The sidecar
-is a mutable status record: the safesave rule protects data
-products, not status metadata.
+`"interrupted"` or `"failed"`), tick count, file list, and finish timestamp.
+The sidecar is a status record and is rewritten in place; data products are
+never overwritten.
 
 `ticks` counts the prints received and written to `raw/`. A session that
 also compacts passes `ticks_processed`, the prints it wrote to `processed/`;
-the two differ by the duplicates compaction dropped, and only a session that
-compacts has the second number to give.
+the two differ by the duplicates compaction dropped.
 
 `source` describes the vendor file an import session read (name, size,
 checksum, format and the reader's statistics) and is written as the
@@ -520,7 +517,7 @@ function reconcile_sessions!(raw_dir::AbstractString)
             get(get(meta, "provenance", Dict{String,Any}()), "hostname", "") ==
             gethostname()
         pid == getpid() && continue                 # this process's own sidecar
-        samehost && pid > 0 && isdir("/proc/$pid") && continue   # genuinely running
+        samehost && pid > 0 && isdir("/proc/$pid") && continue   # still running
         s["status"] = "aborted"
         s["reconciled_utc"] = string(Dates.now(UTC))
         _rewrite_atomic(io -> TOML.print(io, meta), f)
@@ -787,7 +784,7 @@ Download historical trades for every configured symbol over
 compaction path as live data (marked by `recv_ns = 0`), and return the
 processed file paths. The sidecar records both counts: `session.ticks`, the
 prints received, and `session.ticks_processed`, the prints stored after
-compaction removed duplicates — a vendor file can repeat rows.
+compaction removed duplicates (a vendor file can repeat rows).
 
 With `backfill.keep_raw = false` (bulk source only) a day's raw parts are
 deleted once it is compacted: the checksum-verified vendor file under
@@ -800,18 +797,16 @@ as soon as that day finishes. Pages are flushed to disk as they arrive, so
 RAM stays bounded by one page and `limits.max_live_heap_mb`.
 
 `backfill.resume` depends on that granularity. The skip test asks whether a
-day is already present under `processed/`, so a day must land there the
-moment it is complete and not before: a run killed after eight of twelve hours resumes at hour eight.
-A day fetched before it has ended on the exchange calendar is the exception:
-it lands with the marker `<file>.incomplete.toml` beside it (see
-[`compact_raw`](@ref)), and a later run needs `resume = false` for that day to
-fetch it whole.
-Compacting only at the end would leave a killed run with raw data that resume
-cannot see, and the rerun would start from nothing.
+day is already present under `processed/`, so a day lands there as soon as
+it is complete and not before, and a run killed after eight of twelve hours
+resumes at hour eight. A day fetched before it has ended on the exchange
+calendar is the exception: it lands with the marker `<file>.incomplete.toml`
+beside it (see [`compact_raw`](@ref)), and a later run needs
+`resume = false` for that day to fetch it whole.
 
 An interrupted day is not compacted and is therefore downloaded again; its
-partial raw file is left on disk rather than deleted, and compaction
-deduplicates if it is ever folded in. Ctrl-C finalizes the provenance sidecar
+partial raw file stays on disk, and compaction deduplicates it if it is ever
+folded in. Ctrl-C finalizes the provenance sidecar
 as `interrupted` and returns the days that did complete. Any other error
 finalizes it as `failed` and propagates; the days compacted before the error
 remain valid and a rerun resumes after them.
@@ -948,9 +943,10 @@ end
 Run a command-line entry point's `main` with clean interrupt handling: SIGINT
 arrives as an `InterruptException` and exits without a stack trace.
 
-Delivery is best-effort under threads; recoverable state after an interrupt
-rests on the crash-only session lifecycle, not on this wrapper. Shared by the scripts under `scripts/` and the worked
-examples so that every entry point behaves the same way at the terminal.
+Delivery is best-effort under threads; recovery after an interrupt rests on
+the crash-only session lifecycle and does not depend on this wrapper. Shared
+by the scripts under `scripts/` and the worked examples, so every entry point
+behaves the same way at the terminal.
 
 # Example
 

@@ -126,11 +126,9 @@ end
             got = example_call(mod, :waiting_quantile, acc, τ)
             want = exact[max(1, round(Int, τ * length(exact)))]
             # Bin centers over five orders of magnitude: accurate to a bin
-            # width, not to the digit. A P² sketch on these gaps misses by 10x+.
+            # width, not to the digit.
             @test 0.8 * want <= got <= 1.25 * want
         end
-        # Both calls go through invokelatest: the example's methods are
-        # younger than this world, the constructor included.
         empty_acc = example_call(mod, :LiveDiagnostics)
         @test isnan(example_call(mod, :waiting_quantile, empty_acc, 0.5))
         @test_throws ArgumentError example_call(mod, :waiting_quantile, acc, 1.5)

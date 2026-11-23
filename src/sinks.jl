@@ -70,7 +70,7 @@ end
     open_raw_sink(dir, prefix; max_mb = 1024) -> RawSink
 
 Open a fresh raw NDJSON file `dir/prefix_partNNN.jsonl`. Existing files are
-never reopened or overwritten — a new part number is chosen past any that
+never reopened or overwritten; a new part number is chosen past any that
 already exist.
 """
 function open_raw_sink(dir::AbstractString, prefix::AbstractString; max_mb::Integer = 1024)
@@ -197,8 +197,9 @@ end
 """
     read_raw(paths) -> Vector{Trade}
 
-Load one or more raw NDJSON files into memory, skipping (and counting via a
-`@warn`) corrupt lines — e.g. a partial last line after a hard kill.
+Load one or more raw NDJSON files into memory. Corrupt lines, such as a
+partial last line after a hard kill, are skipped and their count is reported
+by a `@warn`.
 """
 function read_raw(paths::AbstractVector{<:AbstractString})
     trades = Trade[]
@@ -301,7 +302,6 @@ _read_processed(path::AbstractString) =
     endswith(path, ".arrow") ? DataFrame(Arrow.Table(path)) :
     CSV.read(path, DataFrame; types = PROCESSED_STRING_COLUMNS)
 
-# The prints of one processed file, in file order (ascending `time_ns`).
 # The prints of several processed files, in the order given.
 function _trades_from_processed(paths::AbstractVector{<:AbstractString})
     trades = Trade[]
@@ -311,6 +311,7 @@ function _trades_from_processed(paths::AbstractVector{<:AbstractString})
     return trades
 end
 
+# The prints of one processed file, in file order (ascending `time_ns`).
 function _trades_from_processed(path::AbstractString)
     df = _read_processed(path)
     return _columns_to_trades(
@@ -329,7 +330,7 @@ end
 _text(x) = ismissing(x) ? "" : String(x)
 
 # Function barrier: the column types are only known at run time. Condition
-# lists are shared between the prints that carry the same one — a day holds a
+# lists are shared between the prints that carry the same one; a day holds a
 # few dozen distinct lists over a million prints.
 function _columns_to_trades(
     symbol,
@@ -455,25 +456,27 @@ it displaces is kept as a numbered backup `YYYY-MM-DD_#N.csv|.arrow`
 
 A day file known to hold an incomplete day gets the marker
 `<file>.incomplete.toml` beside it (`YYYY-MM-DD.csv.incomplete.toml`, keys
-`reason` and `written`), written before the file; a compaction that writes the
-file with nothing known against it removes the marker, which so describes the
-latest write. A day is known to be incomplete when one of the prints written
-for it comes from a raw part whose session (its sidecar `<id>.meta.toml` in
-the part's directory, the longest id that prefixes the part's name) has not
-completed (`running`, `interrupted`, `failed`, `aborted`, a sidecar without a
-status or that cannot be read), or read a vendor file that ends early
-(`source.truncated`) or a capture with sequence gaps (`source.gaps`); with
-`incomplete = true` every day is. The marks are
-taken from the same read that groups the prints, so a print appended in
-between is never written unmarked. Parts without a sidecar give no grounds to
-mark anything. Every day of such a session is marked, a day the session had
-finished included, and so is a day another, whole source also covers: the
-sidecar records how a session ended, not which of its days were whole. An
-unmarked day is not thereby whole: a capture stopped by its deadline or a
-guard completes. [`processed_files`](@ref) leaves marked files out with
-`complete = true`; the canonical names and the default listings are the same
-either way. Compactions of one day are expected one at a time: a manual
-compaction does not take the data tree's lock.
+`reason` and `written`), written before the file. A compaction that writes the
+file with nothing known against it removes the marker, so the marker describes
+the latest write. A day is known to be incomplete when one of the prints
+written for it comes from a raw part whose session has not completed
+(`running`, `interrupted`, `failed`, `aborted`, a sidecar without a status or
+one that cannot be read), or read a vendor file that ends early
+(`source.truncated`) or a capture with sequence gaps (`source.gaps`). A
+part's session is its sidecar `<id>.meta.toml` in the part's directory, the
+longest id that prefixes the part's name. With `incomplete = true` every day
+is marked. The marks are taken from the same read that groups the prints, so
+a print appended in between is never written unmarked. Parts without a
+sidecar give no grounds to mark anything.
+
+Every day of such a session is marked, including a day the session had
+finished and a day that another, whole source also covers: the sidecar
+records how a session ended, not which of its days were whole. An unmarked
+day is not necessarily whole either, since a capture stopped by its deadline
+or by a guard ends as `completed`. [`processed_files`](@ref) leaves marked
+files out with `complete = true`; the canonical names and the default
+listings are the same either way. Compactions of one day are expected one at
+a time: a manual compaction does not take the data tree's lock.
 
 `dedup = true` drops exact duplicate prints (reconnection double-delivery,
 overlapping backfill/live captures, rows a vendor file repeats) via
@@ -530,9 +533,10 @@ _no_day(_, _) = nothing
 _caller_marked(_, _) = "marked by the caller"
 
 # For each raw part whose session has not completed, or read a vendor file
-# that ends early or a capture with sequence gaps, the reason; a session is found by its sidecar, the longest
-# sidecar id in the part's directory that prefixes the part's name. Sidecar
-# ids are listed once per directory and each sidecar is read once.
+# that ends early or a capture with sequence gaps, the reason. A session is
+# found by its sidecar, the longest sidecar id in the part's directory that
+# prefixes the part's name. Sidecar ids are listed once per directory and
+# each sidecar is read once.
 function _part_reasons(raw_paths::AbstractVector{<:AbstractString})
     out = Dict{String,String}()
     ids = Dict{String,Vector{String}}()              # directory → sidecar ids
@@ -910,14 +914,14 @@ preserved as the first free `<base>_#N<ext>`, `N` from 1 (a hard link where
 the filesystem allows one, a copy otherwise), and the partial file is renamed
 onto `path`. The rename replaces atomically on one filesystem, so once `path`
 exists it holds a complete file at every instant, the previous one or the new
-one, never a half-written one. Backups are numbered in order of displacement:
-`_#1` is the oldest.
+one. Backups are numbered in order of displacement: `_#1` is the oldest.
 
 If `write_fn` throws, or a later step does, the partial file is removed,
 `path` is left as it was and the exception propagates. Two writers of one
-path are not serialized: every file `path` holds is complete, each displaced
-file gets a backup slot of its own (a hard link claims the name or fails),
-but of two writes that overlap the earlier result can end up under no name.
+path are not serialized. Every file `path` holds is complete and each
+displaced file gets a backup slot of its own (a hard link claims the name or
+fails), but of two overlapping writes the earlier result can end up under no
+name.
 On a filesystem without hard links the backup is a copy into a name created
 exclusively, which keeps the slots apart; a crash during that copy leaves the
 backup incomplete, never `path`. A write killed before its rename leaves its

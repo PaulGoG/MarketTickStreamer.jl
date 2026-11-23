@@ -13,13 +13,10 @@ lossy tap and keeps no samples at all: state is a fixed set of
 and a slow consumer sheds prints instead of applying backpressure to
 acquisition.
 
-The accumulators (`Mean`, `Variance`, `Extrema`, `KHist`) do not grow with
-the stream, and the tap is lossy because acquisition must never wait for a
-consumer, and a dropped print costs a dashboard nothing. A size-weighted
-quantity, the VWAP, is accumulated as two running sums rather than as a mean
-of prices, which is not the same number. Drops are reported rather than
-hidden, so a diagnostic quietly seeing a third of the tape cannot be mistaken
-for one seeing all of it.
+The accumulators are `Mean`, `Variance`, `Extrema` and `KHist`. A
+size-weighted quantity, the VWAP, is accumulated as two running sums; a mean
+of prices is a different number. Drops are reported, so that a diagnostic
+that saw a third of the tape is not mistaken for one that saw all of it.
 
 ## Constant-memory quantile sketches on inter-arrival times
 
@@ -52,8 +49,8 @@ way, but buys little here. The raw layer already retains every print, so an
 offline analysis can read it, and uniform reservoir sampling destroys
 the arrival ordering that waiting-time, long-memory and criticality methods
 consume. It is useful for a live tail sketch over a multi-hour session, and
-there a weighted (exponential-jump) scheme beats a uniform one,
-because the tail is exactly what uniform sampling under-represents. The
+there a weighted (exponential-jump) scheme is preferable to a uniform one,
+because uniform sampling under-represents the tail. The
 deterministic sketches below cover the rest of the live diagnostic need.
 
 The estimators are ordinary; an external pipeline supplies its own.
@@ -125,7 +122,7 @@ end
     observe!(d::LiveDiagnostics, t::Trade) -> d
 
 Fold one print into the accumulators. Allocates nothing that survives the
-call, which is what lets this run beside a live capture.
+call.
 """
 function observe!(d::LiveDiagnostics, t::Trade)
     fit!(d.notional, t.price * t.size)
@@ -134,8 +131,8 @@ function observe!(d::LiveDiagnostics, t::Trade)
     if d.previous_ns != 0
         Δt = (t.time_ns - d.previous_ns) / 1e9
         # A consolidated tape interleaves venues and reports late prints, so
-        # non-positive gaps are normal rather than corrupt, and are counted
-        # instead of folded in: a waiting time of zero or less is not one.
+        # non-positive gaps are normal, not corrupt. They are counted and
+        # left out of the accumulators.
         if Δt > 0
             fit!(d.Δt_mean, Δt)
             fit!(d.Δt_var, Δt)
@@ -162,8 +159,8 @@ end
 Approximate the `τ`-quantile of the waiting-time distribution from the
 log-binned histogram, in seconds. Returns `NaN` before anything is observed.
 
-Accurate to a few percent on a real session (see the header table); the
-returned value is a bin center, so it cannot be more precise than the bin
+Accurate to a few percent on a real session (see the header table). The
+returned value is a bin center and cannot be more precise than the bin
 width; an exact order statistic needs the whole sample.
 """
 function waiting_quantile(d::LiveDiagnostics, τ::Real)
@@ -202,9 +199,9 @@ end
     consume(paths; n_bins = 200, capacity = 10_000, speed = 0.0)
         -> (diagnostics, n_persisted, n_seen)
 
-Drain a replayed session through a **lossy** diagnostic tap beside a lossless
+Drain a replayed session through a lossy diagnostic tap beside a lossless
 persistence tap, and return the accumulators together with the counts needed
-to report how much the diagnostic actually saw.
+to report how much of the stream the diagnostic saw.
 
 `speed = 0.0` replays at maximum rate, which is the condition under which a
 lossy tap does drop. Any positive value honors the recorded inter-arrival

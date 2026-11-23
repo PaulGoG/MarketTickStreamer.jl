@@ -27,11 +27,14 @@ ITCH file carries its own). With `keep_raw = false` the day's raw parts are
 deleted once the day is under `processed/`, the checksummed vendor file being
 the record, as `backfill.keep_raw` does for a bulk day.
 
-A file that ends early, as a partial download does, is imported
-to that point and logged as incomplete: the sidecar's `source.truncated` says
-so, and each day file gets the marker `<file>.incomplete.toml` beside it (see
-[`compact_raw`](@ref)), as it does for an IEX capture with sequence gaps. The configured provider contributes its calendar and timestamp
-unit only; `"alpaca"` is the host for both US-equity formats.
+A file that ends early, as a partial download does, is imported to that
+point and logged as incomplete: the sidecar's `source.truncated` says so,
+and each day file gets the marker `<file>.incomplete.toml` beside it (see
+[`compact_raw`](@ref)). An IEX capture with sequence gaps gets the same
+marker.
+
+The configured provider contributes its calendar and timestamp unit only;
+`"alpaca"` is the provider to configure for both US-equity formats.
 
 The processed tree is keyed by symbol and day with no source dimension, so
 an imported day is filed where a capture of that day would be. A source
@@ -164,8 +167,8 @@ function _run_import(
     end
 end
 
-# What an import knows against its days: a file that ends early, or a
-# capture with sequence gaps (IEX).
+# The reason an import marks its days incomplete, if any: a file that ends
+# early, or a capture with sequence gaps (IEX).
 function _import_marked(stats)
     stats.truncated && return (_, _) -> "the vendor file ends early"
     gaps = hasproperty(stats, :gaps) ? stats.gaps : 0

@@ -53,7 +53,7 @@ end
     mktempdir() do dir
         # Two trading days, one symbol. The mock serves the first day's two
         # pages and then refuses, so day one completes and day two dies
-        # mid-download — the shape of a multi-hour download that is killed.
+        # mid-download, as a multi-hour download does when it is killed.
         rest_port = freeport(9771)
         hits = Ref(0)
         rest = start_mock_rest(; port = rest_port, hits, fail_after = 2)

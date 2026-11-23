@@ -31,11 +31,12 @@ reports (`Z`, `G`, `U`), non-regular settlement (`C`, `R`, and `N`, the
 next-day trade, which both plans hold in reserve since settlement moved to
 T+1 in 2024), contingent trades (`V`, `7`), price variation (`H`),
 market-center official open and close (`Q`, `M`), and the CTA's reserved
-`8`, which its matrix bars from the last although no print carries it. On 40 symbol-days captured
-with this package the stale-price classes among them (`W`, `4`, `P`, `Z`) sit
-one to two orders of magnitude further from the last regular print than
-regular prints do; odd lots do not, and are listed because the plans bar them. The provider delivers the plans'
-codes unchanged, and its [`condition_map`](@ref) returns their glossary.
+`8`, which its matrix bars from the last although no print carries it. On 40
+symbol-days captured with this package the stale-price classes among them
+(`W`, `4`, `P`, `Z`) sit one to two orders of magnitude further from the last
+regular print than regular prints do; odd lots do not, and are listed because
+the plans bar them. The provider delivers the plans' codes unchanged, and its
+[`condition_map`](@ref) returns their glossary.
 
 Two deliberate departures from the matrices. `T` (extended hours) is not
 listed although the plans keep it from the consolidated last, which is a
@@ -80,8 +81,8 @@ the effect stays visible.
 This is an analysis-time predicate; the raw layer records every print the
 venue reported. A price path wants price-forming prints only, whereas an
 arrival process or a waiting-time distribution counts every execution, odd
-lots and contingent trades included; filtering at capture would serve the
-first and foreclose the second.
+lots and contingent trades included, which a filter at capture would
+discard.
 """
 function price_forming(t::Trade; non_price::AbstractDict = NON_PRICE_CONDITIONS)
     excluded = get(non_price, t.tape, nothing)
@@ -96,7 +97,7 @@ end
     filter_price_forming(trades; non_price = NON_PRICE_CONDITIONS) -> Vector{Trade}
 
 Keep only the prints for which [`price_forming`](@ref) holds, preserving
-order. Use on a loaded capture, never on the way in.
+order. Meant for a loaded capture; the raw layer keeps every print.
 """
 filter_price_forming(
     trades::AbstractVector{Trade};
@@ -169,13 +170,13 @@ Audit raw session files and return one row per symbol:
 - `n_trades`, `n_duplicates` (exact duplicate prints)
 - `n_price_forming` (prints that may set a price, see [`price_forming`](@ref);
   the difference from `n_trades` is odd lots, contingent and derivatively
-  priced trades, corrections and the like — present in the tape, and in the
-  arrival process, but not in a price path)
+  priced trades, corrections and the like, which are present in the tape and
+  in the arrival process but not in a price path)
 - `first_time`, `last_time` (UTC, ms precision, from exchange timestamps)
 - `n_out_of_order` (exchange timestamps decreasing in arrival order)
 - `max_gap_s` / `n_gaps` (largest / count of exchange-time gaps exceeding
-  `gap_threshold_s` — judge against the instrument's typical activity;
-  quiet symbols gap naturally)
+  `gap_threshold_s`; judge them against the instrument's typical activity,
+  since quiet symbols gap naturally)
 - `median_latency_ms` / `n_negative_latency` (receive minus exchange time,
   live-captured rows only; negative values indicate clock skew. `NaN` when
   the file is pure backfill)
@@ -237,10 +238,11 @@ free_disk_gb(path::AbstractString) = Base.diskstat(path).available / 2^30
 """
     check_live_heap(limit_mb; context = "") -> Nothing
 
-Config-gated RAM ceiling: if the live heap exceeds `limit_mb`, force a
-garbage collection; if it still exceeds the ceiling, throw a
-[`ResourceError`](@ref) naming `context`, so the process stops before the OOM killer ends it. Call from
-long accumulation loops (backfill pages, compaction groups).
+Live-heap ceiling, `limits.max_live_heap_mb` in a session. If the live heap
+exceeds `limit_mb`, force a garbage collection; if it still exceeds the
+ceiling, throw a [`ResourceError`](@ref) naming `context`, so the process
+stops before the OOM killer ends it. Call from long accumulation loops
+(backfill pages, compaction groups).
 """
 function check_live_heap(limit_mb::Real; context::AbstractString = "")
     live_mb = Base.gc_live_bytes() / 2^20

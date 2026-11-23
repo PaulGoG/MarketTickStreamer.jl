@@ -182,10 +182,10 @@ Collapse the prints that share an exchange timestamp into one [`Bar`](@ref)
 per instant: the matching event. A taker order filled against several
 resting orders is reported as one print per fill, all at the matching
 engine's single timestamp, so the print series is not the arrival process
-of orders: on a liquid crypto pair nine prints in ten follow their
-predecessor at a gap of exactly zero. The event series is that process: its `time_ns`
-are the distinct instants, and the gap `bars[i+1].time_ns - bars[i].close_ns`
-is the waiting time between events.
+of orders; on a liquid crypto pair nine prints in ten follow their
+predecessor at a gap of exactly zero. The event series is that process. Its
+`time_ns` are the distinct instants, and the gap
+`bars[i+1].time_ns - bars[i].close_ns` is the waiting time between events.
 
 Each bar spans one instant (`time_ns == close_ns`) and carries the fills'
 `open` (first), `close` (last), `high`, `low`, summed `volume`, their count

@@ -202,13 +202,13 @@ for one of its days). Prints arrive in file order, the arrival order of the
 capture, as the sink flushes them; a torn final line is carried until its
 newline arrives.
 
-The sidecar `<id>.meta.toml` records the session's lifecycle: the channel stays
-open while its status is `running` and closes once the status leaves it —
-`completed`, `interrupted`, `failed`, or `aborted` after a reconciliation —
-after every line flushed until then has been delivered. A finished session
-is therefore read whole and the channel closes at its end. The sidecar is
-required: a raw directory written by a bare [`RawSink`](@ref) has no
-lifecycle to follow.
+The sidecar `<id>.meta.toml` records the session's lifecycle. The channel
+stays open while its status is `running`; once the status leaves it
+(`completed`, `interrupted`, `failed`, or `aborted` after a reconciliation),
+the channel closes after every line flushed until then has been delivered.
+A finished session is therefore read whole and the channel closes at its
+end. The sidecar is required: a raw directory written by a bare
+[`RawSink`](@ref) has no lifecycle to follow.
 
 `from_start = true` delivers the session from its first print; `false`
 starts at the current end of the files, for a consumer that wants activity

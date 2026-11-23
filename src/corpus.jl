@@ -150,8 +150,8 @@ Iterate a selection of the processed tree one trading day at a time, as
 processed day files (`YYYY-MM-DD.csv|.arrow`, e.g. from
 [`processed_files`](@ref)); the second form selects them for one symbol or a
 vector of symbols over `[from, to]`; the third takes the tree, the calendar
-and the condition lists from a configuration. The files of one date — one
-per symbol — are loaded together and merged on `time_ns`, so a day holds
+and the condition lists from a configuration. The files of one date, one
+per symbol, are loaded together and merged on `time_ns`, so a day holds
 every requested symbol in exchange-time order. Memory is bounded by the
 busiest selected date at about [`BYTES_PER_PRINT`](@ref) per print.
 

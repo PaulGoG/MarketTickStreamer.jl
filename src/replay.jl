@@ -140,7 +140,7 @@ cannot be mixed.
 - Raw files are read whole and sorted, since arrival order is not
   chronological across venues and parts. This is the mode for a session.
 - Processed files are streamed one trading day at a time: the files of a
-  date — one per symbol — are loaded, merged on the replay clock and emitted
+  date (one per symbol) are loaded, merged on the replay clock and emitted
   before the next date is opened. Memory is bounded by the busiest date
   summed over the requested symbols, about 100 B per print: the busiest AAPL
   day of a one-year capture (2.2 M prints) holds 215 MiB. This is the mode
@@ -162,9 +162,9 @@ as well. It has no effect at `pace = :max`.
 
 The replay clock is selected by `clock`:
 
-- `:recv`: local receive time — what a live consumer experienced, network
+- `:recv`: local receive time, as a live consumer experienced it, network
   jitter included. Throws if any record lacks it.
-- `:exchange`: the venue's own timestamps — the only clock a backfilled
+- `:exchange`: the venue's own timestamps, the only clock a backfilled
   recording has.
 - `:auto` (default): `:recv` when every record carries a receive timestamp,
   otherwise `:exchange`, logged at `@info`. For processed files the choice is

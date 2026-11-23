@@ -20,7 +20,8 @@ Fields
 - `size`       : trade size (Float64 to accommodate fractional shares/crypto)
 - `exchange`   : exchange code (provider-specific, e.g. "V" = IEX)
 - `conditions` : trade condition codes (provider-specific)
-- `tape`       : tape identifier ("A"/"B"/"C" for US equities, "SPOT" for Binance; may be empty)
+- `tape`       : tape identifier ("A"/"B"/"C" for US equities, "SPOT" for
+                 Binance; may be empty)
 - `id`         : provider trade id (0 when absent)
 """
 struct Trade
@@ -39,7 +40,7 @@ end
     Quote
 
 One normalized top-of-book quote: the best bid and offer as a venue reported
-them, with both clocks kept as for [`Trade`](@ref) — `time_ns` from the
+them, with both clocks kept as for [`Trade`](@ref): `time_ns` from the
 exchange, `recv_ns` from local receipt.
 
 Quotes are parsed but not subscribed to by default, and not persisted. A

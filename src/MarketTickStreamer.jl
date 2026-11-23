@@ -7,9 +7,10 @@ append-only raw persistence, compaction to analysis-ready files, and paced
 replay of recorded sessions.
 
 Everything is driven by a TOML configuration (`config/config.toml` in a clone);
-credentials come from the environment file it names.
-Entry points: [`run_stream`](@ref), [`run_backfill`](@ref), [`run_import`](@ref),
-[`replay_source`](@ref), [`follow_source`](@ref), [`compact_raw`](@ref), [`read_processed`](@ref).
+credentials come from the environment file it names. Entry points:
+[`run_stream`](@ref), [`run_backfill`](@ref), [`run_import`](@ref),
+[`replay_source`](@ref), [`follow_source`](@ref), [`compact_raw`](@ref) and
+[`read_processed`](@ref).
 
 Plotting is optional. The diagnostic figures ([`session_figure`](@ref),
 [`overview_figure`](@ref) and their `save_*` drivers) are implemented by a
@@ -152,11 +153,11 @@ function __init__()
     return nothing
 end
 
-# The consumer-facing paths are compiled when the package is, so a session's
-# first call costs the work and not the compiler: measured before this
-# workload, the first `compact_raw` took 5 s and the first replay of a
-# processed file 4 s. Logging is muted: the workload's own messages would
-# otherwise appear as precompilation output.
+# The consumer-facing paths are compiled with the package, so a session's
+# first call does not pay for compilation. Measured before this workload, the
+# first `compact_raw` took 5 s and the first replay of a processed file 4 s.
+# Logging is muted: the workload's own messages would otherwise appear as
+# precompilation output.
 @setup_workload begin
     trades = [
         Trade(
