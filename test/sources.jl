@@ -605,3 +605,23 @@ end
     @test MarketTickStreamer._window_ns(fall, (1.5, 3.0), tz"UTC") ==
           (utc(fall, 1) + 30 * 60 * 10^9, utc(fall, 3))
 end
+
+@testset "tee: a consumer that fails while the fan-out waits on it" begin
+    # A channel bound to a consumer task that failed is closed with that
+    # task's exception, and a `put!` waiting for room on it throws the
+    # exception itself, not an `InvalidStateException`.
+    src = Channel{Trade}(10)
+    outs = tee(src, 2; capacity = 1)
+    got = Trade[]
+    reader = Threads.@spawn for t in outs[1]
+        push!(got, t)
+    end
+    foreach(i -> put!(src, sample_trade(i)), 1:3)      # the second output fills; the fan-out waits
+    @test timedwait(() -> length(got) >= 2, 10.0) === :ok
+    close(outs[2], ErrorException("consumer died"))
+    foreach(i -> put!(src, sample_trade(i)), 4:8)
+    close(src)
+    wait(reader)
+    @test got == [sample_trade(i) for i in 1:8]         # the other output saw every print
+    @test_throws DimensionMismatch tee(Channel{Trade}(1), 2; lossy = [true])
+end

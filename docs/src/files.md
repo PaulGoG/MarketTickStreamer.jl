@@ -264,8 +264,11 @@ tree admits at a time: a capture, a backfill or an import. A second producer
 on the same tree refuses to start; a lock left by a dead process is broken
 by the next one once it has gone two minutes without a refresh (a live
 producer refreshes it every minute); one written on another host, whose
-process cannot be checked, after ten. Consumers never take it, and their reads
-never wait on it.
+process cannot be checked, after ten. Breaking a stale lock is not atomic, so a
+producer that found a lock file and took the tree waits half a second and
+gives way if the file then names another process; two producers started
+within a millisecond of each other on a stale lock could otherwise both hold
+it. Consumers never take it, and their reads never wait on it.
 
 ## Versioning
 

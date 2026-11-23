@@ -615,3 +615,53 @@ end
         @test isempty(readdir(scratch))
     end
 end
+
+@testset "session lock: a starter displaced while it settles gives way" begin
+    mktempdir() do dir
+        lockfile = joinpath(dir, ".session.lock")
+        function stale()
+            write(lockfile, "99999999 $(gethostname())")
+            run(`touch -d "10 minutes ago" $lockfile`)
+            return nothing
+        end
+        # Alone, the starter that breaks a stale lock keeps the tree.
+        stale()
+        held = Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
+            acquire_session_lock(dir; settle_s = 0.05)
+        end
+        @test startswith(read(lockfile, String), "$(getpid()) ")
+        close(held)
+        @test !isfile(lockfile)
+        # Pidfile breaks a stale lock by unlinking the name, and a second
+        # starter that judged the same file stale unlinks the first one's new
+        # lock. The first then finds another pid under the name and yields,
+        # leaving that file where it is.
+        stale()
+        starter = @async Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
+            acquire_session_lock(dir; settle_s = 3.0)
+        end
+        @test timedwait(
+            () -> isfile(lockfile) && startswith(read(lockfile, String), "$(getpid()) "),
+            10.0,
+        ) === :ok
+        rm(lockfile)
+        write(lockfile, "1 $(gethostname())")
+        err = try
+            fetch(starter)
+            nothing
+        catch e
+            e
+        end
+        @test err isa TaskFailedException && err.task.exception isa SessionError
+        @test read(lockfile, String) == "1 $(gethostname())"
+    end
+end
+
+@testset "provenance: an installed copy records no git state" begin
+    # `git -C` searches upward: a depot inside some work tree would otherwise
+    # lend that repository's commit to the sidecar.
+    @test MarketTickStreamer._git_state(; installed = true) ==
+          (; commit = "unknown", dirty = false, available = false)
+    here = MarketTickStreamer._git_state(; installed = false)
+    @test here.available == (here.commit != "unknown")
+end

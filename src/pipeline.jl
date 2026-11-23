@@ -92,6 +92,8 @@ function tee(
     lossy = falses(n),
     on_drop = nothing,
 )
+    length(lossy) == n ||
+        throw(DimensionMismatch("lossy has $(length(lossy)) entries for $n outputs"))
     outs = [Channel{Trade}(capacity) for _ in 1:n]
     dropped = zeros(Int, n)
     live = trues(n)
@@ -116,8 +118,11 @@ function tee(
                         try
                             put!(o, t)
                         catch e
-                            # closed between the check and the put
-                            e isa InvalidStateException || rethrow()
+                            # Closed between the check and the put, or while
+                            # the put waited for room. A channel closed with an
+                            # exception (one bound to a consumer task that
+                            # failed) throws that exception here.
+                            isopen(o) && rethrow()
                             live[i] = false
                             @warn "tee output closed by its consumer; dropped from the fan-out" output =
                                 i
@@ -214,11 +219,13 @@ const SESSION_STAMP = dateformat"yyyymmdd-HHMMSS"
 """
     session_id(cfg::Config; feed = cfg.feed) -> String
 
-Identifier for a capture session, `<provider>_<feed>_<yyyymmdd-HHMMSS>`
-(UTC start time). Prefixes every raw part file, provenance sidecar, and log
-file the session produces. The stamp has one-second resolution; the session
-runners make it unique within a data tree by waiting for the next second
-when a session started in the current one already holds the identifier.
+Identifier for a capture session, `<provider>_<feed>_<yyyymmdd-HHMMSS>`, the
+UTC time of launch (with `stream.wait_for_open` the sidecar's `started_utc`,
+taken at the open, is later). Prefixes every raw part file, provenance
+sidecar, and log file the session produces. The stamp has one-second
+resolution; the session runners make it unique within a data tree by waiting
+for the next second when a session started in the current one already holds
+the identifier.
 """
 session_id(
     cfg::Config;
@@ -283,28 +290,66 @@ since two backfills interleaving on one raw directory would corrupt both. The
 holder refreshes the file every minute; a lock whose process is gone is broken
 once it is two minutes old, and one whose process still runs only after ten.
 Release with `close(lock)`.
+
+A starter that found a lock file and took the lock all the same waits
+`settle_s` seconds and gives way if the file then names another process.
+Pidfile breaks a stale lock by unlinking the name and creating it anew, and of
+two starters that judged the same lock stale the later one unlinks the lock the
+earlier one has just created, so both would hold the tree.
 """
-function acquire_session_lock(data_dir::AbstractString)
+function acquire_session_lock(data_dir::AbstractString; settle_s::Real = LOCK_SETTLE_S)
     mkpath(data_dir)
     path = joinpath(data_dir, ".session.lock")
-    pidlock = Pidfile.trymkpidlock(path; stale_age = 120.0)
-    pidlock === false && throw(
+    refuse() = throw(
         SessionError(
             path,
             "another session already holds $path; one capture/backfill per data " *
             "tree (stale locks from dead processes clear automatically)",
         ),
     )
+    found = ispath(path)
+    pidlock = Pidfile.trymkpidlock(path; stale_age = 120.0)
+    pidlock === false && refuse()
     # `trymkpidlock` returns `Union{LockMonitor,Bool}`; the guard above settles
     # it, but only an assertion narrows the binding for callers of `close`.
-    return pidlock::Pidfile.LockMonitor
+    held = pidlock::Pidfile.LockMonitor
+    if found
+        sleep(settle_s)
+        if !_lock_names_this_process(path)
+            close(held)             # leaves a file that is not its own in place
+            refuse()
+        end
+    end
+    return held
+end
+
+# Seconds between taking a lock that replaced an earlier file and checking
+# that it is still this process's: far longer than the stale check, warning
+# and unlink of a concurrent starter take.
+const LOCK_SETTLE_S = 0.5
+
+# Whether the pid file at `path` holds this process's pid and host, the two
+# fields Pidfile writes.
+function _lock_names_this_process(path::AbstractString)
+    fields = try
+        split(read(path, String))
+    catch e
+        e isa InterruptException && rethrow()
+        return false
+    end
+    return length(fields) >= 2 &&
+           fields[1] == string(getpid()) &&
+           fields[2] == gethostname()
 end
 
 # State of the package's git checkout: commit, dirty flag, and whether either
 # could be read. An installed copy is not a checkout and a host may lack git;
 # both yield ("unknown", false, false), and `available` says the first two are
 # placeholders.
-function _git_state()
+function _git_state(; installed::Bool = _installed_in_depot())
+    # `git -C` searches upward, so for a copy installed in a depot that lies
+    # inside some other work tree it would report that repository's commit.
+    installed && return (; commit = "unknown", dirty = false, available = false)
     git(args) = String(
         strip(read(pipeline(`git -C $(PROJECT_ROOT) $args`; stderr = devnull), String)),
     )
@@ -492,10 +537,11 @@ end
     reconcile_sessions!(raw_dir) -> Int
 
 Crash-only startup reconciliation: sidecars still marked `running` whose
-recorded process no longer exists on this host are relabeled `aborted`
-(their raw NDJSON remains valid to the last flushed line); zero-byte raw
-stubs are reported. Never deletes anything. Returns the number of sidecars
-relabeled.
+recorded process is not running on this host are relabeled `aborted` (their
+raw NDJSON remains valid to the last flushed line); zero-byte raw stubs are
+reported. A sidecar written on another host is relabeled too: the session
+runners call this holding the data tree's lock, which admits no other
+producer. Never deletes anything. Returns the number of sidecars relabeled.
 """
 function reconcile_sessions!(raw_dir::AbstractString)
     isdir(raw_dir) || return 0
@@ -549,30 +595,33 @@ SessionSummary() =
     SessionSummary("completed", 0, nothing, nothing, nothing, nothing, nothing)
 
 # The envelope shared by run_stream, run_backfill and run_import: the lock on
-# the data tree, reconciliation of stale sidecars, the free-disk gate, and the
-# sidecar's finalization on every exit. `body(summary, start_meta)` calls
-# `start_meta()` once it is about to produce data (a stream that finds the
-# market closed returns without a sidecar) and fills `summary` as it goes.
+# the data tree, reconciliation of stale sidecars, the free-disk gate, the
+# sidecar written as `running` before `body(summary)` runs, and its
+# finalization on every exit. The body fills `summary` as it goes.
 # Status: `completed` on return, `interrupted` on Ctrl-C, after which
-# `summary.result` is returned, `failed` on any other error, which propagates;
-# the body may set `failed` itself.
+# `summary.result` is returned (`result` until the body replaces it), `failed`
+# on any other error, which propagates; the body may set `failed` itself.
 function _with_session(
     body,
     cfg::Config,
     sid::AbstractString;
     on_interrupt::Union{Nothing,AbstractString} = nothing,
+    result = nothing,
 )
     started_utc = Dates.now(UTC)
     mkpath(cfg.raw_dir)
     slock = acquire_session_lock(cfg.data_dir)
     summary = SessionSummary()
-    start_meta() = (summary.meta_path = start_session_meta(cfg, sid; started_utc))
+    summary.result = result
     try
         reconcile_sessions!(cfg.raw_dir)
         _ensure_free_disk(cfg)
-        return body(summary, start_meta)
+        summary.meta_path = start_session_meta(cfg, sid; started_utc)
+        return body(summary)
     catch e
-        if e isa InterruptException
+        # Also an interrupt that ended a task the body waited on, which
+        # arrives as that task's failure.
+        if has_wrapped_exception(e, InterruptException)
             summary.status = "interrupted"
             on_interrupt === nothing || @info on_interrupt sid
             return summary.result
@@ -679,13 +728,25 @@ function _run_stream(
         clock.is_open && @info "market open" next_close = clock.next_close
     end
 
-    return _with_session(cfg, sid) do summary, start_meta
-        # What an interrupt returns before the sink exists.
-        summary.result = (; ticks = 0, raw_files = String[], status = "interrupted")
-        # The sidecar first, so a compaction that finds a part also finds its
-        # running session; both before the producer, so neither can fail
-        # with a connection already open and nothing to stop it.
-        meta_path = start_meta()
+    # Delayed feeds keep transmitting the tape tail past the bell; allow an
+    # extra minute for late-reported closing prints on top of the delay. The
+    # close is read here, so a clock answer that does not parse fails before
+    # a producer exists.
+    close_ns =
+        cfg.stop_at_market_close && clock !== nothing ?
+        rfc3339_to_ns(String(clock.next_close)) +
+        delay +
+        (delay > 0 ? 60 * NS_PER_SEC : Int64(0)) : nothing
+
+    # `result` is what an interrupt returns before the sink exists. The
+    # envelope writes the sidecar first, so a compaction that finds a part
+    # also finds its running session; the part comes before the producer, so
+    # neither can fail with a connection already open and nothing to stop it.
+    return _with_session(
+        cfg,
+        sid;
+        result = (; ticks = 0, raw_files = String[], status = "interrupted"),
+    ) do summary
         sink = open_raw_sink(cfg.raw_dir, sid; max_mb = cfg.max_raw_file_mb)
         session = try
             live_source(provider, cfg; stop)
@@ -693,16 +754,7 @@ function _run_stream(
             close_sink!(sink)
             rethrow()
         end
-        # Delayed feeds keep transmitting the tape tail past the bell; allow an
-        # extra minute for late-reported closing prints on top of the delay.
-        cfg.stop_at_market_close &&
-            clock !== nothing &&
-            schedule_close_stop!(
-                session,
-                rfc3339_to_ns(String(clock.next_close)) +
-                delay +
-                (delay > 0 ? 60 * NS_PER_SEC : Int64(0)),
-            )
+        close_ns === nothing || schedule_close_stop!(session, close_ns)
         @info "session started" id = sid raw = sink.path symbols = cfg.symbols
 
         on_flush = function (n, tot)
@@ -760,7 +812,7 @@ function _run_stream(
             summary.result =
                 (; ticks = summary.ticks, raw_files = files, status = summary.status)
             @info "session finished" status = summary.status ticks = summary.ticks files =
-                length(files) meta = meta_path frames = session.stats[].frames reconnects =
+                length(files) meta = summary.meta_path frames = session.stats[].frames reconnects =
                 session.stats[].reconnects
         end
         return summary.result
@@ -772,8 +824,12 @@ _unfinished_marked(_, _) = "fetched before the day ended"
 # Whether `day` has not yet ended on the exchange calendar of `cfg`.
 _day_not_over(cfg::Config, day::Date) = day >= trading_date(now_ns(); tz = cfg.exchange_tz)
 
-_processed_exists(cfg::Config, sym::AbstractString, day::Date) =
-    any(isfile(joinpath(cfg.processed_dir, sym, "$day.$ext")) for ext in ("csv", "arrow"))
+# Under the symbol as configured or in upper case, which is how the Binance
+# adapter and the vendor readers file a symbol given in lower case.
+_processed_exists(cfg::Config, sym::AbstractString, day::Date) = any(
+    isfile(joinpath(cfg.processed_dir, s, "$day.$ext")) for
+    s in unique((sym, uppercase(sym))), ext in ("csv", "arrow")
+)
 
 """
     run_backfill(cfg::Config; provider = nothing) -> Vector{String}
@@ -833,17 +889,16 @@ function _run_backfill(
     provider::Union{AbstractProvider,Nothing},
 )
     provider === nothing && (provider = _provider_from_config(cfg))
+    processed = String[]
     return _with_session(
         cfg,
         sid;
         on_interrupt = "interrupt; completed days are compacted and a rerun resumes",
-    ) do summary, start_meta
-        processed = String[]
-        summary.result = processed
+        result = processed,
+    ) do summary
         summary.ticks_processed = 0
         total = 0
         stored = 0
-        start_meta()
         days = session_days(provider, cfg.backfill_start, cfg.backfill_end)
         bulk = cfg.backfill_source === :bulk
         # The last trade id of each symbol's latest bulk day in this run, so
@@ -860,6 +915,9 @@ function _run_backfill(
             # finishes, which is what lets `resume` survive a kill (see the
             # docstring).
             day_prefix = "$(sid)_$(sym)_$(day)"
+            # Judged before the fetch: one that begins on an open day holds what
+            # the venue had published so far, even if it ends after midnight.
+            open_day = _day_not_over(cfg, day)
             day_sink = open_raw_sink(cfg.raw_dir, day_prefix; max_mb = cfg.max_raw_file_mb)
             n = 0
             sink_page =
@@ -910,9 +968,6 @@ function _run_backfill(
             day_files = _raw_files_with_prefix(cfg.raw_dir, day_prefix)
             n_stored = 0
             if n > 0
-                # A day fetched before it ended on the exchange calendar holds
-                # what the venue had published so far.
-                open_day = _day_not_over(cfg, day)
                 c = _compact_raw(
                     cfg,
                     day_files;

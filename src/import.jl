@@ -69,43 +69,15 @@ function run_import(
             "provider is on America/New_York (\"alpaca\")",
         ),
     )
-    sid = _fresh_session_id(
-        () -> "import_$(format)_$(Dates.format(Dates.now(UTC), SESSION_STAMP))",
-        cfg,
+    # Checked here as the readers check them, before the session takes the
+    # tree and hashes the file.
+    broken in (:drop, :mark, :keep) ||
+        throw(ArgumentError("broken must be :drop, :mark or :keep, got $(repr(broken))"))
+    tape isa Union{AbstractString,AbstractDict} || throw(
+        ArgumentError(
+            "tape must be a string or a Dict from symbol to tape, got $(typeof(tape))",
+        ),
     )
-    logger, log_io = setup_logging(cfg; session_id = sid)
-    try
-        return Logging.with_logger(logger) do
-            _run_import(
-                cfg,
-                sid,
-                path,
-                format,
-                date,
-                symbols,
-                broken,
-                tape,
-                keep_raw,
-                replace,
-            )
-        end
-    finally
-        log_io === nothing || close(log_io)
-    end
-end
-
-function _run_import(
-    cfg::Config,
-    sid::AbstractString,
-    path::AbstractString,
-    format::Symbol,
-    date::Union{Nothing,Date},
-    symbols::Union{Nothing,AbstractVector{<:AbstractString}},
-    broken::Symbol,
-    tape,
-    keep_raw::Bool,
-    replace::Bool,
-)
     day = _import_day(path, format, date)
     clash = _import_collisions(cfg, day, symbols)
     isempty(clash) ||
@@ -117,17 +89,41 @@ function _run_import(
                 "or pass replace = true to displace them into safesave backups",
             ),
         )
+    sid = _fresh_session_id(
+        () -> "import_$(format)_$(Dates.format(Dates.now(UTC), SESSION_STAMP))",
+        cfg,
+    )
+    logger, log_io = setup_logging(cfg; session_id = sid)
+    try
+        return Logging.with_logger(logger) do
+            _run_import(cfg, sid, path, format, day, symbols, broken, tape, keep_raw)
+        end
+    finally
+        log_io === nothing || close(log_io)
+    end
+end
+
+function _run_import(
+    cfg::Config,
+    sid::AbstractString,
+    path::AbstractString,
+    format::Symbol,
+    day::Date,
+    symbols::Union{Nothing,AbstractVector{<:AbstractString}},
+    broken::Symbol,
+    tape,
+    keep_raw::Bool,
+)
+    processed = String[]
     return _with_session(
         cfg,
         sid;
         on_interrupt = "interrupt; compacted output kept, sidecar marked interrupted",
-    ) do summary, start_meta
-        processed = String[]
-        summary.result = processed
+        result = processed,
+    ) do summary
         summary.ticks_processed = 0
-        summary.source = _import_source(path, format, nothing)
+        summary.source = _import_source(path, format)
         stats = nothing
-        start_meta()
         sink = open_raw_sink(cfg.raw_dir, sid; max_mb = cfg.max_raw_file_mb)
         sink_page =
             page -> begin
@@ -159,9 +155,8 @@ function _run_import(
         end
         stats.truncated &&
             @warn "the file ends early; the day is marked incomplete" file = basename(path)
-        @info "imported" format file = basename(path) messages = stats.messages prints =
-            summary.ticks stored = summary.ticks_processed broken = stats.broken
-        @info "import finished" status = summary.status files = length(processed) prints =
+        @info "import finished" status = summary.status format file = basename(path) messages =
+            stats.messages broken = stats.broken files = length(processed) prints =
             summary.ticks stored = summary.ticks_processed
         return processed
     end
@@ -177,17 +172,14 @@ function _import_marked(stats)
 end
 
 # The vendor file as the sidecar records it: identity and checksum, computed
-# once before the reader runs, and what the reader counted, merged in by
-# `_import_stats!` when it returns. `stats` is `nothing` when the reader never ran.
-function _import_source(path::AbstractString, format::Symbol, stats)
-    src = Dict{String,Any}(
-        "file" => basename(path),
-        "bytes" => filesize(path),
-        "sha256" => _sha256_hex(path),
-        "format" => string(format),
-    )
-    return stats === nothing ? src : _import_stats!(src, stats)
-end
+# once before the reader runs. What the reader counted is merged in by
+# `_import_stats!` when it returns.
+_import_source(path::AbstractString, format::Symbol) = Dict{String,Any}(
+    "file" => basename(path),
+    "bytes" => filesize(path),
+    "sha256" => _sha256_hex(path),
+    "format" => string(format),
+)
 
 function _import_stats!(src::AbstractDict, stats)
     for (k, v) in pairs(stats)
