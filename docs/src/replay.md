@@ -122,10 +122,13 @@ layer produces objects that compare equal.
 **Ordering.** Replay emits in ascending order of its clock, sorted on load:
 `recv_ns` when every record carries one, `time_ns` otherwise (`clock = :auto`;
 either can be forced). Backfilled records have `recv_ns = 0`, so a backfilled
-recording replays on exchange time. The live source emits in arrival order,
-which is *not* the same as ascending `time_ns`: a consolidated tape
-interleaves venues, and late prints are normal. Any method that needs
-monotone exchange time must sort or reject explicitly;
+recording replays on exchange time. A corpus replayed from processed day
+files is sorted one exchange date at a time: on the exchange clock the order
+holds across dates, while on the receive clock the first prints of a date can
+precede the last of the date before by the feed's latency. The live source
+emits in arrival order, which is *not* the same as ascending `time_ns`: a
+consolidated tape interleaves venues, and late prints are normal. Any method
+that needs monotone exchange time must sort or reject explicitly;
 [`session_report`](@ref) quantifies how often it happens in a given capture.
 
 **Pacing.** Each emission is scheduled against the absolute time elapsed since
@@ -392,7 +395,9 @@ read in 13 s, the sale-condition test being the larger part of it. The
 read is guarded: a selection whose prints would exceed
 `limits.read_mem_fraction` of the free memory, at 102 bytes each, is
 refused with an error that names `eachday`. The full AAPL year, 187.5
-million prints and 18 GiB, is refused in 0.6 s, before a row is read.
+million prints and 18 GiB, is refused in 0.6 s, before a row is read; a
+selection with a window or a population filter, whose size is not known
+beforehand, is checked day by day as it accumulates.
 [`trades_table`](@ref) gives any vector of prints the columnar form, in the
 schema of the processed files.
 

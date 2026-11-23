@@ -566,3 +566,42 @@ end
     close(src)
     @test isempty(collect(outs[1]))
 end
+
+@testset "replay: a stamp behind the cursor leaves the schedule alone" begin
+    # On the receive clock the first print of a day file can precede the last
+    # of the day before. With a gap cap, moving the cursor back to it would
+    # make the next gap look longer than the cap and shift every later print.
+    s = 1_000_000_000
+    sch = MarketTickStreamer.ReplaySchedule(1.0, 1.0)            # speed 1, gaps capped at 1 s
+    stamps = [0.0, 0.8, 1.5, 0.3, 1.8, 2.5]
+    due = [MarketTickStreamer._due!(sch, round(Int64, x * s)) for x in stamps]
+    @test sch.skipped_ns == 0
+    # a wall clock in Float64 seconds resolves 238 ns at this epoch
+    @test due .- sch.t0_wall ≈ stamps atol = 1e-6
+    # A gap above the cap is still shortened, measured from the latest stamp.
+    @test MarketTickStreamer._due!(sch, round(Int64, 5.5 * s)) - sch.t0_wall ≈ 3.5 atol =
+        1e-6
+    @test sch.skipped_ns == 2s
+end
+
+@testset "corpus: a window bound inside a daylight-saving hour" begin
+    ny = tz"America/New_York"
+    hours(d, w) = (r = MarketTickStreamer._window_ns(d, w, ny); (r[2] - r[1]) / 3.6e12)
+    utc(d, h) = Int64(Dates.value(DateTime(d) + Hour(h) - DateTime(1970, 1, 1))) * 1_000_000
+    # 2026-03-08: 02:00 to 03:00 does not exist. A bound inside it is the
+    # instant of the jump, 07:00 UTC.
+    spring = Date(2026, 3, 8)
+    @test MarketTickStreamer._window_ns(spring, (2.5, 4.0), ny) ==
+          (utc(spring, 7), utc(spring, 8))
+    @test hours(spring, (2.0, 4.0)) == 1.0
+    @test hours(spring, (0.0, 24.0)) == 23.0
+    # 2026-11-01: 01:00 to 02:00 occurs twice. A bound inside it is the first
+    # occurrence, so 01:30 (05:30 UTC) to 03:00 (08:00 UTC) spans 2.5 h.
+    fall = Date(2026, 11, 1)
+    @test hours(fall, (1.5, 3.0)) == 2.5
+    @test hours(fall, (0.0, 24.0)) == 25.0
+    @test hours(fall, (9.5, 16.0)) == 6.5
+    # a calendar without transitions
+    @test MarketTickStreamer._window_ns(fall, (1.5, 3.0), tz"UTC") ==
+          (utc(fall, 1) + 30 * 60 * 10^9, utc(fall, 3))
+end

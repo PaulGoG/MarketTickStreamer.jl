@@ -72,9 +72,12 @@ function _due!(sch::ReplaySchedule, s::Int64)
         sch.t0_wall = time()
         sch.last_rec = s
     end
+    # A gap is measured from the latest stamp seen. A print stamped behind it
+    # (the first of a day file can precede the last of the day before on the
+    # receive clock) is due at once and leaves the cursor where it was.
     gap = s - sch.last_rec
     gap > sch.max_gap_ns && (sch.skipped_ns += gap - sch.max_gap_ns)
-    sch.last_rec = s
+    sch.last_rec = max(sch.last_rec, s)
     return sch.t0_wall + (s - sch.t0_rec - sch.skipped_ns) / NS_PER_SEC / sch.speed
 end
 

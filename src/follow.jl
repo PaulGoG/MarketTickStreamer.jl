@@ -73,7 +73,9 @@ end
 # complete line. Read backwards in steps of `window` bytes, so the cost is that
 # of the last line.
 function _last_line_end(path::AbstractString; window::Integer = 1 << 20)
-    return open(path) do io
+    io = _open_part(path)
+    io === nothing && return Int64(0)       # deleted since it was listed
+    try
         hi = Int64(filesize(io))
         while hi > 0
             lo = max(Int64(0), hi - window)
@@ -83,6 +85,8 @@ function _last_line_end(path::AbstractString; window::Integer = 1 << 20)
             hi = lo
         end
         return Int64(0)
+    finally
+        close(io)
     end
 end
 
@@ -172,8 +176,9 @@ function _sidecar_path(dir::AbstractString, prefix::AbstractString)
     return joinpath(dir, "$(best).meta.toml")
 end
 
-# Status recorded in the sidecar; a file caught mid-rewrite reads as still
-# running and is re-read at the next poll.
+# Status recorded in the sidecar. One that cannot be read, or has no status,
+# counts as still running and is read again at the next poll; `idle_timeout_s`
+# bounds how long a follower waits on such a sidecar.
 function _sidecar_status(path::AbstractString)
     return try
         String(

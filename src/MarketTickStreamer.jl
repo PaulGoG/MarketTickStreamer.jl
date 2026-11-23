@@ -51,7 +51,17 @@ using LoggingExtras:
     LoggingExtras, EarlyFilteredLogger, FormatLogger, MinLevelLogger, TeeLogger
 using PrecompileTools: @compile_workload, @setup_workload
 using TimeZones:
-    TimeZones, @tz_str, Date, DateTime, TimeZone, UTC, ZonedDateTime, astimezone, now
+    TimeZones,
+    @tz_str,
+    Date,
+    DateTime,
+    TimeZone,
+    UTC,
+    VariableTimeZone,
+    ZonedDateTime,
+    astimezone,
+    first_valid,
+    now
 using ZipArchives: ZipReader, zip_names, zip_openentry, zip_test_entry
 
 export Config, load_config, load_credentials!

@@ -49,11 +49,18 @@ _processed_rows(path::AbstractString) =
 function _window_ns(date::Date, window::Tuple{Float64,Float64}, tz::TimeZone)
     at(h) = begin
         local_dt = DateTime(date) + Millisecond(round(Int64, h * 3_600_000))
-        utc_dt = DateTime(astimezone(ZonedDateTime(local_dt, tz), tz"UTC"))
+        utc_dt = DateTime(astimezone(_zoned(local_dt, tz), tz"UTC"))
         Int64(Dates.value(utc_dt - DateTime(1970, 1, 1))) * 1_000_000
     end
     return (at(window[1]), at(window[2]))
 end
+
+# A reading of the local clock as an instant. On the day the clock is set
+# forward, a reading inside the skipped hour is the instant of the jump; on
+# the day it is set back, one inside the repeated hour is its first
+# occurrence. `ZonedDateTime(local_dt, tz)` throws on both.
+_zoned(local_dt::DateTime, tz::TimeZone) = ZonedDateTime(local_dt, tz)
+_zoned(local_dt::DateTime, tz::VariableTimeZone) = first_valid(local_dt, tz)
 
 # `window` as the iterator stores it; `nothing` is the whole day.
 function _check_window(window::Union{Nothing,Tuple{<:Real,<:Real}})
@@ -158,8 +165,10 @@ busiest selected date at about [`BYTES_PER_PRINT`](@ref) per print.
 - `window = (open, close)`: keep the prints whose exchange time falls in
   `[open, close)` on the exchange-local clock of each day, in fractional
   hours; `(9.5, 16.0)` is the US regular session, and a provider's
-  `regular_session` can be passed directly. The bounds are resolved through `tz`
-  for every date, so they stay correct across daylight-saving transitions.
+  `regular_session` can be passed directly. The bounds are resolved through
+  `tz` for every date, so they stay correct across daylight-saving
+  transitions; a bound inside the hour a transition skips is the instant of
+  the jump, and one inside the repeated hour its first occurrence.
   `nothing` keeps the whole day. The `Config` form also accepts
   `window = :regular`, the provider's regular session.
 - `tz`: the calendar the window is read on; the `Config` form uses the
