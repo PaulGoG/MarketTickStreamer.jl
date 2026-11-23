@@ -3,8 +3,8 @@
 The public surface, grouped by pipeline stage. Each group is generated from
 one source file, so everything carrying a docstring appears here. The
 provider interface and the adapters are on the
-[providers page](api_providers.md); the analysis side — data quality,
-activity clocks, replay, corpus access and the diagnostic figures — on the
+[providers page](api_providers.md); the analysis side (data quality,
+activity clocks, replay, corpus access and the diagnostic figures) on the
 [analysis page](api_analysis.md).
 
 Names with a leading underscore are internal. They are documented for the

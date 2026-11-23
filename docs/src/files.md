@@ -64,6 +64,7 @@ are the defaults of `raw_subdir`, `processed_subdir` and `bulk_subdir`.
 | `*.partial.csv`, `*.partial.arrow`, `*.partial.toml`, `raw/<id>.meta.toml.partial`, `bulk/**/*.partial` | A write or a download in progress | Never read. |
 | `bulk/binance/<SYMBOL>/<SYMBOL>-<kind>-<YYYY-MM-DD>.zip` and `.zip.CHECKSUM` | A bulk backfill; `kind` is `aggTrades` or `trades` | Read only as the record of a day. |
 | `bulk/itch50/<file>`, `bulk/iex/<file>` | `fetch_itch50`, `fetch_iex_hist` | Read only as the record of a day. |
+| `compact_spill_*/` | A compaction that spills to disk, which removes it when it ends | Never read; one left by a killed compaction may be deleted. |
 | `.session.lock` | The producer holding the tree | Never touched. |
 
 Session logs are not part of the tree: they go to `[logging] log_dir` as
@@ -199,30 +200,40 @@ write, and renamed into place, so the canonical name is either the previous
 complete file or the new one; a write killed before its rename leaves its
 partial file, which may be deleted. A rewrite with other content keeps the
 displaced file as `<YYYY-MM-DD>_#N.<ext>`, `N` counting up from 1; a rewrite
-with the same bytes leaves the file as it was. The tree has no source dimension: an ITCH or IEX day is filed where a
-capture of that day would be, so each source (capture, ITCH, IEX) has a data
-tree of its own.
+with the same bytes leaves the file as it was. The tree has no source
+dimension: an ITCH or IEX day is filed where a capture of that day would be,
+so each source (capture, ITCH, IEX) has a data tree of its own.
 
 A day file is marked `<file>.incomplete.toml` when its compaction knew the day
-to be partial: a print written for it comes from a session that did not
-complete (its sidecar says `running`, `interrupted`, `failed` or `aborted`,
-has no status, or cannot be read), or from a vendor file that ends early
-(`source.truncated`) or an IEX capture with sequence gaps; a backfill marks a
-day it fetched before the day ended on the exchange calendar. The file keeps
-its canonical name. The marker is written before the file, so a partial day
-from such a source is never on disk unmarked, and a later compaction that
-writes the file with nothing known against it removes the marker, which so
-describes the latest write. Every day of a session that did not complete is
-marked, those it had finished and those another source covers whole
-included: the sidecar records how a session ended, not which of its days
-were whole. An unmarked file is not thereby a whole day: a capture stopped
-by its deadline or by a guard completes, and a bulk day with trade-id breaks
-is counted in its sidecar, not marked; a session's coverage is its own
-record, its sidecar times and [`coverage_report`](@ref) against the
-historical tape. Markers change nothing else: a backfill's resume skips a
-marked day and an import refuses one without `replace = true`, as for any
-day in the tree. Compactions of one day are expected one at a time; a manual
-compaction does not take the data tree's lock.
+to be partial:
+
+- a print written for it comes from a session that did not complete (its
+  sidecar says `running`, `interrupted`, `failed` or `aborted`, has no
+  status, or cannot be read);
+- a print comes from a vendor file that ends early (`source.truncated`) or
+  from an IEX capture with sequence gaps;
+- a backfill fetched the day before it ended on the exchange calendar;
+- the caller said so (`compact_raw(...; incomplete = true)`).
+
+The file keeps its canonical name. The marker is written before the file, so
+a partial day from such a source is never on disk unmarked. A later
+compaction that writes the file with nothing known against it removes the
+marker, which therefore describes the latest write. A compaction that fails
+after placing the marker leaves the earlier file marked, so a marker may
+stand beside a whole day, but a day known to be partial is never without
+one. Every day of a session that did not complete is marked, including the
+days it had finished and those another source covers whole, because the
+sidecar records how a session ended and not which of its days were whole.
+
+A file without a marker is not necessarily a whole day. A capture stopped by
+its deadline or by a guard completes, and a bulk day with trade-id breaks is
+counted in its sidecar without being marked. The coverage of a session is
+read from its own record: the sidecar's times, and
+[`coverage_report`](@ref) against the historical tape. Markers change
+nothing else: a backfill's resume skips a marked day and an import refuses
+one without `replace = true`, as for any day in the tree. Compactions of one
+day are expected to run one at a time; a manual compaction does not take the
+data tree's lock.
 
 ## Vendor and bulk files
 

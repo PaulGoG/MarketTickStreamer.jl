@@ -43,24 +43,26 @@ The central abstraction is `Channel{Trade}`: live, replay and follow produce
 the same typed stream, so a real-time analysis consumer developed against
 `replay_source` runs unchanged against the live feed or against a capture
 running in another process. Backfill and import write through the same sink
-as a capture, so everything downstream of the raw layer is one path.
-Backpressure is intrinsic: bounded channels block producers instead of
-dropping or buffering unboundedly.
+as a capture, so everything downstream of the raw layer is one path. The
+channels are bounded: a slow consumer blocks its producer, and nothing is
+dropped or buffered without limit.
 
 ## 2. Canonical schema
 
 `Trade(symbol, time_ns, recv_ns, price, size, exchange, conditions, tape, id)`
-— an immutable struct with concrete field types, provider-normalized.
+is an immutable struct with concrete field types, the same for every
+provider.
 
-- **Timestamps are `Int64` nanoseconds since the UNIX epoch (UTC).**
-  `Dates.DateTime` is millisecond-resolution and would silently truncate the
-  nanosecond RFC 3339 timestamps Alpaca sends; a custom parser
-  (`rfc3339_to_ns`) round-trips losslessly (tested at every fractional
-  width). This representation maps directly onto Arrow `Timestamp(ns)`.
-- Two clocks per tick: `time_ns` (exchange event time) and `recv_ns` (local
-  receipt). Their difference measures pipeline latency; replay paces on its
-  clock, receipt time when every record has one and exchange time otherwise,
-  either forced by `clock`; `recv_ns = 0` marks backfilled rows.
+- Timestamps are `Int64` nanoseconds since the UNIX epoch (UTC).
+  `Dates.DateTime` has millisecond resolution and would truncate the
+  nanosecond RFC 3339 timestamps Alpaca sends, so the package parses them
+  itself (`rfc3339_to_ns`), exactly at every fractional width. The integers
+  map directly onto Arrow `Timestamp(ns)`.
+- Each tick carries two clocks, `time_ns` (exchange event time) and
+  `recv_ns` (local receipt), whose difference measures pipeline latency.
+  `recv_ns = 0` marks backfilled rows. Replay paces on receipt time when
+  every record has one and on exchange time otherwise, unless `clock`
+  selects either.
 - The venue's own resolution is recorded: the SIP delivers nanoseconds;
   Binance delivers milliseconds unless asked for microseconds, which the
   adapter asks for. Every session sidecar carries
@@ -68,25 +70,24 @@ dropping or buffering unboundedly.
 
 ## 3. Persistence: two layers
 
-1. **Raw** — append-only NDJSON, one `Trade` per line, session-stamped
-   filenames with size-based part rolling, never reopened or overwritten.
-   Chosen over binary formats for crash-tolerance (a torn final line loses
-   one tick, and `read_raw` skips it with a warning — tested) and
-   human-inspectability. Writes are batched (`flush_max_ticks` /
-   `flush_interval_s`) to keep I/O off the hot path.
-2. **Processed** — per-symbol, per-trading-day (the provider's calendar: New
-   York for Alpaca, UTC for Binance) CSV or Arrow, time-sorted, produced by
-   `compact_raw`. CSV is the default; Arrow is one config switch away when
-   volume demands it. A rewrite never destroys a result: the new file takes the
-   canonical name and the file it displaces is kept as a numbered backup,
-   `_#1`, `_#2`, …, so the canonical path is always the newest data; a
-   rewrite with the same bytes leaves the file as it was. These
-   are the semantics of DrWatson's `safesave`, implemented in a dozen lines
-   instead of taken as a dependency, because DrWatson would bring JLD2 and
-   FileIO's loader stack into a library whose processed formats are CSV and
-   Arrow. The write goes to a temporary file of its own first and is renamed
-   into place, so neither a reader nor a second writer of the same day sees a
-   half-written file.
+1. Raw: append-only NDJSON, one `Trade` per line, session-stamped filenames
+   with size-based part rolling, never reopened or overwritten. Chosen over
+   binary formats because it tolerates a crash (a torn final line loses one
+   tick, and `read_raw` skips it with a warning) and can be inspected by
+   eye. Writes are batched (`flush_max_ticks` / `flush_interval_s`) to keep
+   I/O off the hot path.
+2. Processed: per-symbol, per-trading-day (the provider's calendar: New York
+   for Alpaca, UTC for Binance) CSV or Arrow, time-sorted, produced by
+   `compact_raw`. CSV is the default and `storage.processed_format` selects
+   Arrow for larger volumes. A rewrite never destroys a result: the new file
+   takes the canonical name and the file it displaces is kept as a numbered
+   backup, `_#1`, `_#2`, …, so the canonical path is always the newest data;
+   a rewrite with the same bytes leaves the file as it was. These are the
+   semantics of DrWatson's `safesave`, implemented here because DrWatson
+   would bring JLD2 and FileIO's loader stack into a library whose processed
+   formats are CSV and Arrow. The write goes to a temporary file of its own
+   first and is renamed into place, so neither a reader nor a second writer
+   of the same day sees a half-written file.
 
 The processed layer is read back through three functions. `corpus_inventory`
 lists what the tree holds per symbol from file metadata alone; `eachday`
@@ -95,7 +96,7 @@ on exchange time, with an exchange-local time-of-day window and the
 price-forming population as options; `read_processed` materializes a
 selection and refuses one that would exceed `limits.read_mem_fraction` of
 the free memory. Every day is loaded in full before its filters apply, so
-the memory bound is the busiest selected date — the bound replay has.
+the memory bound is the busiest selected date, as for replay.
 
 A venue's daily bulk files are a third input to the raw layer. With
 `backfill.source = "bulk"` the backfill fetches Binance's dump of each day,
@@ -117,8 +118,8 @@ channel; the sink task drains it with a poll/batch loop
 channel is the only shutdown signal: producer exit (deadline, fatal error,
 retry exhaustion, `stop!`) closes it, the sink drains what remains, flushes,
 and returns its count. Ctrl-C is converted to `InterruptException`
-(`Base.exit_on_sigint(false)`) and takes the same path — no data is lost on
-interrupt (tested).
+(`Base.exit_on_sigint(false)`) and takes the same path, so an interrupt
+loses no data.
 
 ## 5. Failure handling
 
@@ -132,15 +133,15 @@ interrupt (tested).
 - **Session deadline**: `limits.max_session_hours` is enforced by a guard
   task, so it also ends a connection that never drops; the reconnect loop
   alone would only test it between connections.
-- **Fatal vs retryable**: Alpaca error codes 401–406 and 409–411 (bad auth,
-  connection limit, bad subscription) abort immediately, since retrying them
-  risks a ban. The exception is a connection limit (406) met after an
-  earlier connection of the session opened: the server most likely still
-  counts that connection, which the watchdog cut, so it is retried. Both
-  adapters return the fatal signal from their frame handler, and
+- **Fatal and retryable errors**: Alpaca error codes 401–406 and 409–411
+  (bad auth, connection limit, bad subscription) abort immediately, since
+  retrying them risks a ban. The exception is a connection limit (406) met
+  after an earlier connection of the session opened: the server most likely
+  still counts that connection, which the watchdog cut, so it is retried.
+  Both adapters return the fatal signal from their frame handler, and
   `stream_websocket!` throws it after the connection returns, since an
-  exception thrown inside the handler arrives wrapped and would be retried as
-  a disconnect. Both paths are tested against the mocks.
+  exception thrown inside the handler arrives wrapped and would be retried
+  as a disconnect.
 - **Stale connections**: HTTP.jl 1.x websockets have no read-idle timeout, so
   a watchdog task force-closes the socket after `stream.stale_timeout_s`
   without a frame, triggering the normal reconnect path. The answer to the
@@ -151,9 +152,8 @@ interrupt (tested).
   next open instead of exiting, before the session takes the data tree's
   lock; `stream.stop_at_market_close` schedules a
   stop at `next_close` so an unattended session does not idle on a dead
-  overnight connection. Half-days and holidays need no special case,
-  because the clock endpoint, not a local calendar, is authoritative
-  (early-close behavior is tested end-to-end against a mock clock).
+  overnight connection. Half-days and holidays need no special case: the
+  schedule is read from the clock endpoint and no local calendar is kept.
   Delayed feeds (`delayed_sip`, 15 min) shift both guards by the feed
   delay via `feed_delay_ns`: the open-wait extends past the silent
   post-open window and the close guard runs to `next_close + delay + 65 s`
@@ -180,29 +180,29 @@ interrupt (tested).
   files open and so stays inside the file-descriptor limit however many
   symbol-days the input spans; a channel-occupancy warning fires when the
   sink lags the stream (>80% capacity).
-- **REST requests are bounded**: every request carries a read and a
+- **REST requests**: every request carries a read and a
   connection timeout (`[rest]`), so a server that accepts a connection and
   goes silent cannot block a backfill for good. Timeouts, refused or dropped
   connections and 429/5xx are retried with exponential backoff, honoring
   `Retry-After` up to ten minutes; anything else fails at once.
-- **No process-global session state**: a session runs under its own logger
-  (`with_logger`), which it closes when it ends, and its stop flag is an
-  atomic owned by the session and shared with that logger to mute transport
-  teardown noise. The caller's global logger is untouched, and two sessions
-  in one process neither share a log nor mute each other.
-- **A dead analysis tap cannot end persistence**: `tee` drops an output its
-  consumer closed, with a warning, and keeps feeding the others; the fan-out
-  task is monitored, so its own failure is logged rather than lost.
+- **Session state**: none of it is process-global. A session runs under its
+  own logger (`with_logger`), which it closes when it ends, and its stop
+  flag is an atomic owned by the session and shared with that logger to mute
+  transport teardown noise. The caller's global logger is untouched, and two
+  sessions in one process neither share a log nor mute each other.
+- **Analysis taps**: `tee` drops an output its consumer closed, with a
+  warning, and keeps feeding the others, so a dead tap does not end
+  persistence. The fan-out task is monitored, and its own failure is logged.
 - **Data integrity**: compaction removes exact duplicate prints
   (reconnection double-delivery, overlapping backfill/live captures);
   `session_report` audits every capture for duplicates, exchange-time gaps,
   out-of-order delivery, and clock skew (negative receive latency) before
-  the data is used for science.
-- **Provenance, crash-only**: every session (stream, backfill, import)
-  writes its `<session_id>.meta.toml` sidecar at start
-  (`status = "running"`; git commit + dirty flag, versions, hostname, pid,
-  hardware fingerprint — CPU model/cores, memory, thread and BLAS-thread
-  counts, `versioninfo` — and the full config snapshot) and finalizes it at
+  the data is analyzed.
+- **Provenance**: every session (stream, backfill, import) writes its
+  `<session_id>.meta.toml` sidecar at start (`status = "running"`; git
+  commit and dirty flag, versions, hostname, pid, the hardware fingerprint
+  of CPU model and cores, memory, thread and BLAS-thread counts and
+  `versioninfo`, and the full config snapshot) and finalizes it at
   exit (`completed` / `interrupted` / `failed`, counts: prints received, and
   for a backfill or an import the prints stored after compaction removed
   duplicates). A copy of the resolved `Manifest.toml` is written beside it
@@ -218,13 +218,14 @@ interrupt (tested).
   when the configuration names none and recorded in the sidecar's config
   snapshot, so a session's retry and reconnect schedule can be replayed
   from its sidecar.
-- **Backfill**: per-(symbol, trading-day) download loop with
-  page-streamed sink writes — memory is bounded by one REST page plus the
-  configured heap ceiling (`limits.max_live_heap_mb`, auto-GC then loud
-  stop); `backfill.resume` skips pairs already processed, so a rerun after
-  any abort resumes. Compaction spills to per-group files when the input
-  exceeds the in-memory budget, bounding memory by the largest single
-  (symbol, day) group. Those files go beside `out_dir`, never to `tempdir()`:
+- **Backfill**: per-(symbol, trading-day) download loop with page-streamed
+  sink writes, so memory is bounded by one REST page plus the configured
+  heap ceiling (`limits.max_live_heap_mb`: a full GC, then a stop with a
+  `ResourceError`); `backfill.resume` skips pairs already processed, so a
+  rerun after any abort resumes. Compaction spills to per-group files when
+  the input exceeds the in-memory budget, bounding memory by the largest
+  single (symbol, day) group. Those files go beside `out_dir`, never to
+  `tempdir()`:
   the spill copies the whole input once, and where `/tmp` is a tmpfs, the
   default on several systemd distributions, it is RAM, so the bounded-memory
   path would otherwise be the one that exhausts memory. The free space is
@@ -240,10 +241,10 @@ interrupt (tested).
 | `HTTP.jl` pinned to 1.x | 2.x is a rewrite on a new transport (Reseau.jl backend). The stale-connection watchdog exists because 1.x WebSockets have no read-idle timeout, and the chunked downloads because 1.x bounds a whole request by one timeout; both go with the migration, which otherwise renames keyword arguments (`readtimeout`→`read_idle_timeout` etc.). |
 | `JSON.jl` 1.x (since 0.3.0; JSON3 before) | JSON3 is deprecated in General and caps Parsers at 2, which blocks CSV 1.x. Measured with JSON.jl 1.10 against JSON3, on one core: a raw line parses straight into `Trade` four times faster, with no `SubString` penalty, and a 10 000-trade REST page about 80 times faster, the JSON3 cost being quadratic in page length. |
 | No `WebSockets.jl` | Abandoned (last release 2022). `HTTP.WebSockets` is the ecosystem standard. |
-| No `AlpacaMarkets.jl` | REST-only, single maintainer, pins that conflict with a modern stack. Direct HTTP+JSON is a few hundred lines and fully under test. |
+| No `AlpacaMarkets.jl` | REST-only, single maintainer, pins that conflict with a modern stack. The direct HTTP and JSON code is a few hundred lines. |
 | `PrecompileTools.jl` | The consumer-facing paths are compiled with the package; the first `compact_raw` and the first processed-file replay cost seconds of compilation before. |
 | `DotEnv.jl` 1.0 (`load!`) | Registered and stable, with a narrow scope. |
-| Custom ns timestamps over `NanoDates.jl` | One regex + integer math, zero deps on the hot path; NanoDates remains an option as a display layer. |
+| Custom ns timestamps over `NanoDates.jl` | One regex and integer arithmetic, with no dependency on the hot path; NanoDates remains an option as a display layer. |
 | Hand-rolled backoff | `Base.retry`/Retry.jl do not fit a stateful reconnect loop with attempt-reset semantics. |
 | Plotting as package extensions | CairoMakie and UnicodePlots are weak dependencies. A consumer that feeds an estimator from `Channel{Trade}` should not install or precompile a plotting stack to do it; the figures load with `using CairoMakie`, the monitor's plots with `using UnicodePlots`. |
 | No `MathTeXEngine.jl` dependency | The Computer Modern faces come from Makie's `theme_latexfonts()`, which wraps the same fonts. |
@@ -253,10 +254,10 @@ interrupt (tested).
 `test/mock_alpaca.jl` implements the Alpaca REST + WebSocket v2 protocol
 in-process (scriptable per-connection behavior: batches, then fatal codes),
 and `test/mock_binance.jl` the Binance REST and WebSocket APIs and the
-daily bulk files with their checksums, so the full pipeline — connect,
-auth, subscribe, stream, reconnect, fatal stop, batched persistence,
-backfill, compaction, replay — runs end-to-end on both venues with no
-credentials and no network. The vendor readers and the import run on
+daily bulk files with their checksums, so the full pipeline (connect, auth,
+subscribe, stream, reconnect, fatal stop, batched persistence, backfill,
+compaction, replay) runs end-to-end on both venues with no credentials and
+no network. The vendor readers and the import run on
 synthetic ITCH 5.0 and IEX HIST files built by the suite, and the resumable
 downloader against a mock file host. Unit tests cover timestamp round-trips
 at every fractional width, offset normalization, config validation, sink
@@ -279,12 +280,12 @@ no titles, `HH:MM` exchange-time axes, log ticks at powers of ten with
 2×/5× intermediates and `10⁰ → 1`, `10¹ → 10` collapse, in-axis count and fitted
 tail-exponent annotations):
 
-- **Session figures** — one 2×2 panel per (symbol, trading day) from raw
+- **Session figures**: one 2×2 panel per (symbol, trading day) from raw
   captures: price path (min–max decimated), trades per minute, and
   survival functions (CCDFs) of inter-arrival times and trade sizes on
   log-log axes: the distributions whose heavy tails matter most to the
   methods the package serves, and which linear histograms hide.
-- **Overview figures** — one panel per symbol across many days from the
+- **Overview figures**: one panel per symbol across many days from the
   processed tree: price on a concatenated *trading-time* axis (overnight
   gaps removed, session boundaries marked), a day × session-minute
   activity heatmap, and pooled intra-session waiting-time and size CCDFs;

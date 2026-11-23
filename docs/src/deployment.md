@@ -47,8 +47,8 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=%h/MarketTickStreamer
 ExecStart=%h/.juliaup/bin/julia --threads=auto scripts/stream.jl config/config.toml
-# The package handles SIGINT as a clean interrupt: the sidecar is finalized
-# as "interrupted" and the raw files are flushed. SIGTERM is not handled this way.
+# On SIGINT the session flushes the raw files and finalizes its sidecar as
+# "interrupted". SIGTERM is not handled this way.
 KillSignal=SIGINT
 TimeoutStopSec=120
 Restart=on-failure

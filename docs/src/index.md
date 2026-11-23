@@ -1,4 +1,4 @@
-# MarketTickStreamer
+# MarketTickStreamer.jl
 
 Provider-agnostic tick-by-tick market data acquisition in pure Julia: live
 WebSocket streaming, historical backfill from REST pages or the venue's
@@ -19,10 +19,10 @@ The package supplies a real-time data flux for testing time series analysis
 methods (waiting-time distributions, long-memory estimation, physics-informed
 models, criticality in tick arrival) on empirical data. It delivers ordered,
 deduplicated, provenance-tagged prints through a `Channel{Trade}` and a file
-layer, and implements no estimators of its own.
-
-Numbers computed inside the acquisition layer could not be audited
-independently of the method under test, so the layer computes none.
+layer, and offers no estimators: a number computed inside the acquisition
+layer could not be audited independently of the method under test. The one
+fitted quantity is the tail exponent that the diagnostic figures annotate, a
+visual check of tail weight and not a result.
 
 ## Status
 
@@ -78,32 +78,31 @@ and passes its own path to `load_config`.
 
 ## Acquisition model
 
-- **Crash-only.** The raw layer is append-only NDJSON, one normalized
-  `Trade` per line, flushed on a timer and a count. A killed process loses
-  at most the unflushed tail; the next start reconciles the session
-  sidecars. No shutdown step has to succeed for the data to be safe.
-- **Nanosecond integers.** Timestamps are `Int64` nanoseconds since the
-  UNIX epoch from the wire to the file, never floating point, never a
-  locale-dependent string.
-- **Two clocks.** Every print carries both the exchange timestamp and the
-  local receipt timestamp, so feed latency can be measured after the fact.
+The raw layer is crash-only: append-only NDJSON, one normalized `Trade` per
+line, flushed on a timer and a count. A killed process loses at most the
+unflushed tail, and the next start reconciles the session sidecars, so no
+shutdown step has to succeed for the data to be safe.
 
-## Where to go next
+Timestamps are `Int64` nanoseconds since the UNIX epoch from the wire to the
+file, never floating point or a locale-dependent string. Every print carries
+the exchange timestamp and the local receipt timestamp, so feed latency can
+be measured after the fact.
 
-- [Architecture](architecture.md) — data flow, persistence layers,
+## Contents
+
+- [Architecture](architecture.md): data flow, persistence layers,
   concurrency, failure handling, and the reasoning behind each dependency.
-- [Usage & Configuration](usage.md) — the entry points and every key of
+- [Usage & Configuration](usage.md): the entry points and every key of
   `config/config.toml`.
-- [Replay & Analysis Interfaces](replay.md) — how an external analysis
+- [Replay & Analysis Interfaces](replay.md): how an external analysis
   pipeline consumes live or recorded ticks, and what is guaranteed about
   ordering, completion and backpressure.
-- [Files & Provenance](files.md) — the on-disk contract: raw parts,
-  sidecars, processed day files and vendor files, for a consumer in any
-  language.
-- [Unattended Operation](deployment.md) — a systemd user service and timer
+- [Files & Provenance](files.md): the on-disk contract (raw parts, sidecars,
+  processed day files and vendor files) for a consumer in any language.
+- [Unattended Operation](deployment.md): a systemd user service and timer
   for a capture host.
-- [Migrating to 2.0](migration.md) — the four API changes of 2.0 and their
+- [Migrating to 2.0](migration.md): the four API changes of 2.0 and their
   replacements.
-- API reference — the public functions and types:
+- API reference, the public functions and types:
   [acquisition and storage](api.md), [providers](api_providers.md),
   [analysis interfaces](api_analysis.md).

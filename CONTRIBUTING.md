@@ -2,8 +2,8 @@
 
 ## Environment
 
-Julia ≥ 1.12, installed with `juliaup`. Every environment — the package, and
-`scripts/`, `test/`, `docs/`, `bench/` and `examples/` — has an
+Julia ≥ 1.12, installed with `juliaup`. Every environment (the package, and
+`scripts/`, `test/`, `docs/`, `bench/` and `examples/`) has an
 `activate.jl` that activates and instantiates it silently, and every script
 includes its own as its first statement, so `--project` is never passed. The
 side environments consume the package by path, so they always run against
@@ -22,12 +22,12 @@ green suite, and new behavior comes with a test. Floating-point
 comparisons use `isapprox` with explicit tolerances.
 
 CI runs the suite on the latest Julia release, on the `[compat]` floor and,
-without blocking, on the current pre-release, each with two worker threads. Two of its tools trail new
-Julia versions: AllocCheck depends on LLVM bindings built per release, and
-JET loads as empty stubs on versions it does not support yet. The
-pre-release leg therefore runs without AllocCheck and skips the analyses
-that cannot run there; on a release, a missing AllocCheck or an unsupported
-JET fails the suite.
+without blocking, on the current pre-release, each with two worker threads.
+Two of its tools trail new Julia versions: AllocCheck depends on LLVM
+bindings built per release, and JET loads as empty stubs on versions it does
+not support yet. The pre-release leg therefore runs without AllocCheck and
+skips the analyses that cannot run there; on a release, a missing AllocCheck
+or an unsupported JET fails the suite.
 
 ## Formatting
 

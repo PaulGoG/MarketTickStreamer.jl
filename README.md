@@ -169,7 +169,8 @@ From the REPL, the same entry points are `run_stream(cfg)`,
 `read_processed(cfg, "AAPL"; from, to, window = :regular)`,
 `replay_source(files)` and `follow_source(cfg.raw_dir)`. The last two return
 the same `Channel{Trade}` type as the live source, so a real-time consumer can
-be developed offline (see `docs/src/replay.md`).
+be developed offline (see
+[Analysis interfaces](https://PaulGoG.github.io/MarketTickStreamer.jl/stable/replay/)).
 
 ## Status
 
@@ -222,8 +223,8 @@ From 1.0.0 the following are public and versioned under semantic versioning:
 - the exported Julia API and its documented keyword arguments, and the names
   declared `public` without being exported, reached qualified
   (`MarketTickStreamer.RawSink`);
-- the file contract — raw parts, sidecars, processed day files, vendor files
-  and the lock — specified on the
+- the file contract (raw parts, sidecars, processed day files, vendor files
+  and the lock), specified on the
   [files page](https://PaulGoG.github.io/MarketTickStreamer.jl/stable/files/);
 - the configuration schema of `config/config.toml`;
 - the arguments and products of the entry-point scripts.
@@ -295,8 +296,12 @@ The full contract, for consumers in any language, is on the
   removal), git commit, Julia/package versions, hardware fingerprint (CPU,
   memory, thread counts, `versioninfo`), full effective configuration
   snapshot.
-- `data/bulk/binance/SYMBOL/` — the venue's daily dump files and their checksums, as downloaded by a bulk backfill; the vendor's record of each day.
-- `data/bulk/itch50/`, `data/bulk/iex/` — Nasdaq ITCH 5.0 and IEX HIST day files as downloaded (`fetch_itch50`, `fetch_iex_hist`), verified against the announced size or CRC-32C.
+- `data/bulk/binance/SYMBOL/` — the venue's daily dump files and their
+  checksums, as downloaded by a bulk backfill; the vendor's record of each
+  day.
+- `data/bulk/itch50/`, `data/bulk/iex/` — Nasdaq ITCH 5.0 and IEX HIST day
+  files as downloaded (`fetch_itch50`, `fetch_iex_hist`), verified against
+  the announced size or CRC-32C.
 - `data/processed/SYMBOL/YYYY-MM-DD.csv|.arrow` — compacted, time-sorted
   per-day files for the analysis pipeline. Existing files are never
   destroyed (the new file takes the canonical name; the displaced one is
@@ -310,13 +315,14 @@ The full contract, for consumers in any language, is on the
 
 ## Testing
 
-The suite runs fully offline: unit tests plus end-to-end runs (stream →
-reconnect → fatal stop → raw files → compaction → replay, backfill, bulk
-backfill) against in-process mocks of the Alpaca REST + WebSocket APIs and
-of the Binance REST, WebSocket and bulk-file endpoints — no credentials or
-network needed. The vendor readers and the import run on synthetic ITCH 5.0
-and IEX HIST files, the three worked examples are executed, and static QA
-runs with the suite: Aqua, JET, ExplicitImports and AllocCheck.
+The suite runs offline, with neither credentials nor a network: unit tests
+plus end-to-end runs (stream → reconnect → fatal stop → raw files →
+compaction → replay, backfill, bulk backfill) against in-process mocks of
+the Alpaca REST + WebSocket APIs and of the Binance REST, WebSocket and
+bulk-file endpoints. The vendor readers and the import run on synthetic
+ITCH 5.0 and IEX HIST files and on a published IEX excerpt, the three worked
+examples are executed, and static QA runs with the suite: Aqua, JET,
+ExplicitImports and AllocCheck.
 
 ## How to cite
 
@@ -438,6 +444,6 @@ Environment, tests, formatting and commit conventions are in
 
 ## License
 
-MIT — see `LICENSE`. The IEX HIST excerpt in `test/fixtures/` is IEX's data,
+MIT; see `LICENSE`. The IEX HIST excerpt in `test/fixtures/` is IEX's data,
 under the IEX Historical Data Terms of Use and not the MIT licence; see
 `test/fixtures/PROVENANCE.md`.

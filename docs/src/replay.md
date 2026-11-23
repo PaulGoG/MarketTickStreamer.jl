@@ -12,7 +12,7 @@ an interface change that breaks one fails the suite.
 
 ![A recorded session replayed tick by tick, the price path drawing itself against exchange time](assets/replay.gif)
 
-## One interface, three sources
+## The three sources
 
 [`live_source`](@ref), [`replay_source`](@ref) and [`follow_source`](@ref)
 all hand back a `Channel{Trade}`. A consumer written against one works
@@ -91,12 +91,12 @@ until then has been delivered, so a finished session is read whole and the
 loop ends at its last print. `idle_timeout_s` (default `Inf`, no bound) sets
 how long the files may stay unchanged while the sidecar still says
 `running`; past it the channel closes with an error, so a follower of a
-process that died unreconciled does not wait forever. The capture never
-learns of its follower and never waits for it: they share nothing but the
-files. The [files page](files.md) sets this streaming consumer beside the
-stationary one that reads the processed tree.
+process that died unreconciled does not wait forever. The capture neither
+knows of its follower nor waits for it; the two share only the files. The
+[files page](files.md) sets this streaming consumer beside the stationary
+one that reads the processed tree.
 
-## What a `Trade` means
+## The `Trade` record
 
 | Field | Type | Meaning |
 | --- | --- | --- |
@@ -202,8 +202,8 @@ with no shutdown protocol of its own.
 julia examples/waiting_times.jl data/raw/<session>_part001.jsonl
 ```
 
-It reports both populations side by side, which is the cheapest way to see
-what the choice costs on your own data. One AAPL session, 1 225 831 prints:
+It reports both populations side by side, which shows what the choice costs
+on a given capture. One AAPL session, 1 225 831 prints:
 
 ```
 every execution          n=  1225830  mean=  0.0470 s  median=  0.0007 s  p99=  0.6231 s  max=   30.080 s
@@ -227,9 +227,9 @@ one row per minute of exchange time and a final row when the session ends.
 
 ## Which prints count as trades
 
-`conditions` is reported, never acted on at capture. Whether a print belongs
-in your sample depends on the question, and the two questions this package
-serves want opposite answers:
+`conditions` is reported and never acted on at capture. Whether a print
+belongs in a sample depends on the question, and the two questions this
+package serves want opposite answers:
 
 - A price path (returns, volatility, Hurst or DFA estimation) needs
   price-forming prints only. Odd lots, contingent and derivatively priced
@@ -265,10 +265,10 @@ the population a session was reported under is recorded in its sidecar.
 State which of the two populations a result used. After the fact, a price
 series does not reveal it.
 
-## Sampling on a clock that runs with the market
+## Activity clocks
 
 Market activity is not uniform in time, so sampling a price path every minute
-draws unevenly from the process that generates it — densely at the open,
+draws unevenly from the process that generates it: densely at the open,
 sparsely at lunch. [`tick_bars`](@ref), [`volume_bars`](@ref) and
 [`dollar_bars`](@ref) resample a capture onto clocks that advance with
 activity instead: one bar per fixed count of prints, of shares, or of traded
@@ -295,7 +295,7 @@ the sampling; it does not make returns independent or Gaussian. Of the
 three, the value clock is invariant to splits, so a threshold chosen before
 a split holds after it.
 
-Whether to filter to price-forming prints first is your choice; on a
+Filtering to price-forming prints first is left to the caller; on a
 high-priced name it changes the bar count by a factor of three. The bars
 carry `recv_ns = 0`, the same marker the raw layer uses for records that
 never crossed the wire, because a derived bar has no receipt time.
@@ -370,9 +370,9 @@ end
 
 Each day is the merge of the requested symbols on exchange time. `window`
 keeps `[open, close)` on the exchange-local clock of that date, in
-fractional hours — `(9.5, 16.0)` is the US regular session, `:regular`
-stands for the provider's — and the bounds are resolved per date, so they
-hold across daylight-saving transitions. `price_forming` applies the
+fractional hours (`(9.5, 16.0)` is the US regular session, `:regular` stands
+for the provider's), and the bounds are resolved per date, so they hold
+across daylight-saving transitions. `price_forming` applies the
 population of the previous section with the lists from the configuration. A
 day loads in full before its filters apply, so the memory bound is the
 busiest selected date, the same bound replay has: a month of AAPL, 17.4

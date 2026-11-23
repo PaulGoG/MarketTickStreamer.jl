@@ -5,7 +5,7 @@ using MarketTickStreamer
 
 makedocs(
     doctest = true,
-    sitename = "MarketTickStreamer",
+    sitename = "MarketTickStreamer.jl",
     authors = "Paul-Adrian Gogîță",
     repo = Documenter.Remotes.GitHub("PaulGoG", "MarketTickStreamer.jl"),
     format = Documenter.HTML(

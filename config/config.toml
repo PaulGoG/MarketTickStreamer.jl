@@ -11,7 +11,7 @@ feed = "delayed_sip"
 env_file = "../.env"             # KEY=value file holding the API credentials; relative to this file or absolute
 
 [stream]
-# Symbols to subscribe; at most limits.max_symbols entries
+# Symbols to subscribe; 1 to limits.max_symbols entries
 symbols = ["AAPL", "NVDA", "TSLA", "JPM", "ERIE", "SPY"]
 channels = ["trades"]            # subset of: "trades" | "quotes" | "bars"
 require_market_open = true       # require an open market to start

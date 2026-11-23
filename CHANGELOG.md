@@ -1,6 +1,6 @@
 # Changelog
 
-Notable changes to MarketTickStreamer. The format follows
+Notable changes to MarketTickStreamer.jl. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows
 [Semantic Versioning](https://semver.org/).
 

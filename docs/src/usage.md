@@ -74,7 +74,7 @@ where that file is a read-only template to copy
 
 | Key | Meaning |
 | --- | --- |
-| `symbols` | Subscription list; at most `limits.max_symbols` entries. |
+| `symbols` | Subscription list, from one to `limits.max_symbols` entries. |
 | `channels` | Subset of `"trades"`, `"quotes"`, `"bars"`. Trades only by default: quote and bar frames are parsed into [`Quote`](@ref) and [`Bar`](@ref) and delivered to the `on_quote` / `on_bar` callbacks of [`live_source`](@ref), but neither is persisted. A quote stream carries an order of magnitude more messages than the trade stream, and persisting it is out of scope until a microstructure question requires it. |
 | `require_market_open` | Query the market clock before connecting and exit if closed. |
 | `wait_for_open` | When closed, sleep until the next open instead of exiting. The wait is shifted by the feed's intrinsic delay, and the session takes the data tree's lock only when it ends. |
@@ -103,6 +103,8 @@ loop indefinitely.
 
 ## `[limits]`
 
+The pipeline's safety margins.
+
 | Key | Meaning |
 | --- | --- |
 | `max_session_hours` | Hard stop for a live session. |
@@ -114,10 +116,8 @@ loop indefinitely.
 | `max_open_spill_files` | File handles a spilling compaction keeps open at once. |
 | `compact_mem_fraction` | Share of the free RAM an in-memory compaction may claim; beyond it the run spills. |
 | `spill_headroom` | Scratch space a spilling compaction requires, as a multiple of the input size. |
-| `compact_footprint_factor` | Estimated in-memory footprint per byte of input, which decides whether a file fits in memory. |
+| `compact_footprint_factor` | Estimated in-memory footprint per byte of input, which decides whether a file fits in memory. Only its ratio to `compact_mem_fraction` enters the decision. |
 | `read_mem_fraction` | Share of the free RAM a materialized corpus read (`read_processed`) may claim; beyond it the read refuses and points at `eachday`. |
-
-These are the pipeline's safety margins.
 
 ## `[replay]`
 
@@ -125,8 +125,8 @@ These are the pipeline's safety margins.
 | --- | --- |
 | `pace` | `"recorded"` honors the original inter-arrival times; `"max"` emits as fast as the consumer takes them. |
 | `speed` | Time-compression factor when pacing is honored; `60.0` replays an hour in a minute. |
-| `max_gap_s` | Longest gap replayed, in recorded seconds before `speed` applies; a longer gap — an overnight closure, a weekend — is shortened to it. `inf` (default) replays every gap. |
-| `clock` | Timestamp that orders and paces the replay: `"recv"` (local receipt), `"exchange"` (the venue's own), or `"auto"` — receipt time when every record has it, exchange time otherwise. A backfilled recording has no receipt clock. |
+| `max_gap_s` | Longest gap replayed, in recorded seconds before `speed` applies; a longer gap (an overnight closure, a weekend) is shortened to it. `inf` (default) replays every gap. |
+| `clock` | Timestamp that orders and paces the replay: `"recv"` (local receipt), `"exchange"` (the venue's own), or `"auto"`: receipt time when every record has it, exchange time otherwise. A backfilled recording has no receipt clock. |
 
 ## `[backfill]`
 
@@ -134,11 +134,11 @@ These are the pipeline's safety margins.
 | --- | --- |
 | `start_date`, `end_date` | Inclusive exchange dates on the provider's calendar (America/New_York for Alpaca, UTC for Binance). Either an ISO date `"YYYY-MM-DD"` or a sentinel: `"today"`, or `"today-<N>d"` for N calendar days back. |
 | `feed` | Historical feed. Alpaca: `"iex"` or `"sip"`; free accounts have full SIP history back to 2016, minus the most recent 15 minutes. Binance: `"aggTrade"` by REST; `"aggTrade"` or `"trade"` from the daily bulk files. |
-| `source` | `"rest"` walks the provider's historical endpoint page by page; `"bulk"` downloads the venue's daily file for each day — Binance only — verifies its checksum and keeps it. Everything after that is the same run: raw parts per day, compaction, resume. |
+| `source` | `"rest"` walks the provider's historical endpoint page by page; `"bulk"` (Binance only) downloads the venue's daily file for each day, verifies its checksum and keeps it. Everything after that is the same run: raw parts per day, compaction, resume. |
 | `page_limit` | Rows per REST page, from 1 to the provider maximum (Alpaca 10000, Binance 1000), which is also the default. A larger value is rejected: Binance clamps it without an error, and a clamped page reads as the end of the tape. |
 | `rate_limit_sleep_s` | Pause between pages. The free tier allows 200 requests per minute. |
 | `resume` | Skip `(symbol, day)` pairs already present under `processed/`, so an aborted download resumes instead of restarting. |
-| `keep_raw` | Keep each day's raw NDJSON after it is compacted (default `true`). `false` is accepted only with `source = "bulk"`: the checksum-verified vendor file stays under `bulk/` as the day's record, its NDJSON copy (about 21 times its size on Binance `trades`) is deleted once the day is under `processed/`, and a rerun with `resume = false` rebuilds the day from the kept file without the network. The raw-layer tools — `session_report`, `coverage_report`, `monitor_raw` — then have nothing to read for that session; query the processed tree instead. |
+| `keep_raw` | Keep each day's raw NDJSON after it is compacted (default `true`). `false` is accepted only with `source = "bulk"`: the checksum-verified vendor file stays under `bulk/` as the day's record, its NDJSON copy (about 21 times its size on Binance `trades`) is deleted once the day is under `processed/`, and a rerun with `resume = false` rebuilds the day from the kept file without the network. The raw-layer tools (`session_report`, `coverage_report`, `monitor_raw`) then have nothing to read for that session; query the processed tree instead. |
 
 The sentinels keep a committed configuration from going stale. They count
 calendar days, not trading days: a window may land on a weekend or a holiday
@@ -154,6 +154,12 @@ rather than an error.
 | `max_retries` | Retries on transient failures: 429, 5xx, timeouts and dropped connections. |
 | `max_download_mb_s` | Cap on the download rate of vendor files, in MB/s (10⁶ bytes per second); `0` leaves it uncapped. Each Range request is paced from its own start, so a stall earns no burst afterwards. Set it when a multi-gigabyte download shares a link with other traffic. With several connections the cap applies to their sum. |
 | `download_connections` | Range requests a vendor file is fetched on at once, 1 to 8 (default 1). Over a long path with packet loss each TCP connection is limited on its own: across a 150 ms path, Nasdaq's ITCH host gave 0.6–0.75 MB/s on one connection and 1.6–2.1 MB/s on four, so a 12 GB day file takes about 2 h instead of 5. Chunks are appended in order, so an interrupted transfer resumes as a sequential one; up to three chunks per connection are held in memory. |
+
+## `[rng]`
+
+| Key | Meaning |
+| --- | --- |
+| `seed` | Master seed of the backoff jitter of REST retries and stream reconnects, a non-negative integer. Omitted, as in the shipped configuration, it is drawn from the OS at load. Either way the sidecar's config snapshot records it as `rng_seed`. |
 
 ## `[quality]`
 
