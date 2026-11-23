@@ -121,6 +121,9 @@ function _with_retry(f, policy::RestPolicy)
         try
             return f()
         catch e
+            # An interrupt that arrives inside a request comes out wrapped by
+            # HTTP.jl as a transport error, which would be retried.
+            has_wrapped_exception(e, InterruptException) && throw(InterruptException())
             status = e isa HTTP.StatusError && e.status in RETRYABLE_STATUS
             ((status || _transient(e)) && attempt < policy.max_retries) || rethrow()
             ra =

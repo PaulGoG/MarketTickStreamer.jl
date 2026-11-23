@@ -580,9 +580,12 @@ function stream_websocket!(
     try
         _websocket_request(on_frame, s, url, request_headers, key, stale_timeout_s, fatal)
     catch e
+        # An interrupt that landed in this task arrives wrapped by HTTP.jl; it
+        # leaves as itself, so no caller takes it for a disconnect.
+        has_wrapped_exception(e, InterruptException) && throw(InterruptException())
         # A stop severs the transport, so whatever was reading it fails; after
         # a stop that failure is the orderly end.
-        (s.stop[] && !has_wrapped_exception(e, InterruptException)) || rethrow()
+        s.stop[] || rethrow()
     end
     fatal[] === nothing || throw(fatal[])
     return nothing
@@ -734,7 +737,11 @@ function live_source(
                         stream_protocol!(ch, p, cfg, session; on_quote, on_bar)
                         session.stop[] || @warn "stream closed by server"
                     catch e
-                        (e isa FatalStreamError || e isa InterruptException) && rethrow()
+                        # An adapter with a loop of its own may let an interrupt
+                        # out wrapped, as HTTP.jl hands it over.
+                        has_wrapped_exception(e, InterruptException) &&
+                            throw(InterruptException())
+                        e isa FatalStreamError && rethrow()
                         session.stop[] && break
                         @warn "stream disconnected" exception = (e, catch_backtrace())
                     end
@@ -772,9 +779,10 @@ function live_source(
                     end
                 end
             catch e
-                # An unexpected error is a failure too, not an orderly end, and is
-                # logged where the session logs; an interrupt leaves the outcome
-                # to whoever handles it.
+                # An unexpected error marks the session failed and is logged where
+                # the session logs. An interrupt that landed in this task ends the
+                # producer: it is rethrown, the outcome below reads `:completed`,
+                # and the channel closes, which ends the session in order.
                 e isa InterruptException && rethrow()
                 session.outcome[] = :failed
                 if e isa FatalStreamError

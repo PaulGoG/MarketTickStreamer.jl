@@ -737,7 +737,7 @@ function _run_stream(
                 (session.opens[] == 0 && summary.ticks == 0)
             ) && (summary.status = "failed")
         catch e
-            if e isa InterruptException
+            if has_wrapped_exception(e, InterruptException)
                 summary.status = "interrupted"
                 @info "interrupt; shutting down"
             else
@@ -959,7 +959,7 @@ function run_entrypoint(main::Function)
     try
         main()
     catch e
-        e isa InterruptException || rethrow()
+        has_wrapped_exception(e, InterruptException) || rethrow()
         println("\nInterrupted.")
     end
     return nothing

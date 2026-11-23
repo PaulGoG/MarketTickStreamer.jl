@@ -838,3 +838,50 @@ end
         end
     end
 end
+
+@testset "live: an interrupt that lands in the producer ends it, without a reconnect" begin
+    # Thrown inside the connection, an interrupt comes out of HTTP.jl wrapped
+    # as a request error, which the reconnect loop took for a disconnect.
+    port = freeport(9881)
+    nconn = Threads.Atomic{Int}(0)
+    server = HTTP.WebSockets.listen!("127.0.0.1", port; verbose = false) do ws
+        Threads.atomic_add!(nconn, 1)
+        HTTP.WebSockets.send(ws, "x")
+        for _ in ws
+        end
+    end
+    @eval struct InterruptedProvider <: MarketTickStreamer.AbstractProvider
+        url::String
+    end
+    @eval MarketTickStreamer.stream_protocol!(
+        ch,
+        p::InterruptedProvider,
+        cfg,
+        s;
+        kwargs...,
+    ) = MarketTickStreamer.stream_websocket!(
+        (ws, msg) -> throw(InterruptException()),
+        s,
+        p.url,
+        cfg.stale_timeout_s,
+    )
+    try
+        url = "ws://127.0.0.1:$port"
+        @test_throws InterruptException MarketTickStreamer.stream_websocket!(
+            (ws, msg) -> throw(InterruptException()),
+            bare_session(),
+            url,
+            5.0,
+        )
+        mktempdir() do dir
+            cfg = load_config(mock_config_toml(dir; ws_port = 9999, rest_port = 9998))
+            before = nconn[]
+            s = live_source(InterruptedProvider(url), cfg)
+            @test isempty(collect(s.channel))            # the channel closes
+            @test nconn[] == before + 1                  # one connection
+            @test s.stats[].reconnects == 0 && s.outcome[] === :completed
+        end
+    finally
+        close(server)
+    end
+end

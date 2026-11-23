@@ -208,6 +208,16 @@ end
     finally
         close(server)
     end
+    # An interrupt that arrives inside a request comes out of HTTP.jl wrapped
+    # as a transport error. It is rethrown as itself, not retried.
+    calls = Ref(0)
+    @test_throws InterruptException MarketTickStreamer._with_retry(
+        MarketTickStreamer.RestPolicy(1, 1, 3),
+    ) do
+        calls[] += 1
+        throw(HTTP.RequestError(HTTP.Request("GET", "/x"), InterruptException()))
+    end
+    @test calls[] == 1
     # A chunk's timeout: the policy's timeout plus 1.25 times the transfer
     # at the slower of 50 kB/s and the cap, 30 + ceil(1.25 × 5) s here.
     @test MarketTickStreamer._chunk_timeout(
