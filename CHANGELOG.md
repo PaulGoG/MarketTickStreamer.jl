@@ -6,6 +6,82 @@ Notable changes to MarketTickStreamer.jl. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- An interrupt (Ctrl-C, SIGINT) that arrived inside an HTTP request or a
+  WebSocket read came out of HTTP.jl wrapped as a transport error and was
+  retried: a backfill sent the request again, and a capture reconnected until
+  its attempts ran out and ended `failed`. The retry schedule and
+  `stream_websocket!` now rethrow it as an `InterruptException`, and a session
+  recognizes an interrupt that ended a task it waited on.
+- Paced replay with a finite `max_gap_s`: a print stamped behind the latest
+  one moved the schedule back, the next gap was then measured too long, and
+  every later print came early by up to that step. It arises on the receive
+  clock where two processed day files meet.
+- A day present in the processed tree both as `.csv` and as `.arrow`, after a
+  compaction under the other `storage.processed_format`, was read twice by
+  `eachday`, `read_processed`, `replay_source` and `corpus_inventory`. A
+  compaction now moves the day's file in the other format to that format's
+  `_#N` backups, and `processed_files` raises an `IntegrityError` on a tree
+  that holds such a pair.
+- `tee`: an output closed with an exception while the fan-out waited on it (a
+  channel bound to a consumer task that failed) ended the fan-out, the
+  persistence output included. It is now dropped like any closed output. A
+  `lossy` vector of the wrong length is a `DimensionMismatch` at the call.
+- Two producers started within a millisecond of each other on a data tree
+  whose lock was stale could both take it, because a stale lock is broken by
+  unlinking its name. A producer that found a lock file now waits half a
+  second after taking the tree and gives way if the file names another
+  process.
+- `load_config` accepted for `backfill.start_date` and `end_date` any string
+  Julia's date parser takes: `"2026"` loaded as 1 January and `"20260812"` as
+  a year. Only `YYYY-MM-DD` and the sentinels load. `inf` is refused for
+  `backfill.rate_limit_sleep_s`, `monitor.refresh_s` and
+  `monitor.rate_window_s`, where it failed at the first sleep or render; a
+  channel named twice in `stream.channels` is subscribed once; an unknown
+  `provider.name` is reported under that key.
+- A provider whose spec declares no historical feed, as a streaming-only
+  adapter in another package would, could not load a configuration. Under
+  `backfill.source = "bulk"` the default feed is the provider's first bulk
+  feed when its REST feed is not published in bulk.
+- A window of `eachday` or `read_processed` with a bound inside the hour a
+  daylight-saving transition skips or repeats threw a time-zone error. The
+  bound is the instant of the jump, or the first occurrence of the repeated
+  hour.
+- A copy of the package installed in a depot that lies inside another git
+  work tree recorded that repository's commit in its sidecars. An installed
+  copy records `git_available = false`.
+- A backfill marks a day incomplete when the day was still open as its fetch
+  began; the test ran after the fetch, so a fetch that crossed midnight on a
+  venue that never closes left the day unmarked. `resume` recognizes the days
+  of a symbol configured in lower case, which the Binance adapter files in
+  upper case.
+- `run_import` checks `broken`, `tape`, the file's date and the collision
+  with existing days before it takes the data tree and hashes the vendor
+  file.
+- A spilling compaction removes each group's scratch copy once the group is
+  loaded, so the copy and the day files beside it stay within the input's
+  size, which the free-space check assumed; the heap ceiling is tested on
+  the loaded group, before it is sorted and written.
+- Vendor downloads: a `206` without a `Content-Range` is refused like a range
+  that starts elsewhere; a retry after a chunk's last byte no longer asks for
+  an empty range.
+- A market clock whose close does not parse fails the session before its
+  producer starts.
+- Figures: a median inter-arrival time that rounds to 1000 of its unit, or
+  exceeds 1000 s, was annotated in exponent notation. The price panel of the
+  overview figure piled the extended-hours prints of each day onto the
+  session's edges, and both day axes labeled every day; the panel now draws
+  the session, and about a dozen days are labeled whatever the span.
+- `follow_source` attached with `from_start = false` while a backfill with
+  `keep_raw = false` deleted a part; `scripts/compact.jl` without arguments
+  on a tree without a raw directory; a trailing `--config` in
+  `examples/follow_session.jl`.
+
+### Changed
+- `monitor_raw` requires a finite `refresh_s` and `rate_window_s`.
+- An import logs one closing line.
+- The Documenter site is named `MarketTickStreamer.jl`.
+
 ## [2.2.0] - 2026-11-17
 
 Both adapters run on one WebSocket loop, public as `stream_websocket!`, whose

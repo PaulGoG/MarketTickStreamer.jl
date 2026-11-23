@@ -1,17 +1,6 @@
-# Alternative clocks: sampling the flux by activity rather than by the
-# calendar.
-#
-# Market activity is not uniform in time, so calendar-time sampling draws unevenly from the
-# process that generates prices: densely at the open, sparsely at lunch. Sampling instead
-# once per fixed count of prints, of shares, or of traded value subordinates the price
-# process to a clock that runs with the market (Mandelbrot & Taylor 1967,
-# doi:10.1287/opre.15.6.1057; Clark 1973, doi:10.2307/1913889). Ané & Geman 2000
-# (doi:10.1111/0022-1082.00286) reported returns close to normal on the transaction
-# clock. Murphy & Izzeldin 2010 (doi:10.1080/09603101003636212) do not recover normality
-# on re-examination, and Gillemot, Farmer & Lillo 2006 (doi:10.1080/14697680600835688)
-# find heavy tails and volatility clustering persisting in transaction time: the clock
-# removes the intraday activity profile from the sampling, which does not make returns
-# independent or Gaussian.
+# Activity clocks: one bar per fixed count of prints, of shares or of traded
+# value, and one per matching event. The literature is cited in the docstrings
+# of `tick_bars` and `volume_bars`.
 #
 # Bars are derived objects: they carry `recv_ns = 0`, the same marker the raw
 # layer uses for records that never crossed the wire. Each bar records both
@@ -101,7 +90,7 @@ end
 Resample `trades` onto a transaction clock: one [`Bar`](@ref) per `n` prints.
 
 The count is of prints as recorded, so whether odd lots and other
-non-price-forming records count towards it is decided before the call — pass
+non-price-forming records count towards it is decided before the call: pass
 `filter_price_forming(trades)` to exclude them. On a high-priced name that
 choice changes the bar count by a factor of three.
 

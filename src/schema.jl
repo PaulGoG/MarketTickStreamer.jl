@@ -23,6 +23,9 @@ Fields
 - `tape`       : tape identifier ("A"/"B"/"C" for US equities, "SPOT" for
                  Binance; may be empty)
 - `id`         : provider trade id (0 when absent)
+
+Prints read back from processed files share one `conditions` vector among
+those that carry the same codes: copy it before changing it in place.
 """
 struct Trade
     symbol::String
