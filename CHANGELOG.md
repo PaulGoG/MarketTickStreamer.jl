@@ -6,6 +6,17 @@ Notable changes to MarketTickStreamer.jl. The format follows
 
 ## [Unreleased]
 
+## [2.2.1] - 2026-11-23
+
+Corrections from a review of every module of 2.2.0. An interrupt inside a
+request or a WebSocket read was retried as a transport failure; two producers
+starting on a stale lock could both take a data tree; a day held in both
+processed formats was read twice; a replay with capped gaps ran early after a
+late print. The file contract and the configuration schema are those of 2.2.0:
+the configuration refuses only a date written as a run of digits and intervals
+no timer can count, which loaded and then failed, and it warns about a date
+without its day.
+
 ### Fixed
 - An interrupt (Ctrl-C, SIGINT) that arrived inside an HTTP request or a
   WebSocket read came out of HTTP.jl wrapped as a transport error and was
@@ -1134,7 +1145,8 @@ against the historical SIP tape.
 - An offline test suite driven by an in-process mock of the Alpaca REST and
   WebSocket APIs, with Aqua static quality assurance.
 
-[Unreleased]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v2.2.1...HEAD
+[2.2.1]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v2.2.0...v2.2.1
 [2.2.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v2.0.3...v2.1.0
 [2.0.3]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v2.0.2...v2.0.3
