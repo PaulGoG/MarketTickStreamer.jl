@@ -58,7 +58,7 @@ end_date = "today-1d"            # inclusive end; >= start_date; same forms
 feed = "sip"                     # historical feed; alpaca: "iex" | "sip"; binance: "aggTrade" (rest), "aggTrade" | "trade" (bulk)
 source = "rest"                  # one of: "rest" | "bulk"; "bulk" = the venue's daily files, binance only
 page_limit = 10000               # rows per REST page; 1 to the provider maximum (alpaca 10000, binance 1000)
-rate_limit_sleep_s = 0.35        # pause between REST pages, or between bulk days [s]; >= 0
+rate_limit_sleep_s = 0.35        # pause between REST pages, or between bulk days [s]; finite, >= 0
 resume = true                    # skip (symbol, day) pairs already present in processed/
 keep_raw = true                  # keep each day's raw NDJSON after compaction; false only with source = "bulk"
 
@@ -83,9 +83,9 @@ O = ["C", "I", "N", "R", "U", "V"]
 
 [monitor]
 # Terminal dashboard (scripts/monitor.jl).
-refresh_s = 2.0                  # dashboard refresh interval [s]; > 0
+refresh_s = 2.0                  # dashboard refresh interval [s]; finite, > 0
 top_symbols = 10                 # bar-plot rows; >= 1
-rate_window_s = 300.0            # rate-history window [s]; >= refresh_s
+rate_window_s = 300.0            # rate-history window [s]; finite, >= refresh_s
 
 [logging]
 level = "info"                   # one of: "debug" | "info" | "warn" | "error"

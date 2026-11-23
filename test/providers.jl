@@ -99,6 +99,50 @@ end
         write(p, replace(toml, "feed = \"ticks\"" => "feed = \"trades\""))
         @test_throws ArgumentError load_config(p)
     end
+    # An adapter that only streams declares no historical feed. Its
+    # configuration loads, with nothing to name under backfill.feed; one whose
+    # daily files carry another feed than its REST endpoint gets that feed as
+    # the default of a bulk backfill.
+    @eval begin
+        MarketTickStreamer.provider_spec(::Val{:streamonly}) =
+            MarketTickStreamer.ProviderSpec(;
+                feeds = ["ticks"],
+                backfill_feeds = String[],
+                tz = tz"UTC",
+                max_page_limit = 100,
+                regular_session = (0.0, 24.0),
+                price_unit = "USD",
+                size_unit = "units",
+                timestamp_unit = "nanosecond",
+            )
+        MarketTickStreamer.provider_spec(::Val{:dumps}) = MarketTickStreamer.ProviderSpec(;
+            feeds = ["ticks"],
+            backfill_feeds = ["agg"],
+            bulk_feeds = ["raw"],
+            tz = tz"UTC",
+            max_page_limit = 100,
+            regular_session = (0.0, 24.0),
+            price_unit = "USD",
+            size_unit = "units",
+            timestamp_unit = "nanosecond",
+        )
+    end
+    mktempdir() do dir
+        p = joinpath(dir, "c.toml")
+        base(name) = "[provider]\nname = \"$name\"\n[stream]\nsymbols = [\"X\"]\n"
+        write(p, base("streamonly"))
+        @test Base.invokelatest(load_config, p).backfill_feed == ""
+        write(p, base("streamonly") * "[backfill]\nfeed = \"ticks\"\n")
+        @test_throws ArgumentError Base.invokelatest(load_config, p)
+        write(p, base("dumps"))
+        @test Base.invokelatest(load_config, p).backfill_feed == "agg"
+        write(p, base("dumps") * "[backfill]\nsource = \"bulk\"\n")
+        @test Base.invokelatest(load_config, p).backfill_feed == "raw"
+        write(p, base("dumps") * "[backfill]\nsource = \"bulk\"\nfeed = \"agg\"\n")
+        @test_throws ArgumentError Base.invokelatest(load_config, p)
+    end
+    Base.delete_method(which(MarketTickStreamer.provider_spec, (Val{:streamonly},)))
+    Base.delete_method(which(MarketTickStreamer.provider_spec, (Val{:dumps},)))
     # The registry is global state: take the adapter out again.
     Base.delete_method(which(MarketTickStreamer.provider_spec, (Val{:toy},)))
     Base.delete_method(which(MarketTickStreamer.make_provider, (Val{:toy}, Config)))

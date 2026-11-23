@@ -329,6 +329,12 @@ function load_config(path::AbstractString = _default_config_path())
 
     tbl(name) = get(() -> Dict{String,Any}(), raw, name)
     provider = _cfg_value(tbl("provider"), "provider", "name", String, "alpaca")
+    provider in registered_providers() || throw(
+        ArgumentError(
+            "provider.name must be one of " *
+            "$(join(map(repr, registered_providers()), ", ")), got \"$provider\"",
+        ),
+    )
     # Feed names and the calendar come from the provider's spec.
     spec = provider_spec(provider)
     feed = _cfg_value(tbl("provider"), "provider", "feed", String, first(spec.feeds))
@@ -342,7 +348,7 @@ function load_config(path::AbstractString = _default_config_path())
     st = tbl("stream")
     symbols = _cfg_strings(st, "stream", "symbols", String[])
     isempty(symbols) && throw(ArgumentError("stream.symbols must not be empty"))
-    channels = _cfg_strings(st, "stream", "channels", ["trades"])
+    channels = unique(_cfg_strings(st, "stream", "channels", ["trades"]))
     bad = setdiff(channels, ("trades", "quotes", "bars"))
     isempty(bad) || throw(ArgumentError("stream.channels contains unknown entries: $bad"))
     max_retries = _cfg_value(st, "stream", "reconnect_max_retries", Int, 10)
@@ -368,8 +374,11 @@ function load_config(path::AbstractString = _default_config_path())
     sto = tbl("storage")
     data_dir = _resolve(_cfg_value(sto, "storage", "data_dir", String, "data"), config_dir)
     fmt = _cfg_value(sto, "storage", "processed_format", String, "csv")
-    fmt in ("csv", "arrow") ||
-        throw(ArgumentError("storage.processed_format must be \"csv\" or \"arrow\""))
+    fmt in ("csv", "arrow") || throw(
+        ArgumentError(
+            "storage.processed_format must be \"csv\" or \"arrow\", got \"$fmt\"",
+        ),
+    )
     compression = _cfg_value(sto, "storage", "processed_compression", String, "none")
     compression in ("none", "zstd", "lz4") || throw(
         ArgumentError(
@@ -396,7 +405,7 @@ function load_config(path::AbstractString = _default_config_path())
         throw(ArgumentError("limits.max_symbols must be >= 1, got $max_symbols"))
     length(symbols) <= max_symbols || throw(
         ArgumentError(
-            "$(length(symbols)) symbols requested but limits.max_symbols = $max_symbols",
+            "stream.symbols has $(length(symbols)) entries but limits.max_symbols = $max_symbols",
         ),
     )
     max_session_hours = _cfg_value(lim, "limits", "max_session_hours", Float64, 8.0)
@@ -449,9 +458,9 @@ function load_config(path::AbstractString = _default_config_path())
     rep = tbl("replay")
     pace = _cfg_value(rep, "replay", "pace", String, "recorded")
     pace in ("recorded", "max") ||
-        throw(ArgumentError("replay.pace must be \"recorded\" or \"max\""))
+        throw(ArgumentError("replay.pace must be \"recorded\" or \"max\", got \"$pace\""))
     replay_speed = _cfg_value(rep, "replay", "speed", Float64, 1.0)
-    replay_speed > 0 || throw(ArgumentError("replay.speed must be positive"))
+    replay_speed > 0 || throw(ArgumentError("replay.speed must be > 0, got $replay_speed"))
     replay_max_gap_s = _cfg_value(rep, "replay", "max_gap_s", Float64, Inf)
     replay_max_gap_s > 0 ||
         throw(ArgumentError("replay.max_gap_s must be positive, got $replay_max_gap_s"))
@@ -476,28 +485,31 @@ function load_config(path::AbstractString = _default_config_path())
     bf_source in ("rest", "bulk") || throw(
         ArgumentError("backfill.source must be \"rest\" or \"bulk\", got \"$bf_source\""),
     )
-    bf_feed = _cfg_value(bf, "backfill", "feed", String, last(spec.backfill_feeds))
-    if bf_source == "bulk"
-        isempty(spec.bulk_feeds) && throw(
+    bf_source == "bulk" &&
+        isempty(spec.bulk_feeds) &&
+        throw(
             ArgumentError(
                 "backfill.source = \"bulk\" is not available for provider \"$provider\": " *
                 "it publishes no bulk files",
             ),
         )
-        bf_feed in spec.bulk_feeds || throw(
-            ArgumentError(
-                "backfill.feed must be one of $(join(map(repr, spec.bulk_feeds), ", ")) " *
-                "for provider \"$provider\" with backfill.source = \"bulk\", got \"$bf_feed\"",
-            ),
-        )
-    else
-        bf_feed in spec.backfill_feeds || throw(
-            ArgumentError(
-                "backfill.feed must be one of $(join(map(repr, spec.backfill_feeds), ", ")) " *
-                "for provider \"$provider\", got \"$bf_feed\"",
-            ),
-        )
-    end
+    source_feeds = bf_source == "bulk" ? spec.bulk_feeds : spec.backfill_feeds
+    # Without the key: the provider's last REST feed where the source carries
+    # it, else the source's first. A provider without historical feeds has
+    # none to name, and its configuration loads for streaming alone.
+    rest_feeds = filter(in(source_feeds), spec.backfill_feeds)
+    default_feed =
+        !isempty(rest_feeds) ? last(rest_feeds) :
+        !isempty(source_feeds) ? first(source_feeds) : ""
+    bf_feed = _cfg_value(bf, "backfill", "feed", String, default_feed)
+    (bf_feed in source_feeds || (isempty(source_feeds) && !haskey(bf, "feed"))) || throw(
+        ArgumentError(
+            isempty(source_feeds) ?
+            "backfill.feed = \"$bf_feed\", but provider \"$provider\" has no historical feed" :
+            "backfill.feed must be one of $(join(map(repr, source_feeds), ", ")) for " *
+            "provider \"$provider\" with backfill.source = \"$bf_source\", got \"$bf_feed\"",
+        ),
+    )
     page_limit = _cfg_value(bf, "backfill", "page_limit", Int, spec.max_page_limit)
     1 <= page_limit <= spec.max_page_limit || throw(
         ArgumentError(
@@ -506,8 +518,12 @@ function load_config(path::AbstractString = _default_config_path())
         ),
     )
     rate_sleep = _cfg_value(bf, "backfill", "rate_limit_sleep_s", Float64, 0.35)
-    rate_sleep >= 0 ||
-        throw(ArgumentError("backfill.rate_limit_sleep_s must be >= 0, got $rate_sleep"))
+    # `sleep(Inf)` throws, in the middle of the run.
+    (isfinite(rate_sleep) && rate_sleep >= 0) || throw(
+        ArgumentError(
+            "backfill.rate_limit_sleep_s must be finite and >= 0, got $rate_sleep",
+        ),
+    )
     keep_raw = _cfg_value(bf, "backfill", "keep_raw", Bool, true)
     keep_raw ||
         bf_source == "bulk" ||
@@ -548,17 +564,25 @@ function load_config(path::AbstractString = _default_config_path())
 
     mon = tbl("monitor")
     mon_refresh = _cfg_value(mon, "monitor", "refresh_s", Float64, 2.0)
-    mon_refresh > 0 || throw(ArgumentError("monitor.refresh_s must be positive"))
+    (isfinite(mon_refresh) && mon_refresh > 0) ||
+        throw(ArgumentError("monitor.refresh_s must be finite and > 0, got $mon_refresh"))
     mon_top = _cfg_value(mon, "monitor", "top_symbols", Int, 10)
-    mon_top >= 1 || throw(ArgumentError("monitor.top_symbols must be >= 1"))
+    mon_top >= 1 || throw(ArgumentError("monitor.top_symbols must be >= 1, got $mon_top"))
     mon_window = _cfg_value(mon, "monitor", "rate_window_s", Float64, 300.0)
-    mon_window >= mon_refresh ||
-        throw(ArgumentError("monitor.rate_window_s must be >= monitor.refresh_s"))
+    (isfinite(mon_window) && mon_window >= mon_refresh) || throw(
+        ArgumentError(
+            "monitor.rate_window_s must be finite and >= monitor.refresh_s, got $mon_window",
+        ),
+    )
 
     lg = tbl("logging")
     level = _cfg_value(lg, "logging", "level", String, "info")
-    level in ("debug", "info", "warn", "error") ||
-        throw(ArgumentError("logging.level must be one of debug/info/warn/error"))
+    level in ("debug", "info", "warn", "error") || throw(
+        ArgumentError(
+            "logging.level must be one of \"debug\", \"info\", \"warn\", \"error\", " *
+            "got \"$level\"",
+        ),
+    )
 
     cr = tbl("credentials")
     env_file = _cfg_value(cr, "credentials", "env_file", String, ".env")
@@ -616,6 +640,7 @@ function load_config(path::AbstractString = _default_config_path())
             ("bulk_subdir", "bulk"),
         )
     ]
+    raw_subdir, processed_subdir, bulk_subdir = subdirs
     allunique(rstrip.(normpath.(subdirs), '/')) ||
         @warn "storage.raw_subdir, processed_subdir and bulk_subdir are not distinct" subdirs config =
             path
@@ -633,18 +658,9 @@ function load_config(path::AbstractString = _default_config_path())
         reconnect_max_delay_s = max_delay,
         stale_timeout_s = stale_timeout,
         data_dir = data_dir,
-        raw_dir = joinpath(
-            data_dir,
-            _cfg_value(sto, "storage", "raw_subdir", String, "raw"),
-        ),
-        processed_dir = joinpath(
-            data_dir,
-            _cfg_value(sto, "storage", "processed_subdir", String, "processed"),
-        ),
-        bulk_dir = joinpath(
-            data_dir,
-            _cfg_value(sto, "storage", "bulk_subdir", String, "bulk"),
-        ),
+        raw_dir = joinpath(data_dir, raw_subdir),
+        processed_dir = joinpath(data_dir, processed_subdir),
+        bulk_dir = joinpath(data_dir, bulk_subdir),
         flush_interval_s = flush_interval,
         flush_max_ticks = flush_max_ticks,
         processed_format = Symbol(fmt),
@@ -711,8 +727,16 @@ a window may resolve onto a weekend or holiday and yield no prints. Throws
 """
 function _resolve_config_date(spec::AbstractString, key::AbstractString, reference::Date)
     m = match(r"^today(?:-(\d+)d)?$", spec)
-    m === nothing || return reference - Day(m[1] === nothing ? 0 : parse(Int, m[1]))
-    d = tryparse(Date, spec)
+    if m !== nothing
+        back = m[1]
+        n = back === nothing ? 0 : tryparse(Int, back)
+        n === nothing &&
+            throw(ArgumentError("$key counts more days back than an Int holds: \"$spec\""))
+        return reference - Day(n)
+    end
+    # The form is checked first: `tryparse(Date, _)` alone also takes "2026" and
+    # "2026-08", as the first of the year or month, and "20260812" as a year.
+    d = occursin(r"^\d{4}-\d{2}-\d{2}$", spec) ? tryparse(Date, spec) : nothing
     d === nothing && throw(
         ArgumentError(
             "$key must be an ISO date \"YYYY-MM-DD\" or a sentinel " *

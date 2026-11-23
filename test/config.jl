@@ -256,3 +256,43 @@ end
         @test shipped.env_file == joinpath(root, ".env")
     end
 end
+
+@testset "config: date forms, non-finite values, repeated channels, provider name" begin
+    mktempdir() do dir
+        base = "[stream]\nsymbols = [\"A\"]\n"
+        p = joinpath(dir, "c.toml")
+        rejected(body) = (write(p, body); @test_throws ArgumentError load_config(p))
+        loaded(body) = (write(p, body); load_config(p))
+        # A date is "YYYY-MM-DD" and nothing shorter: Julia's parser alone reads
+        # "2026" as 1 January, "2026-08" as the first of the month and
+        # "20260812" as a year.
+        for s in ("2026", "2026-08", "20260812", "2026-8-2", "2026-13-01")
+            rejected(base * "[backfill]\nstart_date = \"$s\"\nend_date = \"$s\"\n")
+        end
+        rejected(base * "[backfill]\nstart_date = \"today-99999999999999999999d\"\n")
+        cfg = loaded(
+            base * "[backfill]\nstart_date = \"2026-08-02\"\nend_date = \"2026-08-03\"\n",
+        )
+        @test (cfg.backfill_start, cfg.backfill_end) == (Date(2026, 8, 2), Date(2026, 8, 3))
+        # `inf` where the value is slept or rounded to an integer
+        rejected(base * "[backfill]\nrate_limit_sleep_s = inf\n")
+        rejected(base * "[monitor]\nrefresh_s = inf\nrate_window_s = inf\n")
+        rejected(base * "[monitor]\nrate_window_s = inf\n")
+        @test loaded(base * "[replay]\nmax_gap_s = inf\n").replay_max_gap_s == Inf
+        # a channel named twice is subscribed to once
+        cfg = loaded(
+            "[stream]\nsymbols = [\"A\"]\nchannels = [\"trades\", \"bars\", \"trades\"]\n",
+        )
+        @test cfg.channels == [:trades, :bars]
+        # an unknown provider is reported under its key
+        write(p, "[provider]\nname = \"kraken\"\n" * base)
+        @test_throws "provider.name" load_config(p)
+        write(p, "[stream]\nsymbols = [" * join(("\"S$i\"" for i in 1:31), ", ") * "]\n")
+        @test_throws "stream.symbols" load_config(p)
+    end
+    @test_throws "refresh_s must be finite" monitor_raw(mktempdir(); refresh_s = Inf)
+    @test_throws "rate_window_s must be finite" monitor_raw(
+        mktempdir();
+        rate_window_s = Inf,
+    )
+end

@@ -133,7 +133,10 @@ function monitor_raw(
     iterations::Union{Nothing,Integer} = nothing,
     io::IO = stdout,
 )
-    refresh_s > 0 || throw(ArgumentError("refresh_s must be positive"))
+    (isfinite(refresh_s) && refresh_s > 0) ||
+        throw(ArgumentError("refresh_s must be finite and positive, got $refresh_s"))
+    isfinite(rate_window_s) ||
+        throw(ArgumentError("rate_window_s must be finite, got $rate_window_s"))
     prefix = session === nothing ? latest_session_prefix(dir) : String(session)
     st = MonitorState(dir, prefix)
     from_start || _skip_to_end!(st.tail)
