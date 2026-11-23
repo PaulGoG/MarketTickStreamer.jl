@@ -212,7 +212,11 @@ function _download_resumable(
         # continue from there, not from where the failed one started.
         _with_retry(policy) do
             have = isfile(tmp) ? filesize(tmp) : Int64(0)
-            bad_start = Int64(-1)       # a 206 that did not start at `have`
+            # Each attempt judges its own response: what an earlier one
+            # concluded before its connection failed does not carry over.
+            found = true
+            done = false
+            bad_start = nothing         # where a 206 started, when not at `have`
             bad_status = 0
             bad_message = Ref{Any}(nothing)
             HTTP.open(
@@ -263,7 +267,7 @@ function _download_resumable(
             # every status, where `_with_retry` retries only RETRYABLE_STATUS.
             bad_status != 0 &&
                 throw(HTTP.StatusError(bad_status, "GET", String(url), bad_message[]))
-            bad_start >= 0 && throw(
+            bad_start === nothing || throw(
                 VendorError(
                     String(url),
                     "$url answered the range from byte $bad_start, not the requested $have: " *
@@ -373,6 +377,8 @@ function _fetch_range(
         got = position(buf)
         _with_retry(policy) do
             from = a + position(buf)
+            # An attempt that failed after its last byte left nothing to ask for.
+            from > b && return nothing
             resp = HTTP.Response(0)
             start = Int64(-1)
             HTTP.open(
@@ -462,7 +468,8 @@ function _paced_copy!(io::IO, http, rate::Float64)
 end
 
 # The first byte and the total length named by a `Content-Range: bytes
-# a-b/total` header, or -1 for either when the header does not say.
+# a-b/total` header, or -1 for either when the header does not say. A 206
+# without the header thus starts at -1, which matches no request.
 function _content_range_start(value::AbstractString)
     m = match(r"bytes\s+(\d+)-\d+/", value)
     return m === nothing ? Int64(-1) : parse(Int64, m[1])

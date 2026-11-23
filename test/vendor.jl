@@ -526,6 +526,8 @@ end
             name == "failing.gz" &&
                 parse(Int, split(split(r, '=')[2], '-')[1]) >= 2 << 20 &&
                 return HTTP.Response(403, "Forbidden")
+            # a host that answers a range without saying which
+            name == "norange.gz" && return HTTP.Response(206, payload[1:1000])
             # a host that ignores the requested start: the client must not splice
             name == "misaligned.gz" && return HTTP.Response(
                 206,
@@ -674,6 +676,22 @@ end
                 policy,
             )
             @test filesize(mis * ".partial") == 1_000_000      # untouched, for the next attempt
+            # and so is a 206 that names no range at all, with or without a
+            # partial file to continue
+            nr = joinpath(dir, "norange.bin")
+            norange = "http://127.0.0.1:$port/f/norange.gz"
+            @test_throws "refusing to splice" MarketTickStreamer._download_resumable(
+                norange,
+                nr,
+                policy,
+            )
+            write(nr * ".partial", payload[1:500])
+            @test_throws "refusing to splice" MarketTickStreamer._download_resumable(
+                norange,
+                nr,
+                policy,
+            )
+            @test filesize(nr * ".partial") == 500 && !isfile(nr)
             @test MarketTickStreamer._content_range_start(
                 "bytes 1000000-2097151/3145851",
             ) == 1_000_000
