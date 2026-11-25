@@ -727,7 +727,7 @@ non-negative integer number of calendar days. Sentinels keep a committed
 configuration from going stale; they count calendar days, not trading days, so
 a window may resolve onto a weekend or holiday and yield no prints. Throws
 `ArgumentError` naming `key` on any other value, and on a date outside the
-years 1678 to 2261, whose days a nanosecond timestamp cannot hold.
+years 1678 to 2261, the whole years a nanosecond timestamp spans.
 """
 function _resolve_config_date(spec::AbstractString, key::AbstractString, reference::Date)
     # `\z` and `[0-9]`: `$` also matches before a final newline, and `\d` any
@@ -758,8 +758,9 @@ function _resolve_config_date(spec::AbstractString, key::AbstractString, referen
     return _timestamped(d, spec, key)
 end
 
-# The first and last year whose days have nanosecond timestamps that fit an
-# `Int64` whole (the count runs from 1677-09-21 to 2262-04-11).
+# The whole years inside the span of an `Int64` nanosecond timestamp, which
+# runs from 1677-09-21 to 2262-04-11. The few days at either end of the span
+# that would fit too are refused with the years outside it; no venue has them.
 const TIMESTAMP_YEARS = 1678:2261
 
 # `d` when a request window on that day can be written in nanoseconds since
@@ -768,8 +769,8 @@ function _timestamped(d::Date, spec::AbstractString, key::AbstractString)
     Date(first(TIMESTAMP_YEARS), 1, 1) <= d <= Date(last(TIMESTAMP_YEARS), 12, 31) || throw(
         ArgumentError(
             "$key must lie in $(first(TIMESTAMP_YEARS))-01-01 to " *
-            "$(last(TIMESTAMP_YEARS))-12-31, the days a nanosecond timestamp " *
-            "holds, got \"$spec\"",
+            "$(last(TIMESTAMP_YEARS))-12-31, the whole years a nanosecond " *
+            "timestamp spans, got \"$spec\"",
         ),
     )
     return d

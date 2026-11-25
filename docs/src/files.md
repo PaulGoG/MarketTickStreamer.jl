@@ -272,7 +272,8 @@ each holding `.session.lock.take` from its look at the lock to the creation of
 its own; one that finds it taken waits, and one left by a producer that died
 holding it is broken after five seconds. A producer that found a lock file and
 took the tree also waits a second and gives way if the name then holds another
-file than its own, which separates it from a producer of 2.2.1 or earlier.
+file than its own, which separates it from one producer of 2.2.1; producers of
+older or mixed releases starting together keep the older release's guarantee.
 Consumers never take either file, and their reads never wait on them.
 
 ## Versioning
@@ -283,4 +284,6 @@ encoding or the order of rows, redefines a value or a status, changes how
 identifiers or paths are formed, or relaxes a rule above, alters what a
 consumer reads and waits for a major release. A minor release may add keys,
 columns or files, but never removes or redefines one; a consumer ignores
-what it does not know.
+what it does not know. The lock and its gate are the producers' own: a
+consumer never touches them, and how producers take them is fixed in a patch
+when it is a defect.

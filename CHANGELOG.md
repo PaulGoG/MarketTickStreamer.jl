@@ -11,22 +11,27 @@ Notable changes to MarketTickStreamer.jl. The format follows
   tree: the settling check of 2.2.1 separates two, and a third that arrived
   between their unlinks found no lock file and did not wait. Producers now
   take the lock one at a time under a gate, `<data_dir>/.session.lock.take`,
-  held from their look at the lock to the creation of their own; the settling
-  check remains for a producer of 2.2.1 or earlier.
+  held from their look at the lock to the creation of their own. A producer
+  that finds the gate taken waits up to 30 s and is then refused with a
+  `SessionError` naming it; a gate left by a process that died is broken
+  after 5 s. The settling check remains and separates one producer of 2.2.1.
+  Like the lock, the gate is the producers' own, and the file contract lists
+  it as such.
 - A capture interrupted while its sink then failed in the final drain
   returned `status = "failed"` and recorded `interrupted` in its sidecar. A
   failure recorded before the interrupt is kept, and `run_stream` reports the
   status, the tick count and the raw files that the sidecar records, read
   from one place, so the two agree however the session ended.
-- `backfill.start_date` and `end_date` outside 1678-01-01 to 2261-12-31 are
-  refused, as strings and as TOML dates. The nanosecond timestamps of such a
-  day do not fit an `Int64`: the request window of a day in 1500 wrapped
-  around to a later century, and `today-<N>d` reaching that far back either
-  loaded or was refused under the other key.
+- `backfill.start_date` and `end_date` outside 1678-01-01 to 2261-12-31, the
+  whole years inside the span of an `Int64` nanosecond timestamp, are
+  refused, as strings and as TOML dates. The request window of a day in 1500
+  wrapped around to a later century, and `today-<N>d` reaching that far back
+  either loaded or was refused under the other key.
 - Raw parts beyond `_part999` were taken in name order, which puts
-  `_part1000` before `_part101`: a follower, the monitor, an import's sidecar
-  and `scripts/compact.jl` without arguments read them out of sequence. Parts
-  are ordered by their number.
+  `_part1000` before `_part101`: a follower, the monitor, the `raw_files` of
+  every session's sidecar, and `scripts/compact.jl` and `scripts/visualize.jl`
+  without arguments took them out of sequence. Parts are ordered by their
+  number.
 - Overview figure: the inter-arrival and size panels pooled every print of
   each day file, extended hours included, under an axis labeled as
   intra-session. Both are taken over the prints inside `session`, like the
