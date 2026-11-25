@@ -312,6 +312,12 @@ A starter that found a lock file and took the lock all the same waits
 own. Pidfile breaks a stale lock by unlinking the name and creating it anew,
 and of two starters that judged the same lock stale the later one unlinks the
 lock the earlier one has just created, so both would hold the tree.
+
+The check settles two starters. With three on one stale lock it has a gap: a
+starter that arrives after the first unlink and before the second finds no
+lock file, creates its own without waiting, and loses the name to the second
+unlink while it believes it holds the tree. All three must reach the lock
+within the instant that separates one starter's stale check from its unlink.
 """
 function acquire_session_lock(data_dir::AbstractString; settle_s::Real = LOCK_SETTLE_S)
     mkpath(data_dir)

@@ -267,8 +267,11 @@ producer refreshes it every minute); one written on another host, whose
 process cannot be checked, after ten. Breaking a stale lock is not atomic, so a
 producer that found a lock file and took the tree waits a second and gives
 way if the name then holds another file than its own; two producers started
-at the same moment on a stale lock could otherwise both hold it. Consumers
-never take it, and their reads never wait on it.
+at the same moment on a stale lock could otherwise both hold it. The wait
+settles two producers and not three: a third that reaches a stale lock in the
+instant between the unlinks of the other two finds no lock file, does not
+wait, and can lose the name without noticing. Consumers never take it, and
+their reads never wait on it.
 
 ## Versioning
 

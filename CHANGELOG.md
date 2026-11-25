@@ -6,6 +6,32 @@ Notable changes to MarketTickStreamer.jl. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- A capture interrupted while its sink then failed in the final drain
+  returned `status = "failed"` and recorded `interrupted` in its sidecar. The
+  sidecar keeps the failure.
+- `backfill.start_date` and `end_date` outside 1678-01-01 to 2261-12-31 are
+  refused. The nanosecond timestamps of such a day do not fit an `Int64`: the
+  request window of a day in 1500 wrapped around to a later century, and
+  `today-<N>d` reaching that far back either loaded or was refused under the
+  other key.
+- Raw parts beyond `_part999` were taken in name order, which puts
+  `_part1000` before `_part101`: a follower, the monitor, an import's sidecar
+  and `scripts/compact.jl` without arguments read them out of sequence. Parts
+  are ordered by their number.
+- Overview figure: the inter-arrival and size panels pooled every print of
+  each day file, extended hours included, under an axis labeled as
+  intra-session. Both are taken over the prints inside `session`, like the
+  price path and the heatmap; with `session = (0, 24)` the figure is as
+  before.
+
+### Changed
+- `market_clock` and `historical_trades` are documented on the provider
+  interface, where an adapter author looks for them; the Alpaca and Binance
+  docstrings keep what is specific to each venue.
+- The manual states the limit of the lock's settling check: it separates two
+  producers that start on one stale lock at the same moment, not three.
+
 ## [2.2.1] - 2026-11-23
 
 Corrections from a review of every module of 2.2.0. An interrupt inside a
