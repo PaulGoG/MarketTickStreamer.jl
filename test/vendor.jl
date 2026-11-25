@@ -670,28 +670,49 @@ end
             # a 206 whose range does not start where the partial ends is refused
             mis = joinpath(dir, "misaligned.bin")
             write(mis * ".partial", payload[1:1_000_000])
+            # One request per refusal: a refused splice is not retried.
+            empty!(ranges)
             @test_throws VendorError MarketTickStreamer._download_resumable(
                 "http://127.0.0.1:$port/f/misaligned.gz",
                 mis,
                 policy,
             )
+            @test length(ranges) == 1
             @test filesize(mis * ".partial") == 1_000_000      # untouched, for the next attempt
             # and so is a 206 that names no range at all, with or without a
             # partial file to continue
             nr = joinpath(dir, "norange.bin")
             norange = "http://127.0.0.1:$port/f/norange.gz"
+            empty!(ranges)
             @test_throws "refusing to splice" MarketTickStreamer._download_resumable(
                 norange,
                 nr,
                 policy,
             )
+            @test length(ranges) == 1
+            empty!(ranges)
+            @test_throws VendorError MarketTickStreamer._download_resumable(
+                norange,
+                nr,
+                policy,
+            )
+            @test length(ranges) == 1
             write(nr * ".partial", payload[1:500])
+            empty!(ranges)
             @test_throws "refusing to splice" MarketTickStreamer._download_resumable(
                 norange,
                 nr,
                 policy,
             )
+            @test length(ranges) == 1
             @test filesize(nr * ".partial") == 500 && !isfile(nr)
+            empty!(ranges)
+            @test_throws VendorError MarketTickStreamer._download_resumable(
+                norange,
+                nr,
+                policy,
+            )
+            @test length(ranges) == 1
             @test MarketTickStreamer._content_range_start(
                 "bytes 1000000-2097151/3145851",
             ) == 1_000_000
@@ -897,6 +918,59 @@ end
                 @test r.found && read(pf2) == payload
             finally
                 close(flaky_server)
+            end
+            # Likewise a 416 on a broken connection: read whole, it would say the
+            # file is complete; the retry's 206 decides.
+            broken_hits = Threads.Atomic{Int}(0)
+            broken_port = freeport(8999)
+            broken_server = HTTP.serve!(
+                "127.0.0.1",
+                broken_port;
+                stream = true,
+                verbose = false,
+            ) do http::HTTP.Stream
+                if Threads.atomic_add!(broken_hits, 1) == 0
+                    HTTP.setstatus(http, 416)
+                    HTTP.startwrite(http)
+                    write(http, "not yet")
+                    close(http.stream)
+                    return nothing
+                end
+                asked = HTTP.header(http.message, "Range", "")
+                if isempty(asked)              # not a range request: answered, not thrown
+                    HTTP.setstatus(http, 400)
+                    HTTP.startwrite(http)
+                    return nothing
+                end
+                lo, hi = split(split(asked, '=')[2], '-')
+                from, to = parse(Int, lo), min(parse(Int, hi), length(payload) - 1)
+                if from >= length(payload)
+                    HTTP.setstatus(http, 416)
+                    HTTP.startwrite(http)
+                    return nothing
+                end
+                body = payload[(from+1):(to+1)]
+                HTTP.setstatus(http, 206)
+                HTTP.setheader(
+                    http,
+                    "Content-Range" => "bytes $from-$to/$(length(payload))",
+                )
+                HTTP.setheader(http, "Content-Length" => string(length(body)))
+                HTTP.startwrite(http)
+                write(http, body)
+                return nothing
+            end
+            try
+                pb = joinpath(dir, "broken416.bin")
+                r = MarketTickStreamer._download_resumable(
+                    "http://127.0.0.1:$broken_port/f/broken416.gz",
+                    pb,
+                    MarketTickStreamer.RestPolicy(10, 5, 2);
+                    chunk_bytes = 1 << 20,
+                )
+                @test r.found && read(pb) == payload
+            finally
+                close(broken_server)
             end
             slow = MarketTickStreamer.RestPolicy(10, 5, 1; max_download_rate = 10_000)
             # 8 MiB at the 10 kB/s cap is 838.9 s: 10 + ceil(1.25 × 838.9)

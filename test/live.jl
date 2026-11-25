@@ -514,6 +514,23 @@ end
     end
 end
 
+@testset "live: a market close that does not parse fails before the tree is taken" begin
+    # The close is read before the session takes the lock and writes its
+    # sidecar and first part, so a bad clock answer leaves the tree untouched.
+    @eval struct BadCloseProvider <: MarketTickStreamer.AbstractProvider end
+    @eval MarketTickStreamer.market_clock(::BadCloseProvider) =
+        (; is_open = true, next_open = "", next_close = "not a time")
+    mktempdir() do dir
+        cfg = load_config(mock_config_toml(dir; ws_port = 9999, rest_port = 9998))
+        @test cfg.stop_at_market_close
+        @test_throws Exception run_stream(cfg; provider = BadCloseProvider())
+        @test !ispath(joinpath(cfg.data_dir, ".session.lock"))
+        tree = isdir(cfg.data_dir) ? collect(walkdir(cfg.data_dir)) : []
+        left = [f for (_, _, fs) in tree for f in fs]
+        @test !any(f -> endswith(f, ".meta.toml") || endswith(f, ".jsonl"), left)
+    end
+end
+
 @testset "live E2E: delayed feed shifts the close guard" begin
     mktempdir() do dir
         ws_port, rest_port = freeport(9551), freeport(9571)
@@ -861,6 +878,15 @@ end
         s;
         kwargs...,
     ) = throw(InterruptException())
+    # An adapter that lets the interrupt out as HTTP.jl hands it over.
+    @eval struct WrappedInterruptProvider <: MarketTickStreamer.AbstractProvider end
+    @eval MarketTickStreamer.stream_protocol!(
+        ch,
+        ::WrappedInterruptProvider,
+        cfg,
+        s;
+        kwargs...,
+    ) = throw(HTTP.RequestError(HTTP.Request("GET", "/"), InterruptException()))
     @eval MarketTickStreamer.stream_protocol!(
         ch,
         p::InterruptedProvider,
@@ -881,6 +907,18 @@ end
             url,
             5.0,
         )
+        # A stop set before the interrupt does not turn it into the orderly end
+        # the sever after a stop is.
+        let s = bare_session()
+            @test_throws InterruptException MarketTickStreamer.stream_websocket!(
+                (ws, msg) -> (stop!(s); throw(InterruptException())),
+                s,
+                url,
+                5.0,
+            )
+            @test s.stop[]
+            close(s.channel)
+        end
         mktempdir() do dir
             cfg = load_config(mock_config_toml(dir; ws_port = 9999, rest_port = 9998))
             before = nconn[]
@@ -888,6 +926,10 @@ end
             @test isempty(collect(s.channel))            # the channel closes
             @test nconn[] == before + 1                  # one connection
             @test s.stats[].reconnects == 0 && s.outcome[] === :interrupted
+            # Wrapped by the adapter itself, before any connection: the same end.
+            w = live_source(WrappedInterruptProvider(), cfg)
+            @test isempty(collect(w.channel))
+            @test w.outcome[] === :interrupted && w.stats[].reconnects == 0
             # Through a whole session the sidecar says so, which is what marks
             # the days of the capture incomplete when they are compacted.
             # A session that asks nothing of a market clock.

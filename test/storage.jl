@@ -56,6 +56,58 @@ end
         close_sink!(sink)
         @test read_raw(sink.path) == [sample_trade(1)]
     end
+    # Every write is reported as (batch, running total). The channel is full
+    # and closed before the loop starts, so the batches are fixed: two at the
+    # tick limit, the remainder at the close.
+    mktempdir() do dir
+        sink = open_raw_sink(dir, "report")
+        ch = Channel{Trade}(10)
+        foreach(i -> put!(ch, sample_trade(i)), 1:7)
+        close(ch)
+        seen = Tuple{Int,Int}[]
+        n = run_sink!(
+            ch,
+            sink;
+            flush_interval_s = 60.0,
+            flush_max_ticks = 3,
+            on_flush = (batch, total) -> push!(seen, (batch, total)),
+        )
+        close_sink!(sink)
+        @test n == 7
+        @test seen == [(3, 3), (3, 6), (1, 7)]
+        @test read_raw(sink.path) == [sample_trade(i) for i in 1:7]
+    end
+end
+
+@testset "raw parts: a session's parts are listed in the order they were written" begin
+    # Part numbers are compared as numbers: past part999 the zero padding no
+    # longer orders the names. Other sessions and sidecars are left out.
+    mktempdir() do dir
+        for f in (
+            "s_part999.jsonl",
+            "s_part1000.jsonl",
+            "s_part1001.jsonl",
+            "s_part002.jsonl",
+            "s_AAPL_2026-01-02_part001.jsonl",
+            "s_AAPL_2026-01-02_part010.jsonl",
+            "s_AAPL_2026-01-02_part009.jsonl",
+            "other_part001.jsonl",
+            "s.meta.toml",
+        )
+            touch(joinpath(dir, f))
+        end
+        @test basename.(MarketTickStreamer._raw_files_with_prefix(dir, "s")) == [
+            "s_AAPL_2026-01-02_part001.jsonl",
+            "s_AAPL_2026-01-02_part009.jsonl",
+            "s_AAPL_2026-01-02_part010.jsonl",
+            "s_part002.jsonl",
+            "s_part999.jsonl",
+            "s_part1000.jsonl",
+            "s_part1001.jsonl",
+        ]
+        absent = MarketTickStreamer._raw_files_with_prefix(joinpath(dir, "absent"), "s")
+        @test absent == String[] && absent isa Vector{String}
+    end
 end
 
 @testset "compaction" begin
@@ -565,6 +617,8 @@ end
         @test only(corpus_inventory(out).n_prints) == 5
         # A tree that holds a day in both formats is refused by every reader of
         # the listing: read as it stands, the day would count twice.
+        # Backdated, so the copy below is the newer file at any clock resolution.
+        run(`touch -d "1 minute ago" $arrow`)
         cp(joinpath(dirname(csv), "$(day)_#1.csv"), csv)
         @test_throws IntegrityError processed_files(out, "AAPL")
         @test_throws IntegrityError read_processed(out, "AAPL")
@@ -576,6 +630,11 @@ end
             from = Date(day) + Day(1),
             complete = true,
         )
+        # A marker sorted between the two names does not hide the pair.
+        between = joinpath(dirname(csv), "$(day).arrow.incomplete.toml")
+        write(between, "reason = \"x\"\n")
+        @test_throws IntegrityError processed_files(out, "AAPL")
+        rm(between)
         # Back to CSV and to Arrow again: each superseded file takes the next
         # free backup of its own format.
         rm(csv)
@@ -583,6 +642,24 @@ end
         compact_raw([sink.path], out; format = :arrow)
         @test sort(readdir(dirname(csv))) ==
               ["$(day).arrow", "$(day)_#1.arrow", "$(day)_#1.csv", "$(day)_#2.csv"]
+    end
+    # A tree that already holds both formats of a day is repaired by compacting
+    # the day again: the Arrow write retires the CSV, and the listing accepts it.
+    mktempdir() do dir
+        sink = open_raw_sink(dir, "both")
+        write_batch!(sink, [sample_trade(i) for i in 1:5])
+        close_sink!(sink)
+        out = joinpath(dir, "processed")
+        csv = only(compact_raw([sink.path], out; format = :csv))
+        aside = only(compact_raw([sink.path], joinpath(dir, "aside"); format = :arrow))
+        day = first(splitext(basename(csv)))
+        arrow = joinpath(dirname(csv), "$(day).arrow")
+        cp(aside, arrow)
+        @test isfile(csv) && isfile(arrow)
+        compact_raw([sink.path], out; format = :arrow)
+        canonical = filter(in(("$(day).csv", "$(day).arrow")), readdir(dirname(csv)))
+        @test canonical == ["$(day).arrow"]
+        @test processed_files(out, "AAPL") == [arrow]
     end
 end
 
@@ -713,6 +790,27 @@ end
         @test failure(starter) isa InterruptException
         @test !isfile(lockfile)
         close(acquire_session_lock(dir))
+        # No lock file before the call: nothing was replaced, so no pause.
+        @test !ispath(lockfile)
+        t = @elapsed held = acquire_session_lock(dir; settle_s = 5.0)
+        @test t < 2.0
+        close(held)
+        # A takeover is reported.
+        stale()
+        held = @test_logs (:warn, r"took the data tree over") match_mode = :any begin
+            acquire_session_lock(dir; settle_s = 0.05)
+        end
+        close(held)
+        # A name removed under a held lock no longer holds it, and the release
+        # copes with the missing file (Pidfile warns that it removed nothing).
+        held = acquire_session_lock(dir)
+        @test MarketTickStreamer._still_holds(held, lockfile)
+        rm(lockfile)
+        @test !MarketTickStreamer._still_holds(held, lockfile)
+        @test Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
+            close(held)
+            true
+        end
     end
 end
 

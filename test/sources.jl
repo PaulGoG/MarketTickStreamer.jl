@@ -531,6 +531,8 @@ end
         @test MarketTickStreamer._last_line_end(part; window = 100) == 6
         write(part, "y"^300)
         @test MarketTickStreamer._last_line_end(part; window = 100) == 0
+        # A part deleted since it was listed holds no line, and no error.
+        @test MarketTickStreamer._last_line_end(joinpath(raw, "missing.jsonl")) === Int64(0)
     end
 end
 
