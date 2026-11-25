@@ -66,6 +66,7 @@ are the defaults of `raw_subdir`, `processed_subdir` and `bulk_subdir`.
 | `bulk/itch50/<file>`, `bulk/iex/<file>` | `fetch_itch50`, `fetch_iex_hist` | Read only as the record of a day. |
 | `compact_spill_*/` | A compaction that spills to disk, which removes it when it ends | Never read; one left by a killed compaction may be deleted. |
 | `.session.lock` | The producer holding the tree | Never touched. |
+| `.session.lock.take` | A producer taking the lock, for the milliseconds it looks at it | Never touched. |
 
 Session logs are not part of the tree: they go to `[logging] log_dir` as
 `<id>.log`, stripped of terminal control sequences.
@@ -264,14 +265,15 @@ tree admits at a time: a capture, a backfill or an import. A second producer
 on the same tree refuses to start; a lock left by a dead process is broken
 by the next one once it has gone two minutes without a refresh (a live
 producer refreshes it every minute); one written on another host, whose
-process cannot be checked, after ten. Breaking a stale lock is not atomic, so a
-producer that found a lock file and took the tree waits a second and gives
-way if the name then holds another file than its own; two producers started
-at the same moment on a stale lock could otherwise both hold it. The wait
-settles two producers and not three: a third that reaches a stale lock in the
-instant between the unlinks of the other two finds no lock file, does not
-wait, and can lose the name without noticing. Consumers never take it, and
-their reads never wait on it.
+process cannot be checked, after ten. Breaking a stale lock is not atomic: of
+two producers that judged one lock stale, the later would unlink the lock the
+earlier had just created. Producers therefore take the lock one at a time,
+each holding `.session.lock.take` from its look at the lock to the creation of
+its own; one that finds it taken waits, and one left by a producer that died
+holding it is broken after five seconds. A producer that found a lock file and
+took the tree also waits a second and gives way if the name then holds another
+file than its own, which separates it from a producer of 2.2.1 or earlier.
+Consumers never take either file, and their reads never wait on them.
 
 ## Versioning
 

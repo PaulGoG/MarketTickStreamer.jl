@@ -7,6 +7,12 @@ Notable changes to MarketTickStreamer.jl. The format follows
 ## [Unreleased]
 
 ### Fixed
+- Three producers starting on one stale lock could still both take a data
+  tree: the settling check of 2.2.1 separates two, and a third that arrived
+  between their unlinks found no lock file and did not wait. Producers now
+  take the lock one at a time under a gate, `<data_dir>/.session.lock.take`,
+  held from their look at the lock to the creation of their own; the settling
+  check remains for a producer of 2.2.1 or earlier.
 - A capture interrupted while its sink then failed in the final drain
   returned `status = "failed"` and recorded `interrupted` in its sidecar. A
   failure recorded before the interrupt is kept, and `run_stream` reports the
@@ -31,8 +37,6 @@ Notable changes to MarketTickStreamer.jl. The format follows
 - `market_clock` and `historical_trades` are documented on the provider
   interface, where an adapter author looks for them; the Alpaca and Binance
   docstrings keep what is specific to each venue.
-- The manual states the limit of the lock's settling check: it separates two
-  producers that start on one stale lock at the same moment, not three.
 
 ## [2.2.1] - 2026-11-23
 

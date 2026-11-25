@@ -308,17 +308,17 @@ holder refreshes the file every minute; a lock whose process is gone is broken
 once it is two minutes old, and one whose process still runs only after ten.
 Release with `close(lock)`.
 
-A starter that found a lock file and took the lock all the same waits
-`settle_s` seconds and gives way if the name then holds another file than its
-own. Pidfile breaks a stale lock by unlinking the name and creating it anew,
-and of two starters that judged the same lock stale the later one unlinks the
-lock the earlier one has just created, so both would hold the tree.
+Pidfile breaks a stale lock by unlinking the name and creating it anew, and
+of two starters that judged the same lock stale the later one would unlink the
+lock the earlier one had just created, so both would hold the tree. Starters
+therefore take the lock one at a time: each holds a gate,
+`<data_dir>/.session.lock.take`, from its look at the lock to the creation of
+its own, and a starter that finds the gate taken waits for it, up to 30 s. A
+gate left by a process that died holding it is broken after 5 s.
 
-The check settles two starters. With three on one stale lock it has a gap: a
-starter that arrives after the first unlink and before the second finds no
-lock file, creates its own without waiting, and loses the name to the second
-unlink while it believes it holds the tree. All three must reach the lock
-within the instant that separates one starter's stale check from its unlink.
+A starter that found a lock file and took the lock all the same then waits
+`settle_s` seconds and gives way if the name holds another file than its own:
+this separates it from a starter of 2.2.1 or earlier, which takes no gate.
 """
 function acquire_session_lock(data_dir::AbstractString; settle_s::Real = LOCK_SETTLE_S)
     mkpath(data_dir)
@@ -330,13 +330,18 @@ function acquire_session_lock(data_dir::AbstractString; settle_s::Real = LOCK_SE
             "tree (stale locks from dead processes clear automatically)",
         ),
     )
-    found = ispath(path)
-    # Pidfile warns between judging a lock stale and unlinking it. A process's
-    # first warning takes about a second to compile, and for that long a second
-    # starter could interleave; muted here, the two steps are milliseconds
-    # apart, and the takeover is reported below instead.
-    pidlock = Logging.with_logger(Logging.NullLogger()) do
-        Pidfile.trymkpidlock(path; stale_age = 120.0)
+    # Under the gate no other starter of this version judges, breaks or creates
+    # the lock, so none can unlink a lock another has just created.
+    gate = _take_lock_gate(path * ".take")
+    found, pidlock = try
+        # Pidfile warns between judging a lock stale and unlinking it, and a
+        # process's first warning takes about a second to compile; muted, the
+        # gate is held for milliseconds, and the takeover is reported below.
+        ispath(path), Logging.with_logger(Logging.NullLogger()) do
+            Pidfile.trymkpidlock(path; stale_age = 120.0)
+        end
+    finally
+        close(gate)
     end
     pidlock === false && refuse()
     # `trymkpidlock` returns `Union{LockMonitor,Bool}`; the guard above settles
@@ -363,6 +368,34 @@ end
 # that the name still holds it: far longer than a concurrent starter takes
 # from its stale check to its unlink.
 const LOCK_SETTLE_S = 1.0
+
+# The gate is held for the milliseconds of one look at the lock. One left by a
+# process that died holding it is stale after LOCK_GATE_STALE_S (Pidfile waits
+# five times as long on a holder that still runs), and a starter waits for a
+# taken gate up to LOCK_GATE_WAIT_S.
+const LOCK_GATE_STALE_S = 5.0
+const LOCK_GATE_WAIT_S = 30.0
+
+# Take the gate at `gate`, polling while another starter holds it. Breaking a
+# stale gate is as little atomic as breaking a stale lock, but a gate is stale
+# only after a starter died in the milliseconds it holds one.
+function _take_lock_gate(gate::AbstractString; wait_s::Real = LOCK_GATE_WAIT_S)
+    deadline = time() + wait_s
+    while true
+        taken = Logging.with_logger(Logging.NullLogger()) do
+            Pidfile.trymkpidlock(gate; stale_age = LOCK_GATE_STALE_S)
+        end
+        taken === false || return taken::Pidfile.LockMonitor
+        time() < deadline || throw(
+            SessionError(
+                gate,
+                "another starter has held $gate for $(wait_s) s; a gate left by a " *
+                "process that died clears after $(LOCK_GATE_STALE_S) s",
+            ),
+        )
+        sleep(0.01)
+    end
+end
 
 # Whether `path` is still the file `held` created, the test Pidfile's own
 # `close` makes before it removes the name.
