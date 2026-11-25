@@ -250,9 +250,9 @@ function _ensure_free_disk(cfg::Config)
 end
 
 # Raw part files belonging to one session, in the order they were written:
-# by name, and by part number where two names differ in it alone. The number
-# is padded to three digits, so the names themselves put `_part1000` before
-# `_part101`.
+# by the name up to the part number, then by the number. The number is padded
+# to three digits, so the names themselves put `_part1000` before `_part101`;
+# up to `_part999` the two orders agree for the names a session writes.
 function _raw_files_with_prefix(dir::AbstractString, prefix::AbstractString)
     isdir(dir) || return String[]
     files = filter(
