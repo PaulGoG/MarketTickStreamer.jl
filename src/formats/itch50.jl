@@ -19,10 +19,7 @@ struct ItchOrder
 end
 
 # Big-endian integers and space-padded alphas at the 1-based index `i` of
-# their first byte.
-@inline _be16(b::Vector{UInt8}, i::Integer) = @inbounds (UInt16(b[i]) << 8) | UInt16(b[i+1])
-@inline _be32(b::Vector{UInt8}, i::Integer) =
-    (UInt32(_be16(b, i)) << 16) | UInt32(_be16(b, i + 2))
+# their first byte (`_be16` and `_be32` are in framing.jl).
 @inline _be48(b::Vector{UInt8}, i::Integer) =
     (UInt64(_be16(b, i)) << 32) | UInt64(_be32(b, i + 2))
 @inline _be64(b::Vector{UInt8}, i::Integer) =
@@ -94,40 +91,6 @@ function itch50_date(name::AbstractString)
         return Date(2000 + yy, mm, dd)
     end
     throw(ArgumentError("cannot read a session date from \"$name\""))
-end
-
-# The file as a byte stream: gzip is detected by its magic, anything else is read raw.
-function _open_day_file(path::AbstractString)
-    io = open(path, "r")
-    magic = read(io, 2)
-    seekstart(io)
-    return magic == UInt8[0x1f, 0x8b] ? GzipDecompressorStream(io) : io
-end
-
-# Fill `buf[len+1:end]` from `io`. Returns `(len, ended, cut)`: `ended` when
-# the stream has no more bytes, `cut` when a gzip member ended early (the
-# shape of a partial download), which ends the stream as well. Once `ended`,
-# the stream is not read again: a cut gzip stream throws on every read.
-function _fill!(io::IO, buf::Vector{UInt8}, len::Int)
-    ended = false
-    cut = false
-    try
-        while len < length(buf)
-            if eof(io)
-                ended = true
-                break
-            end
-            n = min(length(buf) - len, bytesavailable(io))
-            n == 0 && continue                      # eof(io) refilled the stream's buffer
-            GC.@preserve buf unsafe_read(io, pointer(buf, len + 1), n)
-            len += n
-        end
-    catch e
-        e isa ZlibError || rethrow()
-        ended = true
-        cut = true
-    end
-    return len, ended, cut
 end
 
 # Walk the framed messages of `io`, calling `f(buf, m, len)` with `buf[m]` the
@@ -494,18 +457,7 @@ end
 # The Content-Length a HEAD request announces, or `nothing` on 404. The
 # server answers a HEAD with a Range header 416, so none is sent.
 function _announced_length(url::AbstractString, policy::RestPolicy)
-    resp = _with_retry(policy) do
-        r = HTTP.head(
-            url;
-            retry = false,
-            status_exception = false,
-            readtimeout = policy.request_timeout_s,
-            connect_timeout = policy.connect_timeout_s,
-        )
-        r.status in RETRYABLE_STATUS &&
-            throw(HTTP.StatusError(r.status, "HEAD", String(url), r))
-        r
-    end::HTTP.Response
+    resp = _request_with_retry("HEAD", url, policy)
     resp.status == 404 && return nothing
     resp.status == 200 || throw(HTTP.StatusError(resp.status, "HEAD", String(url), resp))
     len = HTTP.header(resp, "Content-Length", "")

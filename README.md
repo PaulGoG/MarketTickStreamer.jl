@@ -375,6 +375,7 @@ Citation metadata is in [`CITATION.cff`](CITATION.cff). BibTeX:
 │   │   ├── alpaca.jl       # Alpaca adapter: US equities, NY calendar, credentialed
 │   │   └── binance.jl      # Binance adapter: crypto spot, UTC calendar, public
 │   └── formats/
+│       ├── framing.jl      # day-file opener and buffer refill shared by both readers
 │       ├── itch50.jl       # Nasdaq TotalView-ITCH 5.0 day files → Trade
 │       └── iex_hist.jl     # IEX HIST pcap/pcapng captures → Trade
 ├── ext/

@@ -298,8 +298,6 @@ function _expected_sha256(checksum_path::AbstractString)
     return lowercase(String(first(tokens)))
 end
 
-_sha256_hex(path::AbstractString) = bytes2hex(open(sha256, path))
-
 # The day's dump and its checksum, fetched into `dir` unless a verified copy
 # is already there. The checksum is fetched first: it is small, and its
 # absence (404) is the venue saying the day is not published. Both go through

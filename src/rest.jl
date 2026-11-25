@@ -164,6 +164,31 @@ _get_with_retry(url, headers; query = nothing, policy::RestPolicy = RestPolicy()
         )
     end
 
+# One request for a caller that reads the status itself, 404 included: a
+# retryable status is retried on the policy's schedule and thrown when it
+# persists, any other response is returned as it came.
+function _request_with_retry(
+    method::AbstractString,
+    url::AbstractString,
+    policy::RestPolicy;
+    query = nothing,
+)
+    kw = (;
+        retry = false,
+        status_exception = false,
+        readtimeout = policy.request_timeout_s,
+        connect_timeout = policy.connect_timeout_s,
+    )
+    return _with_retry(policy) do
+        r =
+            query === nothing ? HTTP.request(method, url; kw...) :
+            HTTP.request(method, url; query, kw...)
+        r.status in RETRYABLE_STATUS &&
+            throw(HTTP.StatusError(r.status, method, String(url), r))
+        r
+    end::HTTP.Response
+end
+
 # Fetch `url` into `path` in bounded Range requests of `chunk_bytes`, resuming
 # a `<path>.partial` left by an earlier attempt. HTTP.jl's read timeout bounds
 # a whole request, so one request per chunk keeps a transfer of hours inside
@@ -478,3 +503,7 @@ function _content_range_total(value::AbstractString)
     m = match(r"bytes\s+\d+-\d+/(\d+)", value)
     return m === nothing ? Int64(-1) : parse(Int64, m[1])
 end
+
+# SHA-256 of a file in lowercase hex: what a venue's checksum file states and
+# what an import's sidecar records.
+_sha256_hex(path::AbstractString) = bytes2hex(open(sha256, path))

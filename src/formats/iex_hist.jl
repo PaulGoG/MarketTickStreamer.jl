@@ -451,19 +451,12 @@ function iex_hist_index(
     policy::RestPolicy = RestPolicy(),
 )
     url = "$(api_base)/hist"
-    resp = _with_retry(policy) do
-        r = HTTP.get(
-            url;
-            query = ["date" => Dates.format(date, dateformat"yyyymmdd")],
-            retry = false,
-            status_exception = false,
-            readtimeout = policy.request_timeout_s,
-            connect_timeout = policy.connect_timeout_s,
-        )
-        r.status in RETRYABLE_STATUS &&
-            throw(HTTP.StatusError(r.status, "GET", url, r))
-        r
-    end::HTTP.Response
+    resp = _request_with_retry(
+        "GET",
+        url,
+        policy;
+        query = ["date" => Dates.format(date, dateformat"yyyymmdd")],
+    )
     resp.status == 404 && return nothing
     resp.status == 200 || throw(HTTP.StatusError(resp.status, "GET", url, resp))
     entries = JSON.parse(resp.body)
@@ -574,18 +567,7 @@ end
 # on the policy's schedule and fails the call when it persists; otherwise a
 # transient 5xx would return nothing and pass a cached file unverified.
 function _announced_crc32c(url::AbstractString, policy::RestPolicy)
-    resp = _with_retry(policy) do
-        r = HTTP.head(
-            url;
-            retry = false,
-            status_exception = false,
-            readtimeout = policy.request_timeout_s,
-            connect_timeout = policy.connect_timeout_s,
-        )
-        r.status in RETRYABLE_STATUS &&
-            throw(HTTP.StatusError(r.status, "HEAD", String(url), r))
-        r
-    end::HTTP.Response
+    resp = _request_with_retry("HEAD", url, policy)
     resp.status == 200 || return nothing
     return _crc32c_from_headers([String(k) => String(v) for (k, v) in resp.headers])
 end
