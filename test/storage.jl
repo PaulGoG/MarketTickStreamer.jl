@@ -912,6 +912,28 @@ end
         close(g)
         @test !ispath(gate)
     end
+    # G6: a held gate is never refreshed, so a monitor left unclosed goes stale.
+    mktempdir() do dir
+        gate = joinpath(dir, ".session.lock.take")
+        g = Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
+            MarketTickStreamer._take_lock_gate(gate)
+        end
+        run(`touch -d "1 minute ago" $gate`)
+        m = mtime(gate)
+        sleep(3.0)
+        @test mtime(gate) == m
+        g2 = Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
+            MarketTickStreamer._take_lock_gate(gate; wait_s = 0.3)
+        end
+        @test isfile(gate)
+        Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
+            close(g2)
+        end
+        @test !ispath(gate)
+        Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
+            close(g)
+        end
+    end
 end
 
 @testset "provenance: an installed copy records no git state" begin
