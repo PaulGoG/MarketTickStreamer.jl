@@ -439,6 +439,26 @@ end
         end
         @test out === :partial
         @test status_of("failed_then_interrupted") == "failed"
+        # The envelope lists the session's parts once: the summary holds what
+        # the sidecar records, and a capture reports from the summary alone.
+        kept = Ref{Any}(nothing)
+        MarketTickStreamer._with_session(cfg, "listed") do summary
+            kept[] = summary
+            touch(joinpath(cfg.raw_dir, "listed_part001.jsonl"))
+        end
+        listed = TOML.parsefile(joinpath(cfg.raw_dir, "listed.meta.toml"))["session"]
+        @test basename.(kept[].raw_files) == listed["raw_files"] == ["listed_part001.jsonl"]
+        kept[].status, kept[].ticks = "failed", 7
+        @test MarketTickStreamer._capture_result(kept[]) ==
+              (; ticks = 7, raw_files = kept[].raw_files, status = "failed")
+        @test MarketTickStreamer._capture_result(nothing) ==
+              (; ticks = 0, raw_files = String[], status = "interrupted")
+        @test only(
+            Base.return_types(
+                MarketTickStreamer._run_stream,
+                (Config, String, Nothing, Threads.Atomic{Bool}),
+            ),
+        ) == @NamedTuple{ticks::Int, raw_files::Vector{String}, status::String}
         # An interrupt thrown directly, with no status set, is recorded as one.
         out = MarketTickStreamer._with_session(
             cfg,

@@ -249,10 +249,11 @@ function _ensure_free_disk(cfg::Config)
     return nothing
 end
 
-# Raw part files belonging to one session, in the order they were written:
-# by the name up to the part number, then by the number. The number is padded
-# to three digits, so the names themselves put `_part1000` before `_part101`;
-# up to `_part999` the two orders agree for the names a session writes.
+# Raw part files belonging to one session: by the name up to the part number,
+# then by the number, so the parts of one prefix come in the order they were
+# written. The number is padded to three digits, and the names themselves put
+# `_part1000` before `_part101`; up to `_part999` the two orders agree for the
+# names a session writes.
 function _raw_files_with_prefix(dir::AbstractString, prefix::AbstractString)
     isdir(dir) || return String[]
     files = filter(
@@ -621,10 +622,11 @@ mutable struct SessionSummary
     source::Union{Nothing,AbstractDict}
     id_breaks::Union{Nothing,Int}
     meta_path::Union{Nothing,String}
+    raw_files::Vector{String}
     result::Any
 end
 SessionSummary() =
-    SessionSummary("completed", 0, nothing, nothing, nothing, nothing, nothing)
+    SessionSummary("completed", 0, nothing, nothing, nothing, nothing, String[], nothing)
 
 # The envelope shared by run_stream, run_backfill and run_import: the lock on
 # the data tree, reconciliation of stale sidecars, the free-disk gate, the
@@ -668,13 +670,15 @@ function _with_session(
         # The lock is released even when the sidecar cannot be finalized (a
         # full disk, for one), so the next session is not refused for it.
         try
+            # Listed once: what the sidecar records is what a runner reports.
+            summary.raw_files = _session_raw_files(cfg, sid)
             meta_path = summary.meta_path
             meta_path === nothing || finalize_session_meta(
                 meta_path,
                 summary.status;
                 ticks = summary.ticks,
                 ticks_processed = summary.ticks_processed,
-                raw_files = _session_raw_files(cfg, sid),
+                raw_files = summary.raw_files,
                 source = summary.source,
                 id_breaks = summary.id_breaks,
             )
@@ -849,17 +853,16 @@ function _run_stream(
         end
         return nothing
     end
-    # What the caller is told is read off the summary once the envelope has
-    # settled it, so it is what the sidecar records however the session ended.
-    # An interrupt that came before the body ran left no summary to read.
-    final = seen[]
-    final === nothing && return (; ticks = 0, raw_files = String[], status = "interrupted")
-    return (;
-        ticks = final.ticks,
-        raw_files = _session_raw_files(cfg, sid),
-        status = final.status,
-    )
+    return _capture_result(seen[])
 end
+
+# What a capture tells its caller, read off the summary once the envelope has
+# settled it: the status, the tick count and the listing of raw parts that the
+# sidecar records, however the session ended. An interrupt that came before
+# the body ran left no summary to read.
+_capture_result(::Nothing) = (; ticks = 0, raw_files = String[], status = "interrupted")
+_capture_result(final::SessionSummary) =
+    (; ticks = final.ticks, raw_files = final.raw_files, status = final.status)
 
 _unfinished_marked(_, _) = "fetched before the day ended"
 

@@ -8,13 +8,15 @@ Notable changes to MarketTickStreamer.jl. The format follows
 
 ### Fixed
 - A capture interrupted while its sink then failed in the final drain
-  returned `status = "failed"` and recorded `interrupted` in its sidecar. The
-  sidecar keeps the failure.
+  returned `status = "failed"` and recorded `interrupted` in its sidecar. A
+  failure recorded before the interrupt is kept, and `run_stream` reports the
+  status, the tick count and the raw files that the sidecar records, read
+  from one place, so the two agree however the session ended.
 - `backfill.start_date` and `end_date` outside 1678-01-01 to 2261-12-31 are
-  refused. The nanosecond timestamps of such a day do not fit an `Int64`: the
-  request window of a day in 1500 wrapped around to a later century, and
-  `today-<N>d` reaching that far back either loaded or was refused under the
-  other key.
+  refused, as strings and as TOML dates. The nanosecond timestamps of such a
+  day do not fit an `Int64`: the request window of a day in 1500 wrapped
+  around to a later century, and `today-<N>d` reaching that far back either
+  loaded or was refused under the other key.
 - Raw parts beyond `_part999` were taken in name order, which puts
   `_part1000` before `_part101`: a follower, the monitor, an import's sidecar
   and `scripts/compact.jl` without arguments read them out of sequence. Parts

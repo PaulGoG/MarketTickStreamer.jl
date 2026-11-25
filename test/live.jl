@@ -878,6 +878,33 @@ end
         s;
         kwargs...,
     ) = throw(InterruptException())
+    # A producer that the venue refuses at once, and a switch that makes the
+    # next listing of a session's raw parts throw one interrupt: a method on
+    # the concrete identifier type, removed again at the end of the testset.
+    @eval struct FatalAtOnceProvider <: MarketTickStreamer.AbstractProvider end
+    @eval MarketTickStreamer.stream_protocol!(
+        ch,
+        ::FatalAtOnceProvider,
+        cfg,
+        s;
+        kwargs...,
+    ) = throw(MarketTickStreamer.FatalStreamError("refused by the venue"))
+    @eval const TEARDOWN_INTERRUPT = Ref(false)
+    @eval function MarketTickStreamer._session_raw_files(
+        cfg::MarketTickStreamer.Config,
+        sid::String,
+    )
+        if TEARDOWN_INTERRUPT[]
+            TEARDOWN_INTERRUPT[] = false
+            throw(InterruptException())
+        end
+        return invoke(
+            MarketTickStreamer._session_raw_files,
+            Tuple{MarketTickStreamer.Config,AbstractString},
+            cfg,
+            sid,
+        )
+    end
     # An adapter that lets the interrupt out as HTTP.jl hands it over.
     @eval struct WrappedInterruptProvider <: MarketTickStreamer.AbstractProvider end
     @eval MarketTickStreamer.stream_protocol!(
@@ -966,8 +993,35 @@ end
                 ),
             )
             @test TOML.parsefile(sidecar)["session"]["status"] == "interrupted"
+            # A capture reports what its sidecar records, however it ended. The
+            # producer fails fatally and one interrupt lands in the teardown,
+            # thrown by its listing of the raw parts.
+            fatal_toml = clockless("fatal")
+            TEARDOWN_INTERRUPT[] = true
+            fatal = Base.invokelatest(
+                run_stream,
+                load_config(fatal_toml);
+                provider = FatalAtOnceProvider(),
+            )
+            @test !TEARDOWN_INTERRUPT[]                  # the interrupt was delivered
+            fatal_sidecar = only(
+                filter(
+                    endswith(".meta.toml"),
+                    readdir(joinpath(dirname(fatal_toml), "data", "raw"); join = true),
+                ),
+            )
+            meta = TOML.parsefile(fatal_sidecar)["session"]
+            @test fatal.status == meta["status"] == "failed"
+            @test fatal.ticks == meta["ticks"] == 0
+            @test basename.(fatal.raw_files) == meta["raw_files"]
         end
     finally
         close(server)
+        Base.delete_method(
+            which(
+                MarketTickStreamer._session_raw_files,
+                Tuple{MarketTickStreamer.Config,String},
+            ),
+        )
     end
 end
