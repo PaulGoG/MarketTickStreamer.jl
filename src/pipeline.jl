@@ -773,15 +773,12 @@ function _run_stream(
         delay +
         (delay > 0 ? 60 * NS_PER_SEC : Int64(0)) : nothing
 
-    # `result` is what an interrupt returns before the sink exists. The
-    # envelope writes the sidecar first, so a compaction that finds a part
+    # The envelope writes the sidecar first, so a compaction that finds a part
     # also finds its running session; the part comes before the producer, so
     # neither can fail with a connection already open and nothing to stop it.
-    return _with_session(
-        cfg,
-        sid;
-        result = (; ticks = 0, raw_files = String[], status = "interrupted"),
-    ) do summary
+    seen = Ref{Union{Nothing,SessionSummary}}(nothing)
+    _with_session(cfg, sid) do summary
+        seen[] = summary
         sink = open_raw_sink(cfg.raw_dir, sid; max_mb = cfg.max_raw_file_mb)
         session = try
             live_source(provider, cfg; stop)
@@ -846,14 +843,22 @@ function _run_stream(
             end
             close_sink!(sink)
             files = _session_raw_files(cfg, sid)
-            summary.result =
-                (; ticks = summary.ticks, raw_files = files, status = summary.status)
             @info "session finished" status = summary.status ticks = summary.ticks files =
                 length(files) meta = summary.meta_path frames = session.stats[].frames reconnects =
                 session.stats[].reconnects
         end
-        return summary.result
+        return nothing
     end
+    # What the caller is told is read off the summary once the envelope has
+    # settled it, so it is what the sidecar records however the session ended.
+    # An interrupt that came before the body ran left no summary to read.
+    final = seen[]
+    final === nothing && return (; ticks = 0, raw_files = String[], status = "interrupted")
+    return (;
+        ticks = final.ticks,
+        raw_files = _session_raw_files(cfg, sid),
+        status = final.status,
+    )
 end
 
 _unfinished_marked(_, _) = "fetched before the day ended"
