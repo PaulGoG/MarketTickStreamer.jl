@@ -480,7 +480,7 @@ function load_config(path::AbstractString = _default_config_path())
     exchange_today = Date(now(spec.tz))
     config_date(v, key) =
         v isa AbstractString ? _resolve_config_date(String(v), key, exchange_today) :
-        v isa Date ? v :
+        v isa Date ? _timestamped(v, string(v), key) :
         throw(ArgumentError("$key must be a date string or a TOML date, got $(repr(v))"))
     bf_start = config_date(get(bf, "start_date", "today-1d"), "backfill.start_date")
     bf_end = config_date(get(bf, "end_date", string(bf_start)), "backfill.end_date")

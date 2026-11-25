@@ -307,6 +307,18 @@ end
             base * "[backfill]\nstart_date = \"2261-12-31\"\nend_date = \"2262-01-01\"\n",
             "backfill.end_date",
         )
+        # An unquoted TOML date is held to the same range, with or without an
+        # end date beside it.
+        for tail in ("end_date = \"today\"\n", "")
+            @test refused_as(
+                base * "[backfill]\nstart_date = 1500-01-01\n" * tail,
+                "backfill.start_date",
+            )
+        end
+        @test refused_as(
+            base * "[backfill]\nstart_date = 2026-08-12\nend_date = 2300-01-01\n",
+            "backfill.end_date",
+        )
         for (lo, hi) in (("1678-01-01", "1678-01-02"), ("2261-12-30", "2261-12-31"))
             cfg = loaded(base * "[backfill]\nstart_date = \"$lo\"\nend_date = \"$hi\"\n")
             @test (cfg.backfill_start, cfg.backfill_end) == (Date(lo), Date(hi))
