@@ -249,13 +249,29 @@ function _ensure_free_disk(cfg::Config)
     return nothing
 end
 
-# Raw part files belonging to one session, sorted.
-_raw_files_with_prefix(dir::AbstractString, prefix::AbstractString) =
-    isdir(dir) ?
-    filter(
+# Raw part files belonging to one session, in the order they were written:
+# by name, and by part number where two names differ in it alone. The number
+# is padded to three digits, so the names themselves put `_part1000` before
+# `_part101`.
+function _raw_files_with_prefix(dir::AbstractString, prefix::AbstractString)
+    isdir(dir) || return String[]
+    files = filter(
         f -> startswith(basename(f), prefix) && endswith(f, ".jsonl"),
-        readdir(dir; join = true, sort = true),
-    ) : String[]
+        readdir(dir; join = true),
+    )
+    return sort!(files; by = _part_order)
+end
+
+# Sort key of a raw part: the path up to its part number, then the number. A
+# name without one sorts by itself.
+function _part_order(path::AbstractString)
+    m = match(r"^(.*_part)([0-9]+)\.jsonl\z", path)
+    m === nothing && return (String(path), 0)
+    return (
+        String(something(m[1])),
+        something(tryparse(Int, something(m[2])), typemax(Int)),
+    )
+end
 
 _session_raw_files(cfg::Config, sid::AbstractString) =
     _raw_files_with_prefix(cfg.raw_dir, sid)

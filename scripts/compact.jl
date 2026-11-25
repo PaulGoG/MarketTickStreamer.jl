@@ -10,10 +10,9 @@ function main()
     (; opts, positional) = parse_cli(ARGS; valued = ("config",))
     cfg = load_config(config_path(opts))
     files = positional
-    # Default: every .jsonl under the configured raw directory, whatever the provider.
-    if isempty(files) && isdir(cfg.raw_dir)
-        files = filter(endswith(".jsonl"), readdir(cfg.raw_dir; join = true))
-    end
+    # Default: every .jsonl under the configured raw directory, whatever the
+    # provider, each session's parts in the order they were written.
+    isempty(files) && (files = MarketTickStreamer._raw_files_with_prefix(cfg.raw_dir, ""))
     isempty(files) && (println("No raw files to compact."); return)
     written = compact_raw(cfg, files)
     println("Wrote $(length(written)) processed file(s):")

@@ -60,14 +60,7 @@ function main()
         foreach(f -> println("  ", f), written)
         return
     end
-    if isempty(files)
-        isdir(cfg.raw_dir) && (
-            files = filter(
-                f -> endswith(f, ".jsonl"),
-                readdir(cfg.raw_dir; join = true, sort = true),
-            )
-        )
-    end
+    isempty(files) && (files = MarketTickStreamer._raw_files_with_prefix(cfg.raw_dir, ""))
     isempty(files) && (println("No raw files found."); return)
 
     println("Session QA report:")
