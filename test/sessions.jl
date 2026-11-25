@@ -208,6 +208,44 @@ end
     finally
         close(server)
     end
+    # A request whose caller reads the status itself: a retryable status is
+    # retried and then thrown with the method and the target of the request;
+    # any other status comes back as a response, 404 included.
+    port = freeport(8976)
+    seen = Tuple{String,String}[]
+    server = HTTP.serve!("127.0.0.1", port; verbose = false) do req
+        push!(seen, (String(req.method), String(req.target)))
+        startswith(req.target, "/gone") && return HTTP.Response(404)
+        req.target == "/down" && return HTTP.Response(503)
+        length(seen) == 1 && return HTTP.Response(503)
+        return HTTP.Response(200)
+    end
+    try
+        policy = MarketTickStreamer.RestPolicy(1, 1, 1)
+        request(method, path; kw...) = MarketTickStreamer._request_with_retry(
+            method,
+            "http://127.0.0.1:$port$path",
+            policy;
+            kw...,
+        )
+        @test request("HEAD", "/file").status == 200          # 503, then 200
+        @test seen == [("HEAD", "/file"), ("HEAD", "/file")]
+        empty!(seen)
+        @test request("HEAD", "/gone").status == 404          # returned, not thrown
+        @test request("GET", "/gone"; query = ["date" => "20251209"]).status == 404
+        @test seen == [("HEAD", "/gone"), ("GET", "/gone?date=20251209")]
+        empty!(seen)
+        err = try
+            request("HEAD", "/down")
+        catch e
+            e
+        end
+        @test err isa HTTP.StatusError && err.status == 503
+        @test err.method == "HEAD" && err.target == "http://127.0.0.1:$port/down"
+        @test length(seen) == 2                               # one retry, then thrown
+    finally
+        close(server)
+    end
     # An interrupt that arrives inside a request comes out of HTTP.jl wrapped
     # as a transport error. It is rethrown as itself, not retried.
     calls = Ref(0)
