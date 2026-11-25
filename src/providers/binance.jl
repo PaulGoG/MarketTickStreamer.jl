@@ -113,9 +113,8 @@ ws_url(p::BinanceProvider, symbols::Vector{String}) =
 """
     market_clock(p::BinanceProvider) -> (; is_open, next_open, next_close)
 
-Always open. `next_open` and `next_close` are empty because the venue has
-neither; [`always_open`](@ref) is `true` for this provider, so the session
-orchestration never asks for them.
+Implements [`market_clock`](@ref) without a request: Binance spot never closes,
+so the clock is always open, with empty `next_open` and `next_close`.
 """
 market_clock(::BinanceProvider) = (; is_open = true, next_open = "", next_close = "")
 
@@ -168,11 +167,8 @@ const BINANCE_REST_HEADERS = ["X-MBX-TIME-UNIT" => "MICROSECOND"]
                       feed = "aggTrade", page_limit = 1000, rate_sleep_s = 0.1,
                       each_page = nothing) -> (; trades, prints)
 
-Download aggregate trades for `symbol` over `[start_date, end_date]`
-(inclusive UTC dates) from `/api/v3/aggTrades`. Signature and semantics match
-the Alpaca adapter's, so the backfill pipeline is provider-agnostic:
-`each_page` receives the pages and `trades` is then empty, otherwise every
-trade is accumulated in `trades`.
+Implements [`historical_trades`](@ref) with `/api/v3/aggTrades`, which serves
+aggregate trades; the dates are UTC dates.
 
 Pagination is by trade id, not by time window. Binance rejects a
 `startTime`/`endTime` pair spanning an hour or more, so the range is seeded

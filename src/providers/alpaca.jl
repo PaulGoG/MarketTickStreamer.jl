@@ -108,9 +108,8 @@ end
 """
     market_clock(p) -> (; is_open, next_open, next_close)
 
-Query `/v2/clock` on the trading API. Timestamps are returned as the raw
-RFC 3339 strings Alpaca sends; the session converts `next_open` and
-`next_close` with [`rfc3339_to_ns`](@ref) for the market-hours guards.
+Implements [`market_clock`](@ref) with `/v2/clock` on the trading API.
+Timestamps are returned as the raw RFC 3339 strings Alpaca sends.
 """
 function market_clock(p::AlpacaProvider)
     resp = _get_with_retry("$(p.trading_base)/v2/clock", rest_headers(p); policy = p.rest)
@@ -267,15 +266,9 @@ end
                       feed = "sip", page_limit = 10_000, rate_sleep_s = 0.35,
                       each_page = nothing) -> (; trades, prints)
 
-Download all trades for `symbol` in `[start_date, end_date]` (inclusive,
-exchange dates) from `/v2/stocks/{symbol}/trades`, following pagination
-tokens until exhausted. `rate_sleep_s` throttles between pages (free tier:
-200 requests/min). Backfilled records get `recv_ns = 0`, since they never
-crossed the wire.
-
-`trades` holds the prints and `prints` counts them. With `each_page` set,
-each page is handed to `each_page(::Vector{Trade})` as it arrives and
-`trades` is empty, so memory stays bounded by one page whatever the range.
+Implements [`historical_trades`](@ref) with `/v2/stocks/{symbol}/trades` on the
+data API, following pagination tokens until exhausted. The free tier allows
+200 requests/min.
 """
 function historical_trades(
     p::AlpacaProvider,

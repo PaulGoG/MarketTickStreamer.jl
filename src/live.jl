@@ -222,6 +222,65 @@ bulk_trades(p::AbstractProvider, ::AbstractString, ::Date; kwargs...) =
     throw(ArgumentError("provider $(nameof(typeof(p))) publishes no bulk files"))
 
 """
+    market_clock(p::AbstractProvider) -> (; is_open, next_open, next_close)
+
+Provider interface: the venue's clock at the time of the call. `is_open::Bool` says
+whether the venue trades now; `next_open` is the instant of its next open and
+`next_close` that of its next close, which while the venue is open ends the current
+session. Both are RFC 3339 strings that [`rfc3339_to_ns`](@ref) must parse. The session
+parses them before a producer starts, so an answer that does not parse fails the run
+there.
+
+[`run_stream`](@ref) calls it before the session starts, for a venue that closes, and
+only when `stream.require_market_open` or `stream.stop_at_market_close` is set. On a
+closed market, `stream.require_market_open` ends the run without streaming unless
+`stream.wait_for_open` is set; the session then sleeps until `next_open`, shifted by
+[`feed_delay_ns`](@ref) and a few seconds, and calls it again for the `next_close` of
+the session just opened. With `stream.stop_at_market_close`,
+[`schedule_close_stop!`](@ref) stops the session shortly after `next_close` plus the
+feed delay.
+
+A venue that never closes has neither instant and returns `is_open = true` with empty
+strings. Its [`always_open`](@ref) is `true`, so the session never calls it and reads
+neither field.
+"""
+function market_clock end
+
+"""
+    historical_trades(p::AbstractProvider, symbol, start_date, end_date;
+                      feed, page_limit, rate_sleep_s, each_page = nothing)
+        -> (; trades, prints)
+
+Provider interface: the prints of `symbol` from the venue's historical REST endpoint
+over the exchange dates `start_date` to `end_date`, both included, on the calendar of
+[`exchange_tz`](@ref). The request window runs from
+`exchange_day_start_ns(p, start_date)` to one nanosecond before
+`exchange_day_start_ns(p, end_date + Day(1))` ([`exchange_day_start_ns`](@ref)), so a
+day's window and the date its prints are filed under come from the same clock. Every
+record carries `recv_ns = 0`, since it never crossed the wire.
+
+`feed` is one of the spec's `backfill_feeds`. `page_limit` is the number of prints
+requested per page, in `1:max_page_limit` of the spec ([`ProviderSpec`](@ref)); a value
+outside that range throws `ArgumentError`. `rate_sleep_s` is the pause in seconds
+between successive page requests.
+
+Without `each_page`, `trades` holds every print. With it, each page is passed to
+`each_page(::Vector{Trade})` as it arrives and `trades` is empty, so memory stays
+bounded by one page whatever the range. `prints` counts the prints either way. Pages
+are handed over in the order the venue serves them, and the prints of a page in the
+order of its response; an order by timestamp is not part of the contract, and
+compaction sorts what it files.
+
+[`run_backfill`](@ref) calls it under `backfill.source = "rest"`, once per symbol and
+per date of [`session_days`](@ref) with `start_date == end_date`. It passes `feed`,
+`page_limit` and `rate_sleep_s` from `backfill.feed`, `backfill.page_limit` and
+`backfill.rate_limit_sleep_s`, and an `each_page` that writes every page to the day's
+raw file, and reads only `prints`. For a provider whose spec lists no
+`backfill_feeds`, the backfill is refused before any call.
+"""
+function historical_trades end
+
+"""
     historical_trade_count(p::AbstractProvider, symbol, start_str, end_str; kwargs...) -> Int
 
 Provider interface: count the prints of the historical tape for `symbol` over
