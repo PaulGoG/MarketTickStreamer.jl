@@ -382,6 +382,35 @@ end
         meta = TOML.parsefile(joinpath(cfg.raw_dir, "$sid.meta.toml"))
         @test meta["session"]["status"] == "interrupted"
         @test !isfile(joinpath(cfg.data_dir, ".session.lock"))
+        # The sidecar says `running` before the body runs.
+        seen = MarketTickStreamer._with_session(cfg, "running_sidecar") do summary
+            TOML.parsefile(summary.meta_path)["session"]["status"]
+        end
+        @test seen == "running"
+        # A failure the body recorded survives the interrupt that follows it;
+        # the interrupt is still absorbed and the session's result returned.
+        status_of(id) =
+            TOML.parsefile(joinpath(cfg.raw_dir, "$id.meta.toml"))["session"]["status"]
+        out = MarketTickStreamer._with_session(
+            cfg,
+            "failed_then_interrupted";
+            result = :partial,
+        ) do summary
+            summary.status = "failed"
+            throw(InterruptException())
+        end
+        @test out === :partial
+        @test status_of("failed_then_interrupted") == "failed"
+        # An interrupt thrown directly, with no status set, is recorded as one.
+        out = MarketTickStreamer._with_session(
+            cfg,
+            "interrupted_directly";
+            result = :partial,
+        ) do _
+            throw(InterruptException())
+        end
+        @test out === :partial
+        @test status_of("interrupted_directly") == "interrupted"
         # `resume` finds a day under the symbol as the adapter files it.
         day = Date(2026, 7, 29)
         mkpath(joinpath(cfg.processed_dir, "BTCUSDT"))

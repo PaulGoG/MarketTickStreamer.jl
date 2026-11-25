@@ -610,7 +610,8 @@ SessionSummary() =
 # finalization on every exit. The body fills `summary` as it goes.
 # Status: `completed` on return, `interrupted` on Ctrl-C, after which
 # `summary.result` is returned (`result` until the body replaces it), `failed`
-# on any other error, which propagates; the body may set `failed` itself.
+# on any other error, which propagates; the body may set `failed` itself, and
+# an interrupt does not overwrite it.
 function _with_session(
     body,
     cfg::Config,
@@ -630,9 +631,11 @@ function _with_session(
         return body(summary)
     catch e
         # Also an interrupt that ended a task the body waited on, which
-        # arrives as that task's failure.
+        # arrives as that task's failure. A body that recorded a failure on
+        # its way out (a sink that failed while draining after the interrupt)
+        # keeps it: the sidecar then reads as the returned status does.
         if has_wrapped_exception(e, InterruptException)
-            summary.status = "interrupted"
+            summary.status == "failed" || (summary.status = "interrupted")
             on_interrupt === nothing || @info on_interrupt sid
             return summary.result
         else
