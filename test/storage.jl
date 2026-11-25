@@ -741,7 +741,8 @@ end
         close(held)
         @test !isfile(lockfile)
         # Pidfile breaks a stale lock by unlinking the name, and a second
-        # starter that judged the same file stale unlinks the first one's new
+        # starter, one of 2.2.1 or earlier, which takes no gate and is emulated
+        # by hand, that judged the same file stale unlinks the first one's new
         # lock. The first then finds another pid under the name and yields,
         # leaving that file where it is.
         stale()
@@ -811,6 +812,105 @@ end
             close(held)
             true
         end
+    end
+end
+
+@testset "session lock: starters take the lock one at a time, under a gate" begin
+    me = "$(getpid()) $(gethostname())"
+    # G1: the gate is gone after every exit: a lock taken, refused, or taken over.
+    mktempdir() do dir
+        lockfile = joinpath(dir, ".session.lock")
+        gate = joinpath(dir, ".session.lock.take")
+        first_lock = Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
+            acquire_session_lock(dir)
+        end
+        @test startswith(read(lockfile, String), "$(getpid()) ")
+        @test !ispath(gate)
+        refused = Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
+            try
+                acquire_session_lock(dir)
+                nothing
+            catch e
+                e
+            end
+        end
+        @test refused isa SessionError
+        @test !ispath(gate)
+        close(first_lock)
+        write(lockfile, "99999999 $(gethostname())")
+        run(`touch -d "10 minutes ago" $lockfile`)
+        held = Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
+            acquire_session_lock(dir; settle_s = 0.05)
+        end
+        @test startswith(read(lockfile, String), "$(getpid()) ")
+        @test !ispath(gate)
+        close(held)
+    end
+    # G2: a starter leaves the lock untouched while another holds the gate.
+    mktempdir() do dir
+        lockfile = joinpath(dir, ".session.lock")
+        gate = joinpath(dir, ".session.lock.take")
+        write(gate, me)
+        write(lockfile, "99999999 $(gethostname())")
+        run(`touch -d "10 minutes ago" $lockfile`)
+        before = read(lockfile, String)
+        ino = stat(lockfile).inode
+        starter = @async Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
+            acquire_session_lock(dir; settle_s = 0.05)
+        end
+        sleep(0.5)
+        @test !istaskdone(starter)
+        @test read(lockfile, String) == before
+        @test stat(lockfile).inode == ino
+        rm(gate)
+        @test timedwait(() -> istaskdone(starter), 10.0) === :ok
+        held = fetch(starter)
+        @test startswith(read(lockfile, String), "$(getpid()) ")
+        @test !ispath(gate)
+        close(held)
+    end
+    # G3: a gate left by a process that died is broken after LOCK_GATE_STALE_S.
+    mktempdir() do dir
+        gate = joinpath(dir, ".session.lock.take")
+        write(gate, "99999999 $(gethostname())")
+        run(`touch -d "1 minute ago" $gate`)
+        t = @elapsed held = Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
+            acquire_session_lock(dir)
+        end
+        @test t < 3.0
+        @test !ispath(gate)
+        close(held)
+    end
+    # G4: a gate whose holder runs and is older than LOCK_GATE_STALE_S but younger
+    # than five times it is waited for, then refused and left in place.
+    mktempdir() do dir
+        gate = joinpath(dir, ".session.lock.take")
+        write(gate, me)
+        run(`touch -d "10 seconds ago" $gate`)
+        t = @elapsed err = Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
+            try
+                MarketTickStreamer._take_lock_gate(gate; wait_s = 0.3)
+                nothing
+            catch e
+                e
+            end
+        end
+        @test err isa SessionError
+        @test 0.3 <= t < 3.0
+        @test read(gate, String) == me
+        rm(gate)
+    end
+    # G5: the same holder's gate older than five times LOCK_GATE_STALE_S is broken.
+    mktempdir() do dir
+        gate = joinpath(dir, ".session.lock.take")
+        write(gate, me)
+        run(`touch -d "1 minute ago" $gate`)
+        g = Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
+            MarketTickStreamer._take_lock_gate(gate; wait_s = 0.3)
+        end
+        @test isfile(gate)
+        close(g)
+        @test !ispath(gate)
     end
 end
 
