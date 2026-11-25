@@ -132,7 +132,7 @@ The pipeline's safety margins.
 
 | Key | Meaning |
 | --- | --- |
-| `start_date`, `end_date` | Inclusive exchange dates on the provider's calendar (America/New_York for Alpaca, UTC for Binance). Either an ISO date `"YYYY-MM-DD"` or a sentinel: `"today"`, or `"today-<N>d"` for N calendar days back. |
+| `start_date`, `end_date` | Inclusive exchange dates on the provider's calendar (America/New_York for Alpaca, UTC for Binance). Either an ISO date `"YYYY-MM-DD"` or a sentinel: `"today"`, or `"today-<N>d"` for N calendar days back. Both must lie in 1678-01-01 to 2261-12-31, the days whose nanosecond timestamps fit an `Int64`. |
 | `feed` | Historical feed. Alpaca: `"iex"` or `"sip"`; free accounts have full SIP history back to 2016, minus the most recent 15 minutes. Binance: `"aggTrade"` by REST; `"aggTrade"` or `"trade"` from the daily bulk files. |
 | `source` | `"rest"` walks the provider's historical endpoint page by page; `"bulk"` (Binance only) downloads the venue's daily file for each day, verifies its checksum and keeps it. Everything after that is the same run: raw parts per day, compaction, resume. |
 | `page_limit` | Rows per REST page, from 1 to the provider maximum (Alpaca 10000, Binance 1000), which is also the default. A larger value is rejected: Binance clamps it without an error, and a clamped page reads as the end of the tape. |

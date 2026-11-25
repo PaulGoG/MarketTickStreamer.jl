@@ -726,7 +726,8 @@ sentinel relative to `reference`: `"today"`, or `"today-<N>d"` with `N` a
 non-negative integer number of calendar days. Sentinels keep a committed
 configuration from going stale; they count calendar days, not trading days, so
 a window may resolve onto a weekend or holiday and yield no prints. Throws
-`ArgumentError` naming `key` on any other value.
+`ArgumentError` naming `key` on any other value, and on a date outside the
+years 1678 to 2261, whose days a nanosecond timestamp cannot hold.
 """
 function _resolve_config_date(spec::AbstractString, key::AbstractString, reference::Date)
     # `\z` and `[0-9]`: `$` also matches before a final newline, and `\d` any
@@ -737,7 +738,7 @@ function _resolve_config_date(spec::AbstractString, key::AbstractString, referen
         n = back === nothing ? 0 : tryparse(Int, back)
         n === nothing &&
             throw(ArgumentError("$key counts more days back than an Int holds: \"$spec\""))
-        return reference - Day(n)
+        return _timestamped(reference - Day(n), spec, key)
     end
     # `tryparse(Date, _)` alone takes any run of digits as a year, "20260812"
     # included, so the form is checked first. A year alone, or a year and a
@@ -754,6 +755,23 @@ function _resolve_config_date(spec::AbstractString, key::AbstractString, referen
         ),
     )
     short && @warn "$key = \"$spec\" names no day and is read as $d; write the date in full"
+    return _timestamped(d, spec, key)
+end
+
+# The first and last year whose days have nanosecond timestamps that fit an
+# `Int64` whole (the count runs from 1677-09-21 to 2262-04-11).
+const TIMESTAMP_YEARS = 1678:2261
+
+# `d` when a request window on that day can be written in nanoseconds since
+# the epoch. On a day outside the range the window's bounds wrap around.
+function _timestamped(d::Date, spec::AbstractString, key::AbstractString)
+    Date(first(TIMESTAMP_YEARS), 1, 1) <= d <= Date(last(TIMESTAMP_YEARS), 12, 31) || throw(
+        ArgumentError(
+            "$key must lie in $(first(TIMESTAMP_YEARS))-01-01 to " *
+            "$(last(TIMESTAMP_YEARS))-12-31, the days a nanosecond timestamp " *
+            "holds, got \"$spec\"",
+        ),
+    )
     return d
 end
 

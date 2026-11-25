@@ -53,8 +53,8 @@ clock = "auto"                   # pacing timestamp; one of: "auto" | "recv" | "
 
 [backfill]
 # Dates are exchange dates on the provider's calendar (alpaca: America/New_York, binance: UTC).
-start_date = "today-2d"          # inclusive start; ISO "YYYY-MM-DD" or "today" / "today-<N>d"
-end_date = "today-1d"            # inclusive end; >= start_date; same forms
+start_date = "today-2d"          # inclusive start; ISO "YYYY-MM-DD" or "today" / "today-<N>d"; in 1678-01-01 to 2261-12-31
+end_date = "today-1d"            # inclusive end; >= start_date; same forms and range
 feed = "sip"                     # historical feed; alpaca: "iex" | "sip"; binance: "aggTrade" (rest), "aggTrade" | "trade" (bulk)
 source = "rest"                  # one of: "rest" | "bulk"; "bulk" = the venue's daily files, binance only
 page_limit = 10000               # rows per REST page; 1 to the provider maximum (alpaca 10000, binance 1000)

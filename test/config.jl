@@ -285,6 +285,38 @@ end
             base * "[backfill]\nstart_date = \"2026-08-02\"\nend_date = \"2026-08-03\"\n",
         )
         @test (cfg.backfill_start, cfg.backfill_end) == (Date(2026, 8, 2), Date(2026, 8, 3))
+        # Only dates whose nanosecond timestamps fit an Int64, 1678-01-01 to
+        # 2261-12-31, load; one outside is refused under its own key.
+        function refused_as(body, key)
+            write(p, body)
+            err = try
+                load_config(p)
+                nothing
+            catch e
+                e
+            end
+            return err isa ArgumentError && occursin(key, sprint(showerror, err))
+        end
+        for s in ("1500-01-01", "today-800000d", "2262-01-01")
+            @test refused_as(
+                base * "[backfill]\nstart_date = \"$s\"\n",
+                "backfill.start_date",
+            )
+        end
+        @test refused_as(
+            base * "[backfill]\nstart_date = \"2261-12-31\"\nend_date = \"2262-01-01\"\n",
+            "backfill.end_date",
+        )
+        for (lo, hi) in (("1678-01-01", "1678-01-02"), ("2261-12-30", "2261-12-31"))
+            cfg = loaded(base * "[backfill]\nstart_date = \"$lo\"\nend_date = \"$hi\"\n")
+            @test (cfg.backfill_start, cfg.backfill_end) == (Date(lo), Date(hi))
+        end
+        # Days are counted in ASCII digits only, an escaped newline does not
+        # pass for the end of a date, and "today-0d" is today.
+        rejected(base * "[backfill]\nstart_date = \"today-١d\"\n")   # Arabic-Indic one
+        rejected(base * "[backfill]\nstart_date = \"2026-08-12\\n\"\n")
+        @test loaded(base * "[backfill]\nstart_date = \"today-0d\"\n").backfill_start ==
+              loaded(base * "[backfill]\nstart_date = \"today\"\n").backfill_start
         # an interval that is slept or drawn: `inf`, and what no timer counts
         rejected(base * "[backfill]\nrate_limit_sleep_s = inf\n")
         rejected(base * "[backfill]\nrate_limit_sleep_s = 1e17\n")
