@@ -211,6 +211,32 @@ function _row_price_forming(tape, conditions, non_price::AbstractDict)
 end
 
 """
+    _within_session(days, session; tz) -> Vector{Tuple{Date,DataFrame}}
+
+The per-day processed tables `(date, DataFrame)` restricted to the prints whose
+exchange-local hour lies in `[open, close]` of `session`, in fractional hours on
+the calendar `tz`, both bounds included. The selected rows are copied and the
+input tables are left unchanged. A session covering the whole day, `open <= 0`
+and `close >= 24`, returns `days` itself, without a copy. A day without a print
+inside the session is kept, with an empty table.
+"""
+function _within_session(
+    days::AbstractVector{<:Tuple{Date,DataFrame}},
+    session::Tuple{<:Real,<:Real};
+    tz::TimeZone,
+)
+    session_open, session_close = session
+    (session_open <= 0 && session_close >= 24) && return days
+    selected = Tuple{Date,DataFrame}[]
+    for (date, df) in days
+        inside =
+            Bool[session_open <= _local_hour(ns; tz) <= session_close for ns in df.time_ns]
+        push!(selected, (date, df[inside, :]))
+    end
+    return selected
+end
+
+"""
     _pooled_gaps(days; continuous) -> (gaps, excluded)
 
 Waiting times [s] pooled over per-day processed tables `(date, DataFrame)`,

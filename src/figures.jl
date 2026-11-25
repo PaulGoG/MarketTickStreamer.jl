@@ -55,16 +55,19 @@ Multi-day diagnostic figure for one symbol from per-day processed tables
   are dashed up to a month of days,
 - day × session-minute activity heatmap, with the same day labels,
 - pooled intra-session inter-arrival survival function `P(Δt ≥ x)` over the
-  positive gaps, with the share of zero gaps annotated (overnight gaps
+  positive gaps between the prints inside `session`, like the price path and
+  the heatmap, with the share of zero gaps annotated (overnight gaps
   excluded by construction, since they would contaminate the waiting-time
   tail; with a 24-hour `session` midnight is not a boundary, and the wait
   across it is kept whenever the next calendar day is present),
-- pooled trade-size survival function `P(S ≥ s)` with a Hill tail exponent.
+- pooled trade-size survival function `P(S ≥ s)` over the same prints, with
+  a Hill tail exponent.
 
 `session` is the venue's regular session as exchange-local hours
-`(open, close)`, `0 <= open < close <= 24`; it sets the width of a day on the
-concatenated axis and the span of the activity heatmap. The default is the US
-equity session; a venue that never closes takes `(0.0, 24.0)`. `price_unit`
+`(open, close)`, `0 <= open < close <= 24`; it selects the prints of all four
+panels, sets the width of a day on the concatenated axis and the span of the
+activity heatmap. The default is the US equity session; a venue that never
+closes takes `(0.0, 24.0)`. `price_unit`
 and `size_unit` name the units on the price and size axes. All three are
 properties of the venue and come with its [`ProviderSpec`](@ref).
 

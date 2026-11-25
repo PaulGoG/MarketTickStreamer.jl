@@ -105,6 +105,20 @@ using UnicodePlots: UnicodePlots
         early.price[1] = 500.0
         ax = first(overview_figure("AAPL", [(Date(2026, 7, 30), early)]).content)
         @test ax.limits[][2][2] < 200
+        # The two distribution panels pool the session as well: that print,
+        # 3 h ahead of the next one and of size 1e6 here, adds neither a
+        # waiting time nor a size. On the whole day it adds both.
+        early.size[1] = 1.0e6
+        panels(; kw...) = filter(
+            x -> x isa CairoMakie.Axis,
+            overview_figure("AAPL", [(Date(2026, 7, 30), early)]; kw...).content,
+        )
+        session_panels = panels()
+        @test maximum(session_panels[3].xticks[][1]) == 100      # gaps of 10 s
+        @test maximum(session_panels[4].xticks[][1]) == 100      # sizes 1 to 100
+        day_panels = panels(; session = (0.0, 24.0))
+        @test maximum(day_panels[3].xticks[][1]) == 1.0e4        # one gap of 10 810 s
+        @test maximum(day_panels[4].xticks[][1]) == 1.0e6
         # A day with no print inside the session draws nothing and keeps its
         # slot on the axis: two days of 6.5 h, 0.25 h apart, and a 2 % margin.
         before_open = copy(df)

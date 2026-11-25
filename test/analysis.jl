@@ -191,6 +191,35 @@ end
     gaps, excluded = M._pooled_gaps(days; continuous = true)
     @test gaps == [1.0, 2.0, 7.0, 4.0, 1.0] && excluded == 1
     @test M._pooled_gaps(days[1:1]; continuous = true) == ([1.0, 2.0], 0)
+    # The overview's distribution panels take the prints inside the session.
+    # New York on 2026-07-30 is UTC-4: prints at 08:00, 10:00:00, 10:00:01,
+    # 15:00 and 18:00 local, then a day whose one print comes at 20:00.
+    ny = tz"America/New_York"
+    local_ns(d, h, m, s) =
+        Dates.value(DateTime(d) + Hour(h + 4) + Minute(m) + Second(s) - DateTime(1970)) *
+        1_000_000
+    table(d, clock) = (
+        d,
+        DataFrame(;
+            time_ns = Int64[local_ns(d, c...) for c in clock],
+            size = Float64.(eachindex(clock)),
+        ),
+    )
+    d1, d2 = Date(2026, 7, 30), Date(2026, 7, 31)
+    extended = [
+        table(d1, [(8, 0, 0), (10, 0, 0), (10, 0, 1), (15, 0, 0), (18, 0, 0)]),
+        table(d2, [(20, 0, 0)]),
+    ]
+    inside = M._within_session(extended, (9.5, 16.0); tz = ny)
+    @test first.(inside) == [d1, d2]                     # an empty day keeps its place
+    @test inside[1][2].size == [2.0, 3.0, 4.0]
+    @test isempty(inside[2][2].time_ns)
+    @test size(extended[1][2], 1) == 5                   # the input is left as it was
+    @test M._pooled_gaps(inside; continuous = false) == ([1.0, 5 * 3600 - 1.0], 1)
+    # both bounds belong to the session; the whole day is the input itself
+    edge = [table(d1, [(9, 30, 0), (16, 0, 0), (16, 0, 1)])]
+    @test M._within_session(edge, (9.5, 16.0); tz = ny)[1][2].size == [1.0, 2.0]
+    @test M._within_session(extended, (0.0, 24.0); tz = ny) === extended
     # thinning preserves ends; decimation preserves extrema
     xs = collect(1.0:10_000.0)
     tx, ty = M._thin(xs, xs; cap = 500)

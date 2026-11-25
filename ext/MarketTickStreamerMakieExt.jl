@@ -5,7 +5,8 @@
 #   session_figure   — one symbol, one trading day (price, activity, Δt/size CCDFs)
 #   overview_figure  — one symbol, many days (price on a concatenated
 #                      trading-time axis, day×minute activity heatmap,
-#                      intra-session waiting-time and size CCDFs)
+#                      waiting-time and size CCDFs pooled over the prints
+#                      inside the session)
 # Inter-arrival and size distributions are drawn as survival functions on
 # log-log axes; a linear histogram hides a heavy tail.
 
@@ -55,7 +56,8 @@ using MarketTickStreamer:
     _tail_fit,
     _zero_gap_note,
     _thin,
-    _value_pm
+    _value_pm,
+    _within_session
 using Printf: @sprintf
 using Statistics: median
 using TimeZones: @tz_str, Date, TimeZone
@@ -420,9 +422,12 @@ function MarketTickStreamer.overview_figure(
         ticks = _log_ticks(crange...),
     )
 
-    # Panel 3: pooled intra-session waiting-time CCDF
+    # Panels 3 and 4 pool the prints inside the session, as panels 1 and 2 do.
+    pooled = _within_session(days, (session_open, session_close); tz)
+
+    # Panel 3: waiting-time CCDF pooled over the prints inside the session
     continuous = session_len == 24
-    dts, excluded = _pooled_gaps(days; continuous)
+    dts, excluded = _pooled_gaps(pooled; continuous)
     pooling_note =
         excluded == 0 ? "$nd contiguous days pooled" :
         "$nd sessions pooled; $excluded between-session " *
@@ -454,9 +459,9 @@ function MarketTickStreamer.overview_figure(
         _annotate_zero_gaps!(ax3, dts, color)
     end
 
-    # Panel 4: pooled size CCDF
+    # Panel 4: size CCDF pooled over the prints inside the session
     sizes = Float64[]
-    for (_, df) in days
+    for (_, df) in pooled
         append!(sizes, Float64.(df.size))
     end
     sort!(filter!(>(0.0), sizes))
