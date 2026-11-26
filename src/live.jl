@@ -227,9 +227,9 @@ bulk_trades(p::AbstractProvider, ::AbstractString, ::Date; kwargs...) =
 Provider interface: the venue's clock at the time of the call. `is_open::Bool` says
 whether the venue trades now; `next_open` is the instant of its next open and
 `next_close` that of its next close, which while the venue is open ends the current
-session. Both are RFC 3339 strings that [`rfc3339_to_ns`](@ref) must parse. The session
-parses them before a producer starts, so an answer that does not parse fails the run
-there.
+session. Both are RFC 3339 strings that [`rfc3339_to_ns`](@ref) must parse. Each field
+the session reads is parsed before a producer starts, so an answer it cannot parse fails
+the run there.
 
 [`run_stream`](@ref) calls it before the session starts, for a venue that closes, and
 only when `stream.require_market_open` or `stream.stop_at_market_close` is set. On a

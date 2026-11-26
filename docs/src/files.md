@@ -272,10 +272,13 @@ earlier had just created. Producers therefore take the lock one at a time,
 each holding `.session.lock.take` from its look at the lock to the creation of
 its own; one that finds it taken waits for it, and is refused if it has not
 taken it within 30 seconds. A gate is held for milliseconds; one whose holder
-died is broken after five seconds, one whose holder still runs after 25. The
-gate serializes producers only while none stops under it: one that stops for
-longer than that between judging the lock stale and replacing it unlinks the
-lock of a producer that broke the gate meanwhile. A producer that found a
+died on this host is broken after five seconds, any other after 25. Breaking
+a gate is no more atomic than breaking the lock, so the gate serializes
+producers only while none dies or stops under it: one that stops for longer
+than 25 seconds between judging the lock stale and replacing it unlinks the
+lock of a producer that broke the gate meanwhile, and three that break one
+gate at the same moment on a stale lock are as exposed as three producers of
+2.2.1. A producer that found a
 lock file and took the tree also waits a second and gives way if the name
 then holds another file than its own, which separates it from one producer
 of 2.2.1; producers of older or mixed releases starting together keep the

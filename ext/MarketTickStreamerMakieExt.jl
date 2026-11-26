@@ -422,7 +422,7 @@ function MarketTickStreamer.overview_figure(
         ticks = _log_ticks(crange...),
     )
 
-    # Panels 3 and 4 pool the prints inside the session, as panels 1 and 2 do.
+    # Panels 3 and 4 pool the prints inside the session, as panel 1 does.
     pooled = _within_session(days, (session_open, session_close); tz)
 
     # Panel 3: waiting-time CCDF pooled over the prints inside the session

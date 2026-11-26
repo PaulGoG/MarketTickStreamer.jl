@@ -314,13 +314,14 @@ lock the earlier one had just created, so both would hold the tree. Starters
 therefore take the lock one at a time: each holds a gate,
 `<data_dir>/.session.lock.take`, from its look at the lock to the creation of
 its own, and a starter that finds the gate taken waits for it. A gate is held
-for milliseconds; one whose holder died is broken after 5 s, one whose holder
-still runs after 25 s, and a starter that has not taken the gate within 30 s
-is refused. Breaking a gate is no more atomic than breaking the lock, so the
-gate serializes starters only while none stops under it: one that stops for
-more than 25 s between judging the lock stale and replacing it unlinks the
-lock of a starter that broke the gate meanwhile, and three that break one gate
-at the same moment on a stale lock are as exposed as three starters of 2.2.1.
+for milliseconds; one whose holder died on this host is broken after 5 s, any
+other after 25 s, and a starter that has not taken the gate within 30 s is
+refused. Breaking a gate is no more atomic than breaking the lock, so the
+gate serializes starters only while none dies or stops under it: one that
+stops for more than 25 s between judging the lock stale and replacing it
+unlinks the lock of a starter that broke the gate meanwhile, and three that
+break one gate at the same moment on a stale lock are as exposed as three
+starters of 2.2.1.
 
 A starter that found a lock file and took the lock all the same then waits
 `settle_s` seconds and gives way if the name holds another file than its own:
@@ -356,7 +357,7 @@ function acquire_session_lock(data_dir::AbstractString; settle_s::Real = LOCK_SE
             close(gate)
         catch
             # A lock taken and then lost with the gate's release would hold
-            # the tree, refreshed, for as long as the process lives.
+            # the tree, refreshed, until it is collected or the process exits.
             pidlock isa Pidfile.LockMonitor && close(pidlock)
             rethrow()
         end
@@ -371,7 +372,8 @@ function acquire_session_lock(data_dir::AbstractString; settle_s::Real = LOCK_SE
         # `close` below leaves in place a file that is not this starter's own.
         _still_holds(held, path) || refuse()
         # A logger that throws, or an interrupt during the warning's first
-        # compilation, would otherwise leave the lock held and refreshed.
+        # compilation, would otherwise leave the lock held and refreshed until
+        # it is collected.
         @warn "took the data tree over from a lock that was stale or just released" path
     catch
         close(held)
@@ -389,8 +391,9 @@ const LOCK_SETTLE_S = 1.0
 # process that died holding it is stale after LOCK_GATE_STALE_S (Pidfile waits
 # five times as long on a holder that still runs), and a starter waits for a
 # taken gate up to LOCK_GATE_WAIT_S, longer than either: the wait ends in a
-# refusal only when other starters keep taking the gate, or when its time stamp
-# lies ahead of this host's clock. The gate is never refreshed: its refresh
+# refusal only when other starters keep taking the gate, when its time stamp
+# lies ahead of this host's clock, or when this process cannot remove a stale
+# one. The gate is never refreshed: its refresh
 # interval lies beyond any hold, so a gate whose monitor an interrupt left
 # unclosed in a long-lived process goes stale like any other. (A refresh of
 # zero would turn Pidfile's factor for a live holder from five to 25.)
@@ -416,7 +419,8 @@ function _take_lock_gate(gate::AbstractString; wait_s::Real = LOCK_GATE_WAIT_S)
             SessionError(
                 gate,
                 "waited $(wait_s) s for $gate without taking it: other starters " *
-                "kept taking it, or its time stamp lies ahead of this host's clock",
+                "kept taking it, its time stamp lies ahead of this host's clock, " *
+                "or this process cannot remove it",
             ),
         )
         sleep(0.01)
