@@ -11,12 +11,16 @@ Notable changes to MarketTickStreamer.jl. The format follows
   tree: the settling check of 2.2.1 separates two, and a third that arrived
   between their unlinks found no lock file and did not wait. Producers now
   take the lock one at a time under a gate, `<data_dir>/.session.lock.take`,
-  held from their look at the lock to the creation of their own. A producer
-  that finds the gate taken waits up to 30 s and is then refused with a
-  `SessionError` naming it; a gate left by a process that died is broken
-  after 5 s. The settling check remains and separates one producer of 2.2.1.
-  Like the lock, the gate is the producers' own, and the file contract lists
-  it as such.
+  held from their look at the lock to the creation of their own. A gate is
+  held for milliseconds; one whose holder died is broken after 5 s, one whose
+  holder still runs after 25 s, and a producer that has not taken the gate
+  within 30 s is refused with a `SessionError` naming it. A producer that
+  stops for longer than 25 s under the gate can still leave two holders. The
+  settling check remains and separates one producer of 2.2.1. Like the lock,
+  the gate is the producers' own, and the file contract lists it as such.
+- A takeover warning that failed, from a logger that throws or an interrupt
+  while it compiled, left the data tree locked by the process until it
+  exited. The lock is released before the error propagates.
 - A capture interrupted while its sink then failed in the final drain
   returned `status = "failed"` and recorded `interrupted` in its sidecar. A
   failure recorded before the interrupt is kept, and `run_stream` reports the

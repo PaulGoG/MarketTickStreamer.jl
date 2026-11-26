@@ -113,9 +113,10 @@ Lines are in the order the sink received them, which for a capture is the
 arrival order. It is not chronological: a consolidated tape interleaves
 venues and late prints are normal. A part rolls to the next one once it
 reaches `limits.max_raw_file_mb` MiB, checked after each batch, so a part may
-exceed the limit by one batch; parts are numbered from `001` and read in name
-order. A part the sink opened and never wrote to (after a roll that ended the
-session, or in a session without prints) is removed when the sink closes.
+exceed the limit by one batch; parts are numbered from `001`, padded to three
+digits, and read in the order of their numbers, not of their names. A part
+the sink opened and never wrote to (after a roll that ended the session, or
+in a session without prints) is removed when the sink closes.
 Batches are flushed on `flush_interval_s` or `flush_max_ticks`, and a
 write can reach the file in pieces, so the last line of a running session's
 newest part may be torn. A reader carries it until its newline arrives.
@@ -269,11 +270,16 @@ process cannot be checked, after ten. Breaking a stale lock is not atomic: of
 two producers that judged one lock stale, the later would unlink the lock the
 earlier had just created. Producers therefore take the lock one at a time,
 each holding `.session.lock.take` from its look at the lock to the creation of
-its own; one that finds it taken waits, and one left by a producer that died
-holding it is broken after five seconds. A producer that found a lock file and
-took the tree also waits a second and gives way if the name then holds another
-file than its own, which separates it from one producer of 2.2.1; producers of
-older or mixed releases starting together keep the older release's guarantee.
+its own; one that finds it taken waits for it, and is refused if it has not
+taken it within 30 seconds. A gate is held for milliseconds; one whose holder
+died is broken after five seconds, one whose holder still runs after 25. The
+gate serializes producers only while none stops under it: one that stops for
+longer than that between judging the lock stale and replacing it unlinks the
+lock of a producer that broke the gate meanwhile. A producer that found a
+lock file and took the tree also waits a second and gives way if the name
+then holds another file than its own, which separates it from one producer
+of 2.2.1; producers of older or mixed releases starting together keep the
+older release's guarantee.
 Consumers never take either file, and their reads never wait on them.
 
 ## Versioning

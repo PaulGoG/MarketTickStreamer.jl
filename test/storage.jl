@@ -873,7 +873,8 @@ end
     mktempdir() do dir
         gate = joinpath(dir, ".session.lock.take")
         write(gate, "99999999 $(gethostname())")
-        run(`touch -d "1 minute ago" $gate`)
+        # Between LOCK_GATE_STALE_S and the live holder's five times it.
+        run(`touch -d "10 seconds ago" $gate`)
         t = @elapsed held = Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
             acquire_session_lock(dir)
         end

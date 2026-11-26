@@ -313,8 +313,14 @@ of two starters that judged the same lock stale the later one would unlink the
 lock the earlier one had just created, so both would hold the tree. Starters
 therefore take the lock one at a time: each holds a gate,
 `<data_dir>/.session.lock.take`, from its look at the lock to the creation of
-its own, and a starter that finds the gate taken waits for it, up to 30 s. A
-gate left by a process that died holding it is broken after 5 s.
+its own, and a starter that finds the gate taken waits for it. A gate is held
+for milliseconds; one whose holder died is broken after 5 s, one whose holder
+still runs after 25 s, and a starter that has not taken the gate within 30 s
+is refused. Breaking a gate is no more atomic than breaking the lock, so the
+gate serializes starters only while none stops under it: one that stops for
+more than 25 s between judging the lock stale and replacing it unlinks the
+lock of a starter that broke the gate meanwhile, and three that break one gate
+at the same moment on a stale lock are as exposed as three starters of 2.2.1.
 
 A starter that found a lock file and took the lock all the same then waits
 `settle_s` seconds and gives way if the name holds another file than its own:
@@ -359,19 +365,17 @@ function acquire_session_lock(data_dir::AbstractString; settle_s::Real = LOCK_SE
     # `trymkpidlock` returns `Union{LockMonitor,Bool}`; the guard above settles
     # it, but only an assertion narrows the binding for callers of `close`.
     held = pidlock::Pidfile.LockMonitor
-    if found
-        mine = try
-            sleep(settle_s)
-            _still_holds(held, path)
-        catch
-            close(held)
-            rethrow()
-        end
-        if !mine
-            close(held)             # leaves a file that is not its own in place
-            refuse()
-        end
+    found || return held
+    try
+        sleep(settle_s)
+        # `close` below leaves in place a file that is not this starter's own.
+        _still_holds(held, path) || refuse()
+        # A logger that throws, or an interrupt during the warning's first
+        # compilation, would otherwise leave the lock held and refreshed.
         @warn "took the data tree over from a lock that was stale or just released" path
+    catch
+        close(held)
+        rethrow()
     end
     return held
 end
@@ -384,7 +388,9 @@ const LOCK_SETTLE_S = 1.0
 # The gate is held for the milliseconds of one look at the lock. One left by a
 # process that died holding it is stale after LOCK_GATE_STALE_S (Pidfile waits
 # five times as long on a holder that still runs), and a starter waits for a
-# taken gate up to LOCK_GATE_WAIT_S. The gate is never refreshed: its refresh
+# taken gate up to LOCK_GATE_WAIT_S, longer than either: the wait ends in a
+# refusal only when other starters keep taking the gate, or when its time stamp
+# lies ahead of this host's clock. The gate is never refreshed: its refresh
 # interval lies beyond any hold, so a gate whose monitor an interrupt left
 # unclosed in a long-lived process goes stale like any other. (A refresh of
 # zero would turn Pidfile's factor for a live holder from five to 25.)
@@ -394,7 +400,7 @@ const LOCK_GATE_REFRESH_S = 1.0e6
 
 # Take the gate at `gate`, polling while another starter holds it. Breaking a
 # stale gate is as little atomic as breaking a stale lock, but a gate is stale
-# only after a starter died in the milliseconds it holds one.
+# only after a starter died or stopped in the milliseconds it holds one.
 function _take_lock_gate(gate::AbstractString; wait_s::Real = LOCK_GATE_WAIT_S)
     deadline = time() + wait_s
     while true
@@ -409,8 +415,8 @@ function _take_lock_gate(gate::AbstractString; wait_s::Real = LOCK_GATE_WAIT_S)
         time() < deadline || throw(
             SessionError(
                 gate,
-                "another starter has held $gate for $(wait_s) s; a gate left by a " *
-                "process that died clears after $(LOCK_GATE_STALE_S) s",
+                "waited $(wait_s) s for $gate without taking it: other starters " *
+                "kept taking it, or its time stamp lies ahead of this host's clock",
             ),
         )
         sleep(0.01)
