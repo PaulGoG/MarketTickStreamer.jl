@@ -357,7 +357,7 @@ function acquire_session_lock(data_dir::AbstractString; settle_s::Real = LOCK_SE
             close(gate)
         catch
             # A lock taken and then lost with the gate's release would hold
-            # the tree, refreshed, until it is collected or the process exits.
+            # the tree, refreshed, at worst until the process exits.
             pidlock isa Pidfile.LockMonitor && close(pidlock)
             rethrow()
         end
@@ -372,8 +372,8 @@ function acquire_session_lock(data_dir::AbstractString; settle_s::Real = LOCK_SE
         # `close` below leaves in place a file that is not this starter's own.
         _still_holds(held, path) || refuse()
         # A logger that throws, or an interrupt during the warning's first
-        # compilation, would otherwise leave the lock held and refreshed until
-        # it is collected.
+        # compilation, would otherwise leave the lock held and refreshed, at
+        # worst until the process exits.
         @warn "took the data tree over from a lock that was stale or just released" path
     catch
         close(held)

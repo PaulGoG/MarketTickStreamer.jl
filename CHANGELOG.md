@@ -21,9 +21,8 @@ Notable changes to MarketTickStreamer.jl. The format follows
   settling check remains and separates one producer of 2.2.1. Like the lock,
   the gate is the producers' own, and the file contract lists it as such.
 - A takeover warning that failed, from a logger that throws or an interrupt
-  while it compiled, left the data tree locked until the lost lock was
-  collected or the process exited. The lock is released before the error
-  propagates.
+  while it compiled, left the data tree locked, at worst until the process
+  exited. The lock is released before the error propagates.
 - A capture interrupted while its sink then failed in the final drain
   returned `status = "failed"` and recorded `interrupted` in its sidecar. A
   failure recorded before the interrupt is kept, and `run_stream` reports the
