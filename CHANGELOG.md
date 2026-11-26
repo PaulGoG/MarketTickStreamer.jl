@@ -6,6 +6,20 @@ Notable changes to MarketTickStreamer.jl. The format follows
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-11-26
+
+Corrections from a second, independent review of 2.2.1. Three producers
+starting on one stale lock could still both take a data tree; a capture could
+report another status than the one its sidecar records; backfill dates beyond
+the range of a nanosecond timestamp loaded and requested windows that wrapped
+around; raw parts past `_part999` were read out of order. The file contract gains
+a gate beside the lock, `.session.lock.take`, which only producers touch.
+
+The configuration refuses backfill dates outside the whole years a nanosecond
+timestamp spans: most of them loaded and then failed or asked for the wrong
+days, a few at either end ran, and a configuration that holds one in an unused
+`[backfill]` table is refused as well.
+
 ### Fixed
 - Three producers starting on one stale lock could still both take a data
   tree: the settling check of 2.2.1 separates two, and a third that arrived
@@ -18,8 +32,8 @@ Notable changes to MarketTickStreamer.jl. The format follows
   stops for longer than 25 s under the gate, or three that break one gate at
   the same moment on a stale lock, can still leave two holders; either needs
   a producer to die or stop in the milliseconds it holds the gate. The
-  settling check remains and separates one producer of 2.2.1. Like the lock,
-  the gate is the producers' own, and the file contract lists it as such.
+  settling check remains and separates one producer of 2.2.1. The file
+  contract lists the gate; consumers never touch it.
 - A takeover warning that failed, from a logger that throws or an interrupt
   while it compiled, left the data tree locked, at worst until the process
   exited. The lock is released before the error propagates.
@@ -1188,7 +1202,8 @@ against the historical SIP tape.
 - An offline test suite driven by an in-process mock of the Alpaca REST and
   WebSocket APIs, with Aqua static quality assurance.
 
-[Unreleased]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v2.2.1...HEAD
+[Unreleased]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v2.3.0...HEAD
+[2.3.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v2.2.1...v2.3.0
 [2.2.1]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v2.2.0...v2.2.1
 [2.2.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/PaulGoG/MarketTickStreamer.jl/compare/v2.0.3...v2.1.0

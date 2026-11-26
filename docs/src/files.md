@@ -293,6 +293,4 @@ encoding or the order of rows, redefines a value or a status, changes how
 identifiers or paths are formed, or relaxes a rule above, alters what a
 consumer reads and waits for a major release. A minor release may add keys,
 columns or files, but never removes or redefines one; a consumer ignores
-what it does not know. The lock and its gate are the producers' own: a
-consumer never touches them, and how producers take them is fixed in a patch
-when it is a defect.
+what it does not know.
