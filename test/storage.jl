@@ -937,6 +937,39 @@ end
     end
 end
 
+# A logger whose every message throws, as a log file on a full disk would.
+struct ThrowingLogger <: Base.CoreLogging.AbstractLogger end
+Base.CoreLogging.min_enabled_level(::ThrowingLogger) = Base.CoreLogging.Debug
+Base.CoreLogging.shouldlog(::ThrowingLogger, args...) = true
+Base.CoreLogging.catch_exceptions(::ThrowingLogger) = false
+Base.CoreLogging.handle_message(::ThrowingLogger, args...; kwargs...) = error("disk full")
+
+@testset "session lock: a takeover warning that throws leaves no lock held" begin
+    mktempdir() do dir
+        lockfile = joinpath(dir, ".session.lock")
+        gate = joinpath(dir, ".session.lock.take")
+        write(lockfile, "99999999 $(gethostname())")
+        run(`touch -d "10 minutes ago" $lockfile`)
+        err = try
+            Base.CoreLogging.with_logger(ThrowingLogger()) do
+                acquire_session_lock(dir; settle_s = 0.05)
+            end
+            nothing
+        catch e
+            e
+        end
+        @test err isa ErrorException
+        @test occursin("disk full", sprint(showerror, err))
+        @test !ispath(lockfile)
+        @test !ispath(gate)
+        held = Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
+            acquire_session_lock(dir)
+        end
+        @test startswith(read(lockfile, String), "$(getpid()) ")
+        close(held)
+    end
+end
+
 @testset "provenance: an installed copy records no git state" begin
     # `git -C` searches upward: a depot inside some work tree would otherwise
     # lend that repository's commit to the sidecar.
