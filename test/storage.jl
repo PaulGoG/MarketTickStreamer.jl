@@ -950,18 +950,24 @@ Base.CoreLogging.handle_message(::ThrowingLogger, args...; kwargs...) = error("d
         gate = joinpath(dir, ".session.lock.take")
         write(lockfile, "99999999 $(gethostname())")
         run(`touch -d "10 minutes ago" $lockfile`)
-        err = try
-            Base.CoreLogging.with_logger(ThrowingLogger()) do
-                acquire_session_lock(dir; settle_s = 0.05)
+        # Pidfile's finalizer may close a lost lock; a collection here would hide the leak.
+        gc_was = GC.enable(false)
+        try
+            err = try
+                Base.CoreLogging.with_logger(ThrowingLogger()) do
+                    acquire_session_lock(dir; settle_s = 0.05)
+                end
+                nothing
+            catch e
+                e
             end
-            nothing
-        catch e
-            e
+            @test err isa ErrorException
+            @test occursin("disk full", sprint(showerror, err))
+            @test !ispath(lockfile)
+            @test !ispath(gate)
+        finally
+            GC.enable(gc_was)
         end
-        @test err isa ErrorException
-        @test occursin("disk full", sprint(showerror, err))
-        @test !ispath(lockfile)
-        @test !ispath(gate)
         held = Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
             acquire_session_lock(dir)
         end
